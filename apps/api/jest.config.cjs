@@ -5,8 +5,10 @@ const config = {
   testEnvironment: 'node',
   testMatch: ['<rootDir>/src/__tests__/**/*.test.ts'],
   moduleNameMapper: {
-    '^@cw-rag-core/shared(.*)$': '<rootDir>/../../packages/shared/src/$1',
-    '^@cw-rag-core/retrieval(.*)$': '<rootDir>/../../packages/retrieval/src/$1',
+    '^@cw-rag-core/shared$': '<rootDir>/../../packages/shared/src/index.ts',
+    '^@cw-rag-core/shared/(.*)$': '<rootDir>/../../packages/shared/src/$1',
+    '^@cw-rag-core/retrieval$': '<rootDir>/../../packages/retrieval/src/index.ts',
+    '^@cw-rag-core/retrieval/(.*)$': '<rootDir>/../../packages/retrieval/src/$1',
     '^(\\.{1,2}/.*)\\.js$': '$1',
   },
   transform: {
@@ -18,7 +20,7 @@ const config = {
     }]
   },
   transformIgnorePatterns: [
-    'node_modules/(?!(@cw-rag-core)/)'
+    'node_modules/(?!@cw-rag-core)'
   ],
   collectCoverage: true,
   coverageDirectory: "coverage",

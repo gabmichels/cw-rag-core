@@ -1,0 +1,519 @@
+{
+  "meta": {
+    "instanceId": "obsidian-sync-workflow"
+  },
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 */30 * * * *"
+            }
+          ]
+        }
+      },
+      "name": "Cron Trigger",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [200, 300],
+      "id": "cronTrigger1",
+      "notes": "Configurable schedule trigger - default every 30 minutes\nModify cronExpression in workflow settings:\n- Every hour: 0 0 * * * *\n- Every day at 2 AM: 0 0 2 * * *\n- Every 15 minutes: 0 */15 * * * *"
+    },
+    {
+      "parameters": {},
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [200, 200],
+      "id": "manualTrigger1",
+      "notes": "Manual trigger for testing and on-demand sync"
+    },
+    {
+      "parameters": {
+        "functionCode": "// Configuration - modify these as needed\nconst config = {\n  obsidianVaultPath: $env.OBSIDIAN_VAULT_PATH || '/obsidian-vault',\n  tenantId: $env.TENANT_ID || 'obsidian-tenant',\n  batchSize: parseInt($env.BATCH_SIZE) || 10,\n  maxFiles: parseInt($env.MAX_FILES_PER_RUN) || 100,\n  fileExtensions: ['.md', '.markdown'],\n  excludePaths: ['.obsidian', '.trash', 'templates'],\n  incrementalSync: ($env.INCREMENTAL_SYNC || 'true') === 'true'\n};\n\n// Get last run timestamp from workflow static data\nconst staticData = $workflow.staticData || {};\nconst lastRunTime = staticData.lastRunTime || null;\nconst currentRunTime = new Date().toISOString();\n\n// Store current run time for next execution\n$workflow.staticData = { ...staticData, lastRunTime: currentRunTime };\n\nreturn [{\n  config,\n  lastRunTime,\n  currentRunTime\n}];"
+      },
+      "name": "Initialize Config",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [400, 250],
+      "id": "initConfig1",
+      "notes": "Initialize workflow configuration and state management\nEnvironment variables:\n- OBSIDIAN_VAULT_PATH: Path to Obsidian vault\n- TENANT_ID: Tenant identifier\n- BATCH_SIZE: Number of files to process per batch\n- MAX_FILES_PER_RUN: Maximum files per workflow run\n- INCREMENTAL_SYNC: Enable incremental sync (true/false)"
+    },
+    {
+      "parameters": {
+        "command": "find {{ $json.config.obsidianVaultPath }} -type f \\( -name '*.md' -o -name '*.markdown' \\) {{ $json.config.incrementalSync && $json.lastRunTime ? '-newer \"' + $json.lastRunTime + '\"' : '' }} | head -{{ $json.config.maxFiles }}"
+      },
+      "name": "Find Markdown Files",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [600, 250],
+      "id": "findFiles1",
+      "notes": "Find markdown files in Obsidian vault\nSupports incremental sync based on modification time\nExcludes configured paths and limits file count"
+    },
+    {
+      "parameters": {
+        "functionCode": "// Parse file list and prepare for processing\nconst fileList = $input.first().json.stdout;\nif (!fileList || fileList.trim() === '') {\n  return [];\n}\n\nconst files = fileList.trim().split('\\n').filter(f => f.trim());\nconst config = $input.first().json.config;\n\n// Filter out excluded paths\nconst filteredFiles = files.filter(file => {\n  return !config.excludePaths.some(excludePath => \n    file.includes('/' + excludePath + '/')\n  );\n});\n\nreturn filteredFiles.map(filePath => ({\n  filePath,\n  config,\n  processedAt: new Date().toISOString()\n}));"
+      },
+      "name": "Process File List",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [800, 250],
+      "id": "processFiles1",
+      "notes": "Parse and filter the found markdown files\nApplies exclusion rules and prepares file list for processing"
+    },
+    {
+      "parameters": {
+        "functionCode": "// Read and parse markdown file\nconst fs = require('fs');\nconst path = require('path');\nconst crypto = require('crypto');\n\nconst filePath = $json.filePath;\nconst config = $json.config;\n\ntry {\n  // Read file content\n  const content = fs.readFileSync(filePath, 'utf8');\n  const stats = fs.statSync(filePath);\n  \n  // Parse frontmatter\n  const frontmatterRegex = /^---\\s*\\n([\\s\\S]*?)\\n---\\s*\\n([\\s\\S]*)$/;\n  const match = content.match(frontmatterRegex);\n  \n  let frontmatter = {};\n  let markdownContent = content;\n  \n  if (match) {\n    try {\n      // Simple YAML parsing for frontmatter\n      const yamlContent = match[1];\n      const lines = yamlContent.split('\\n');\n      \n      for (const line of lines) {\n        const colonIndex = line.indexOf(':');\n        if (colonIndex > 0) {\n          const key = line.substring(0, colonIndex).trim();\n          const value = line.substring(colonIndex + 1).trim();\n          \n          // Handle arrays (simple format: [item1, item2])\n          if (value.startsWith('[') && value.endsWith(']')) {\n            frontmatter[key] = value.slice(1, -1).split(',').map(s => s.trim());\n          } else {\n            frontmatter[key] = value.replace(/^\"|\"$/g, ''); // Remove quotes\n          }\n        }\n      }\n      \n      markdownContent = match[2];\n    } catch (yamlError) {\n      console.log('Failed to parse frontmatter:', yamlError);\n    }\n  }\n  \n  // Generate docId from file path\n  const relativePath = path.relative(config.obsidianVaultPath, filePath);\n  const docId = relativePath.replace(/\\.(md|markdown)$/i, '').replace(/[^a-zA-Z0-9_-]/g, '_');\n  \n  // Extract title\n  const title = frontmatter.title || \n                markdownContent.match(/^#\\s+(.+)$/m)?.[1] || \n                path.basename(filePath, path.extname(filePath));\n  \n  // Parse content into blocks\n  const blocks = [];\n  const sections = markdownContent.split(/\\n(?=#{1,6}\\s)/); // Split by headers\n  \n  for (const section of sections) {\n    const trimmed = section.trim();\n    if (trimmed) {\n      // Determine block type\n      let blockType = 'text';\n      if (trimmed.includes('```')) {\n        blockType = 'code';\n      } else if (trimmed.includes('|') && trimmed.includes('---')) {\n        blockType = 'table';\n      }\n      \n      blocks.push({\n        type: blockType,\n        text: trimmed,\n        html: trimmed // In production, convert markdown to HTML\n      });\n    }\n  }\n  \n  // Generate content hash\n  const contentHash = crypto.createHash('sha256').update(content).digest('hex');\n  \n  // Create NormalizedDoc structure\n  const normalizedDoc = {\n    meta: {\n      tenant: config.tenantId,\n      docId: docId,\n      source: 'obsidian',\n      path: relativePath,\n      title: title,\n      lang: frontmatter.lang || 'en',\n      version: frontmatter.version || '1.0',\n      sha256: contentHash,\n      acl: frontmatter.acl || frontmatter.tags || ['public'],\n      authors: frontmatter.authors || frontmatter.author ? [frontmatter.author] : [],\n      tags: frontmatter.tags || [],\n      timestamp: new Date().toISOString(),\n      modifiedAt: stats.mtime.toISOString(),\n      deleted: false\n    },\n    blocks: blocks\n  };\n  \n  return [{\n    ...normalizedDoc,\n    _filePath: filePath,\n    _processedAt: $json.processedAt\n  }];\n  \n} catch (error) {\n  return [{\n    _error: true,\n    _filePath: filePath,\n    _errorMessage: error.message,\n    _processedAt: $json.processedAt\n  }];\n}"
+      },
+      "name": "Read and Parse Markdown",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [1000, 250],
+      "id": "parseMarkdown1",
+      "notes": "Read markdown files and parse frontmatter\nConvert to NormalizedDoc format with proper metadata extraction\nHandles YAML frontmatter and markdown content parsing"
+    },
+    {
+      "parameters": {
+        "functionCode": "// Filter out error items and prepare for batching\nconst validDocs = $input.all().filter(item => !item.json._error);\nconst errorDocs = $input.all().filter(item => item.json._error);\n\nif (errorDocs.length > 0) {\n  console.log(`Skipping ${errorDocs.length} files due to errors:`);\n  errorDocs.forEach(doc => {\n    console.log(`- ${doc.json._filePath}: ${doc.json._errorMessage}`);\n  });\n}\n\nif (validDocs.length === 0) {\n  return [];\n}\n\n// Get batch size from first item's config\nconst batchSize = validDocs[0].json.config?.batchSize || 10;\n\n// Create batches\nconst batches = [];\nfor (let i = 0; i < validDocs.length; i += batchSize) {\n  const batch = validDocs.slice(i, i + batchSize).map(item => {\n    const { _filePath, _processedAt, config, ...normalizedDoc } = item.json;\n    return normalizedDoc;\n  });\n  \n  batches.push({\n    batch: batch,\n    batchNumber: Math.floor(i / batchSize) + 1,\n    totalBatches: Math.ceil(validDocs.length / batchSize),\n    batchSize: batch.length\n  });\n}\n\nreturn batches;"
+      },
+      "name": "Create Batches",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [1200, 250],
+      "id": "createBatches1",
+      "notes": "Filter valid documents and create processing batches\nHandles error documents and prepares data for API calls"
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.API_URL }}/ingest/preview",
+        "method": "POST",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-ingest-token",
+              "value": "={{ $env.INGEST_TOKEN }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyContentType": "json",
+        "jsonBody": "={{ JSON.stringify($json.batch) }}",
+        "options": {
+          "timeout": 30000,
+          "retry": {
+            "enabled": true,
+            "maxTries": 3,
+            "waitBetween": 1000
+          }
+        }
+      },
+      "name": "Preview Documents",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1400, 250],
+      "id": "previewDocs1",
+      "notes": "Call /ingest/preview endpoint to check policy compliance\nUses INGEST_TOKEN credential for authentication\nIncludes retry logic for resilience"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "preview-check",
+              "leftValue": "={{ $json.wouldPublish }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equal"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "name": "Check Preview Result",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1600, 250],
+      "id": "checkPreview1",
+      "notes": "Branch based on preview result\nTrue: Proceed to publish\nFalse: Log policy block and skip"
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.API_URL }}/ingest/publish",
+        "method": "POST",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-ingest-token",
+              "value": "={{ $env.INGEST_TOKEN }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyContentType": "json",
+        "jsonBody": "={{ JSON.stringify($('Create Batches').item.json.batch) }}",
+        "options": {
+          "timeout": 60000,
+          "retry": {
+            "enabled": true,
+            "maxTries": 3,
+            "waitBetween": 2000
+          }
+        }
+      },
+      "name": "Publish Documents",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1800, 150],
+      "id": "publishDocs1",
+      "notes": "Call /ingest/publish endpoint to ingest approved documents\nUses longer timeout for processing\nRetries with exponential backoff"
+    },
+    {
+      "parameters": {
+        "functionCode": "// Log blocked documents\nconst previewResult = $json;\nconst batchInfo = $('Create Batches').item.json;\n\nconsole.log(`Batch ${batchInfo.batchNumber}/${batchInfo.totalBatches} BLOCKED by policy:`);\nconsole.log(`- Would publish: ${previewResult.wouldPublish}`);\nconsole.log(`- Findings: ${JSON.stringify(previewResult.findings)}`);\nconsole.log(`- Documents in batch: ${batchInfo.batchSize}`);\n\nif (previewResult.errors && previewResult.errors.length > 0) {\n  console.log('- Errors:', previewResult.errors);\n}\n\nreturn [{\n  status: 'blocked',\n  batchNumber: batchInfo.batchNumber,\n  batchSize: batchInfo.batchSize,\n  findings: previewResult.findings,\n  errors: previewResult.errors || [],\n  timestamp: new Date().toISOString()\n}];"
+      },
+      "name": "Log Policy Block",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [1800, 350],
+      "id": "logBlock1",
+      "notes": "Log documents blocked by PII policy\nProvides detailed information about policy violations"
+    },
+    {
+      "parameters": {
+        "functionCode": "// Log successful publication\nconst publishResult = $json;\nconst batchInfo = $('Create Batches').item.json;\n\nconsole.log(`Batch ${batchInfo.batchNumber}/${batchInfo.totalBatches} PUBLISHED successfully:`);\nconsole.log(`- Total documents: ${publishResult.summary.total}`);\nconsole.log(`- Published: ${publishResult.summary.published}`);\nconsole.log(`- Updated: ${publishResult.summary.updated}`);\nconsole.log(`- Blocked: ${publishResult.summary.blocked}`);\nconsole.log(`- Errors: ${publishResult.summary.errors}`);\n\n// Log individual document results\nif (publishResult.results) {\n  publishResult.results.forEach(result => {\n    console.log(`  - ${result.docId}: ${result.status}${result.pointsUpserted ? ` (${result.pointsUpserted} points)` : ''}`);\n    if (result.message) {\n      console.log(`    Message: ${result.message}`);\n    }\n  });\n}\n\nreturn [{\n  status: 'published',\n  batchNumber: batchInfo.batchNumber,\n  batchSize: batchInfo.batchSize,\n  summary: publishResult.summary,\n  results: publishResult.results || [],\n  timestamp: new Date().toISOString()\n}];"
+      },
+      "name": "Log Publish Success",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [2000, 150],
+      "id": "logSuccess1",
+      "notes": "Log successful document publication\nProvides detailed metrics and individual document status"
+    },
+    {
+      "parameters": {
+        "functionCode": "// Detect deleted files (tombstone handling)\nconst config = $('Initialize Config').item.json.config;\nconst staticData = $workflow.staticData || {};\nconst previousFiles = staticData.previousFiles || [];\n\n// Get current files from this run\nconst currentFiles = $('Process File List').all().map(item => item.json.filePath);\n\n// Find deleted files\nconst deletedFiles = previousFiles.filter(file => !currentFiles.includes(file));\n\n// Store current files for next run\n$workflow.staticData = { \n  ...staticData, \n  previousFiles: currentFiles,\n  lastRunTime: $('Initialize Config').item.json.currentRunTime\n};\n\nif (deletedFiles.length === 0) {\n  return [];\n}\n\n// Create tombstone documents for deleted files\nconst tombstones = deletedFiles.map(filePath => {\n  const path = require('path');\n  const relativePath = path.relative(config.obsidianVaultPath, filePath);\n  const docId = relativePath.replace(/\\.(md|markdown)$/i, '').replace(/[^a-zA-Z0-9_-]/g, '_');\n  \n  return {\n    meta: {\n      tenant: config.tenantId,\n      docId: docId,\n      source: 'obsidian',\n      path: relativePath,\n      sha256: 'tombstone',\n      acl: ['system'],\n      timestamp: new Date().toISOString(),\n      deleted: true\n    },\n    blocks: []\n  };\n});\n\nconsole.log(`Detected ${deletedFiles.length} deleted files, creating tombstones`);\ndeletedFiles.forEach(file => console.log(`- ${file}`));\n\nreturn [{\n  tombstones: tombstones,\n  deletedCount: deletedFiles.length\n}];"
+      },
+      "name": "Detect Deletions",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [1200, 450],
+      "id": "detectDeletions1",
+      "notes": "Detect deleted files and create tombstone documents\nCompares current run with previous run file list\nStores state in workflow static data"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-deletions",
+              "leftValue": "={{ $json.deletedCount }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "name": "Check Deletions",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1400, 450],
+      "id": "checkDeletions1",
+      "notes": "Check if any files were deleted\nOnly proceed to publish tombstones if deletions exist"
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.API_URL }}/ingest/publish",
+        "method": "POST",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-ingest-token",
+              "value": "={{ $env.INGEST_TOKEN }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyContentType": "json",
+        "jsonBody": "={{ JSON.stringify($json.tombstones) }}",
+        "options": {
+          "timeout": 30000,
+          "retry": {
+            "enabled": true,
+            "maxTries": 3,
+            "waitBetween": 1000
+          }
+        }
+      },
+      "name": "Publish Tombstones",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1600, 400],
+      "id": "publishTombstones1",
+      "notes": "Publish tombstone documents for deleted files\nHandles soft deletion in the RAG system"
+    },
+    {
+      "parameters": {
+        "functionCode": "// Aggregate and log final workflow results\nconst publishResults = $('Log Publish Success').all();\nconst blockResults = $('Log Policy Block').all();\nconst tombstoneResult = $('Publish Tombstones').first();\n\nconst summary = {\n  totalBatches: publishResults.length + blockResults.length,\n  publishedBatches: publishResults.length,\n  blockedBatches: blockResults.length,\n  tombstonesPublished: tombstoneResult ? $('Detect Deletions').first().json.deletedCount : 0,\n  timestamp: new Date().toISOString()\n};\n\n// Aggregate document counts\nlet totalDocs = 0;\nlet publishedDocs = 0;\nlet blockedDocs = 0;\nlet errorDocs = 0;\n\npublishResults.forEach(result => {\n  if (result.json.summary) {\n    totalDocs += result.json.summary.total;\n    publishedDocs += result.json.summary.published;\n    blockedDocs += result.json.summary.blocked;\n    errorDocs += result.json.summary.errors;\n  }\n});\n\nblockResults.forEach(result => {\n  blockedDocs += result.json.batchSize;\n});\n\nsummary.documents = {\n  total: totalDocs,\n  published: publishedDocs,\n  blocked: blockedDocs,\n  errors: errorDocs\n};\n\nconsole.log('=== Obsidian Sync Workflow Complete ===');\nconsole.log(`Processed ${summary.totalBatches} batches`);\nconsole.log(`Documents: ${publishedDocs} published, ${blockedDocs} blocked, ${errorDocs} errors`);\nconsole.log(`Tombstones: ${summary.tombstonesPublished} deletion markers created`);\nconsole.log('==========================================');\n\nreturn [summary];"
+      },
+      "name": "Final Summary",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [2200, 250],
+      "id": "finalSummary1",
+      "notes": "Aggregate and log final workflow execution summary\nProvides comprehensive metrics for monitoring"
+    },
+    {
+      "parameters": {
+        "functionCode": "// Global error handler\nconst error = $json.error || $json;\nconst timestamp = new Date().toISOString();\n\nconsole.error(`=== Obsidian Sync Workflow Error ===`);\nconsole.error(`Time: ${timestamp}`);\nconsole.error(`Error: ${error.message || JSON.stringify(error)}`);\nconsole.error(`===================================`);\n\n// Store error in static data for monitoring\nconst staticData = $workflow.staticData || {};\nstaticData.lastError = {\n  timestamp,\n  error: error.message || JSON.stringify(error)\n};\n$workflow.staticData = staticData;\n\nreturn [{\n  status: 'error',\n  timestamp,\n  error: error.message || JSON.stringify(error)\n}];"
+      },
+      "name": "Error Handler",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [2200, 450],
+      "id": "errorHandler1",
+      "notes": "Global error handler for workflow failures\nLogs errors and stores in static data for monitoring"
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Initialize Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cron Trigger": {
+      "main": [
+        [
+          {
+            "node": "Initialize Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Initialize Config": {
+      "main": [
+        [
+          {
+            "node": "Find Markdown Files",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Markdown Files": {
+      "main": [
+        [
+          {
+            "node": "Process File List",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process File List": {
+      "main": [
+        [
+          {
+            "node": "Read and Parse Markdown",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Detect Deletions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read and Parse Markdown": {
+      "main": [
+        [
+          {
+            "node": "Create Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Batches": {
+      "main": [
+        [
+          {
+            "node": "Preview Documents",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preview Documents": {
+      "main": [
+        [
+          {
+            "node": "Check Preview Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Preview Result": {
+      "main": [
+        [
+          {
+            "node": "Publish Documents",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log Policy Block",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Publish Documents": {
+      "main": [
+        [
+          {
+            "node": "Log Publish Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Policy Block": {
+      "main": [
+        [
+          {
+            "node": "Final Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Publish Success": {
+      "main": [
+        [
+          {
+            "node": "Final Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Detect Deletions": {
+      "main": [
+        [
+          {
+            "node": "Check Deletions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Deletions": {
+      "main": [
+        [
+          {
+            "node": "Publish Tombstones",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Publish Tombstones": {
+      "main": [
+        [
+          {
+            "node": "Final Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "errorHandler1"
+  },
+  "staticData": {},
+  "tags": [
+    {
+      "createdAt": "2024-01-01T00:00:00.000Z",
+      "updatedAt": "2024-01-01T00:00:00.000Z",
+      "id": "obsidian",
+      "name": "obsidian"
+    },
+    {
+      "createdAt": "2024-01-01T00:00:00.000Z",
+      "updatedAt": "2024-01-01T00:00:00.000Z",
+      "id": "ingestion",
+      "name": "ingestion"
+    }
+  ],
+  "triggerCount": 2,
+  "updatedAt": "2024-01-01T00:00:00.000Z",
+  "versionId": "obsidian-sync-v1.0",
+  "name": "Obsidian Markdown Sync",
+  "active": false,
+  "id": "obsidian-sync",
+  "createdAt": "2024-01-01T00:00:00.000Z"
+}

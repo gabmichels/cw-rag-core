@@ -323,7 +323,1343 @@ Here are the details for the main API endpoints:
         }'
   ```
 
-## 6. Development Guide
+## 6. Ingestion Layer Documentation
+
+The ingestion layer provides a production-grade document processing pipeline with PII detection, policy enforcement, and multi-source integration capabilities.
+
+### Normalization Contract
+
+All documents are transformed into a standardized [`NormalizedDoc`](packages/shared/src/types/normalized.ts:73) format consisting of metadata and content blocks.
+
+#### NormalizedMeta Schema
+
+```typescript
+interface NormalizedMeta {
+  tenant: string;           // Tenant identifier for multi-tenancy
+  docId: string;            // Unique document identifier within tenant
+  source: string;           // Source system (e.g., 'obsidian', 'postgres', 'upload')
+  path?: string;            // Optional path within source system
+  title?: string;           // Human-readable document title
+  lang?: string;            // ISO 639-1 language code ('en', 'es', etc.)
+  version?: string;         // Document version identifier
+  sha256: string;           // SHA256 hash for integrity verification
+  acl: string[];            // Access Control List - user/group identifiers
+  authors?: string[];       // Optional document authors
+  tags?: string[];          // Optional categorization tags
+  timestamp: string;        // ISO 8601 ingestion timestamp
+  modifiedAt?: string;      // ISO 8601 last modification timestamp
+  deleted?: boolean;        // Soft delete flag for tombstone handling
+}
+```
+
+#### Block Schema
+
+```typescript
+interface Block {
+  type: 'text' | 'table' | 'code' | 'image-ref';  // Content block type
+  text?: string;                                   // Plain text content
+  html?: string;                                   // HTML representation
+}
+```
+
+#### Complete NormalizedDoc Example
+
+```json
+{
+  "meta": {
+    "tenant": "acme-corp",
+    "docId": "user-manual-v2",
+    "source": "obsidian",
+    "path": "docs/user-manual.md",
+    "title": "User Manual v2.0",
+    "lang": "en",
+    "version": "2.0",
+    "sha256": "a591a6d40bf420404a011733cfb7b190d62c65bf0bcda32b57b277d9ad9f146e",
+    "acl": ["public", "employees"],
+    "authors": ["jane.doe@acme.com"],
+    "tags": ["documentation", "user-guide"],
+    "timestamp": "2024-01-15T10:30:00.000Z",
+    "modifiedAt": "2024-01-14T16:45:00.000Z"
+  },
+  "blocks": [
+    {
+      "type": "text",
+      "text": "This user manual provides comprehensive guidance for using the system."
+    },
+    {
+      "type": "code",
+      "text": "const config = { api: 'https://api.acme.com' };"
+    }
+  ]
+}
+```
+
+#### Helper Functions
+
+The normalization utilities provide essential document processing capabilities:
+
+**Content Canonicalization:**
+```typescript
+import { canonicalizeForHash } from '@cw-rag-core/shared';
+
+// Standardize text for consistent hashing
+const canonical = canonicalizeForHash("  Hello\n\nWorld  ");
+// Returns: "Hello\nWorld"
+
+// Work with block arrays
+const blocks = [
+  { type: 'text', text: 'Hello World' },
+  { type: 'code', text: 'console.log("test");' }
+];
+const canonical = canonicalizeForHash(blocks);
+```
+
+**Content Hashing:**
+```typescript
+import { computeSha256 } from '@cw-rag-core/shared';
+
+const hash = computeSha256("Hello World");
+// Returns: "a591a6d40bf420404a011733cfb7b190d62c65bf0bcda32b57b277d9ad9f146e"
+```
+
+**Language Detection:**
+```typescript
+import { detectLanguage } from '@cw-rag-core/shared';
+
+const lang = detectLanguage("Hello world");     // Returns: "en"
+const lang = detectLanguage("Hola mundo");      // Returns: "es"
+const lang = detectLanguage("Bonjour monde");   // Returns: "fr"
+```
+
+### PII Policy Modes
+
+The ingestion system provides comprehensive PII detection and handling with four policy modes:
+
+#### Policy Mode: Off
+```typescript
+const policy: PIIPolicy = {
+  mode: 'off',
+  tenantId: 'acme-corp'
+};
+// Result: All content passes through unchanged, no PII detection
+```
+
+#### Policy Mode: Mask
+```typescript
+const policy: PIIPolicy = {
+  mode: 'mask',
+  tenantId: 'acme-corp'
+};
+// Result: PII is detected and masked (e.g., john@example.com → [EMAIL_REDACTED])
+```
+
+#### Policy Mode: Block
+```typescript
+const policy: PIIPolicy = {
+  mode: 'block',
+  tenantId: 'acme-corp'
+};
+// Result: Documents containing PII are blocked from ingestion entirely
+```
+
+#### Policy Mode: Allowlist
+```typescript
+const policy: PIIPolicy = {
+  mode: 'allowlist',
+  allowedTypes: ['email', 'phone'],
+  tenantId: 'acme-corp'
+};
+// Result: Only specified PII types are allowed; others trigger blocking/masking
+```
+
+#### Per-tenant and Per-source Overrides
+
+```typescript
+const policy: PIIPolicy = {
+  mode: 'mask',
+  tenantId: 'acme-corp',
+  sourceOverrides: {
+    'internal-docs/*': { mode: 'off' },           // No PII detection for internal docs
+    'public-website/*': { mode: 'block' },        // Strict blocking for public content
+    'customer-data/*': {                          // Custom allowlist for customer data
+      mode: 'allowlist',
+      allowedTypes: ['email']
+    }
+  }
+};
+```
+
+#### Security Guarantees
+
+- **No Raw PII Exposure**: PII values are never logged or stored in audit trails
+- **Safe Summaries**: Only PII type counts are reported (e.g., "3 emails found")
+- **Configurable Sensitivity**: Per-tenant and per-source policy customization
+- **Audit Compliance**: Complete audit trail without exposing sensitive data
+
+#### Supported PII Types
+
+- `email` - Email addresses
+- `phone` - Phone numbers (various international formats)
+- `iban` - International Bank Account Numbers
+- `credit_card` - Credit card numbers
+- `national_id` - National identification numbers
+- `api_key` - API keys and tokens
+- `aws_key` - AWS access keys
+- `jwt_token` - JWT tokens
+- `generic_token` - Generic authentication tokens
+
+### Manual Upload Flow
+
+The web interface provides a guided 4-step upload process:
+
+#### Step 1: Upload → File Selection & Metadata
+- **Drag & Drop Support**: Multi-file upload with validation
+- **URL Input**: Fetch content from web URLs
+- **File Validation**:
+  - Supported types: PDF, DOCX, MD, HTML, TXT
+  - Maximum size: 10MB per file
+  - Real-time validation feedback
+- **Metadata Configuration**:
+  ```typescript
+  interface UploadFormData {
+    tenant: string;        // Target tenant
+    source: string;        // Source identifier
+    acl: string[];         // Access control list
+    title?: string;        // Optional document title
+    tags?: string[];       // Categorization tags
+    authors?: string[];    // Document authors
+    urls?: string[];       // Web URLs to process
+  }
+  ```
+
+#### Step 2: Preview → Validation & PII Analysis
+- **Document Processing**: Conversion to [`NormalizedDoc`](packages/shared/src/types/normalized.ts:73) format
+- **PII Detection**: Policy-based scanning and reporting
+- **Statistics Display**:
+  - Total documents processed
+  - Text blocks extracted
+  - Content size in bytes
+  - PII findings summary (counts only, no raw values)
+- **Error Reporting**: Detailed validation errors with remediation guidance
+
+#### Step 3: Policy → Review & Approval
+- **Policy Display**: Current PII policy settings for tenant
+- **Impact Assessment**:
+  - Documents that would be published
+  - Documents that would be blocked
+  - Policy violations summary
+- **Override Options**: Manual approval for policy violations (where permitted)
+
+#### Step 4: Publish → Final Ingestion
+- **Batch Processing**: Documents processed in configurable batches
+- **Vector Generation**: Automatic embedding creation for semantic search
+- **Audit Logging**: Complete operation trail for compliance
+- **Results Summary**:
+  ```typescript
+  interface PublishResponse {
+    results: Array<{
+      docId: string;
+      status: 'published' | 'blocked' | 'error';
+      pointsUpserted?: number;    // Vector points created
+      message?: string;           // Status details
+    }>;
+    summary: {
+      total: number;              // Total documents processed
+      published: number;          // Successfully published
+      blocked: number;            // Blocked by policy
+      errors: number;             // Processing errors
+    };
+  }
+  ```
+
+#### Ops Console Features
+
+- **Recent Ingests View**: Real-time feed of ingestion activity
+- **Filtering & Search**: By source, action, date range, status
+- **Detailed Audit Trail**: Complete operation history with metadata
+- **Error Investigation**: Detailed error messages and remediation steps
+- **Performance Metrics**: Processing times, throughput, success rates
+
+### n8n Connector Checklist
+
+#### Workflow Import Process
+
+1. **Access n8n Interface**: Navigate to `http://localhost:5678`
+2. **Import Workflow**:
+   - Go to Workflows → New → Import from JSON
+   - Select from available workflows:
+     - [`ingest-baseline.json`](n8n/workflows/ingest-baseline.json) - Basic ingestion example
+     - [`obsidian-sync.json`](n8n/workflows/obsidian-sync.json) - Obsidian vault synchronization
+     - [`postgres-sync.json`](n8n/workflows/postgres-sync.json) - Database table ingestion
+3. **Activate Workflow**: Toggle the "Active" switch in workflow editor
+
+#### Authentication Setup
+
+**Store x-ingest-token in n8n Credentials:**
+
+1. Go to Settings → Credentials in n8n
+2. Create new credential of type "Header Auth"
+3. Configure:
+   - **Name**: `ingest-token`
+   - **Header Name**: `x-ingest-token`
+   - **Header Value**: Your ingestion API token
+4. Reference in HTTP Request nodes: Select the credential in authentication settings
+
+#### Environment Variable Configuration
+
+**Required Variables:**
+```bash
+# API Configuration
+API_URL=http://api:3000                    # Internal Docker network URL
+INGEST_TOKEN=your-secure-token-here        # Authentication token
+
+# Workflow-Specific Variables
+TENANT_ID=your-tenant-id                   # Target tenant identifier
+BATCH_SIZE=10                              # Documents per batch
+MAX_FILES_PER_RUN=100                      # Maximum files per execution
+INCREMENTAL_SYNC=true                      # Enable incremental processing
+
+# Source-Specific Configuration (Obsidian)
+OBSIDIAN_VAULT_PATH=/path/to/vault         # Obsidian vault location
+
+# Source-Specific Configuration (Postgres)
+DB_TABLE_NAME=documents                    # Source table name
+DB_SCHEMA_NAME=public                      # Database schema
+DB_CONTENT_COLUMN=content                  # Content column name
+DB_TITLE_COLUMN=title                      # Title column name
+DB_UPDATED_AT_COLUMN=updated_at           # Last modified column
+```
+
+#### Workflow Configuration Parameters
+
+**Obsidian Sync Workflow:**
+- **Schedule**: Cron expression (default: every 30 minutes)
+- **File Extensions**: Markdown file types to process
+- **Exclude Paths**: Directories to skip (.obsidian, .trash, templates)
+- **Frontmatter Support**: YAML metadata extraction
+- **Incremental Sync**: Process only modified files
+- **Deletion Handling**: Automatic tombstone creation
+
+**Postgres Sync Workflow:**
+- **Schedule**: Cron expression (default: every 6 hours)
+- **Column Mapping**: Flexible database schema adaptation
+- **Incremental Sync**: Based on updated_at timestamps
+- **Batch Processing**: Configurable batch sizes for large datasets
+- **Soft Delete Support**: Handles deleted_at column for tombstones
+
+#### Common Configuration Issues
+
+**Authentication Failures (401 errors):**
+- Verify `x-ingest-token` credential is properly configured
+- Ensure token matches API configuration
+- Check credential is selected in HTTP Request node authentication
+
+**Network Connectivity:**
+- Use internal Docker network URLs (`http://api:3000`)
+- Verify service names match Docker Compose configuration
+- Check firewall and port configuration for external access
+
+**Environment Variable Resolution:**
+- Restart n8n container after environment changes
+- Use n8n UI environment variable manager
+- Verify variable names match workflow requirements
+
+#### Monitoring & Debugging
+
+**Execution History:**
+- Monitor workflow executions in n8n UI
+- Review execution logs for detailed error information
+- Check individual node outputs for data flow issues
+
+**Error Handling:**
+- All workflows include comprehensive error handling
+- Error details logged to n8n console
+- Failed executions automatically flagged for review
+
+**Performance Optimization:**
+- Adjust batch sizes based on available resources
+- Configure appropriate timeouts for large datasets
+- Monitor memory usage during large sync operations
+
+## 7. Integration Examples
+
+### Complete NormalizedDoc Creation Examples
+
+#### Example 1: Creating from Markdown File
+
+```typescript
+import { canonicalizeForHash, computeSha256, detectLanguage } from '@cw-rag-core/shared';
+import type { NormalizedDoc, Block } from '@cw-rag-core/shared';
+
+async function createFromMarkdown(
+  filePath: string,
+  content: string,
+  tenant: string
+): Promise<NormalizedDoc> {
+  // Parse frontmatter and content
+  const frontmatterRegex = /^---\s*\n([\s\S]*?)\n---\s*\n([\s\S]*)$/;
+  const match = content.match(frontmatterRegex);
+
+  let frontmatter = {};
+  let markdownContent = content;
+
+  if (match) {
+    // Simple YAML parsing
+    const yamlLines = match[1].split('\n');
+    for (const line of yamlLines) {
+      const colonIndex = line.indexOf(':');
+      if (colonIndex > 0) {
+        const key = line.substring(0, colonIndex).trim();
+        const value = line.substring(colonIndex + 1).trim().replace(/^"|"$/g, '');
+        frontmatter[key] = value;
+      }
+    }
+    markdownContent = match[2];
+  }
+
+  // Create blocks by splitting on headers
+  const sections = markdownContent.split(/\n(?=#{1,6}\s)/);
+  const blocks: Block[] = sections
+    .filter(section => section.trim())
+    .map(section => {
+      const trimmed = section.trim();
+      return {
+        type: trimmed.includes('```') ? 'code' : 'text' as const,
+        text: trimmed
+      };
+    });
+
+  // Generate document metadata
+  const docId = filePath.replace(/\.(md|markdown)$/i, '').replace(/[^a-zA-Z0-9_-]/g, '_');
+  const contentForHash = canonicalizeForHash(blocks);
+  const sha256 = computeSha256(contentForHash);
+  const language = detectLanguage(markdownContent);
+
+  return {
+    meta: {
+      tenant,
+      docId,
+      source: 'markdown-import',
+      path: filePath,
+      title: frontmatter['title'] || docId,
+      lang: language,
+      version: frontmatter['version'] || '1.0',
+      sha256,
+      acl: frontmatter['acl'] ? frontmatter['acl'].split(',') : ['public'],
+      authors: frontmatter['author'] ? [frontmatter['author']] : [],
+      tags: frontmatter['tags'] ? frontmatter['tags'].split(',') : [],
+      timestamp: new Date().toISOString()
+    },
+    blocks
+  };
+}
+
+// Usage example
+const markdownContent = `---
+title: "API Documentation"
+author: "jane.doe@company.com"
+tags: "api,documentation,guide"
+version: "2.1"
+---
+
+# API Documentation
+
+This document describes the REST API endpoints.
+
+## Authentication
+
+All requests require an API key in the header:
+
+\`\`\`bash
+curl -H "Authorization: Bearer YOUR_API_KEY" https://api.example.com/users
+\`\`\`
+`;
+
+const doc = await createFromMarkdown('docs/api.md', markdownContent, 'company-docs');
+```
+
+#### Example 2: Creating from Database Record
+
+```typescript
+import { createHash } from 'crypto';
+import type { NormalizedDoc } from '@cw-rag-core/shared';
+
+interface DatabaseRecord {
+  id: number;
+  title: string;
+  content: string;
+  category: string;
+  author_email: string;
+  tags: string[];
+  updated_at: string;
+  is_public: boolean;
+}
+
+function createFromDatabaseRecord(
+  record: DatabaseRecord,
+  tenant: string
+): NormalizedDoc {
+  // Process content into blocks
+  const paragraphs = record.content.split(/\n\s*\n/).filter(p => p.trim());
+  const blocks: Block[] = paragraphs.map(paragraph => ({
+    type: 'text' as const,
+    text: paragraph.trim()
+  }));
+
+  // Generate document ID and hash
+  const docId = `db-record-${record.id}`;
+  const contentForHash = record.content + record.title + record.updated_at;
+  const sha256 = createHash('sha256').update(contentForHash).digest('hex');
+
+  // Determine ACL based on record visibility
+  const acl = record.is_public ? ['public'] : [`user-${record.author_email}`];
+
+  return {
+    meta: {
+      tenant,
+      docId,
+      source: 'database',
+      path: `records/${record.category}/${record.id}`,
+      title: record.title,
+      lang: 'en',
+      version: '1.0',
+      sha256,
+      acl,
+      authors: [record.author_email],
+      tags: record.tags,
+      timestamp: new Date().toISOString(),
+      modifiedAt: record.updated_at
+    },
+    blocks
+  };
+}
+
+// Usage example
+const dbRecord: DatabaseRecord = {
+  id: 12345,
+  title: "Product Launch Guide",
+  content: "This guide covers the essential steps for launching a new product...\n\nMarketing considerations include...",
+  category: "product-management",
+  author_email: "product.manager@company.com",
+  tags: ["product", "launch", "guide"],
+  updated_at: "2024-01-15T10:30:00Z",
+  is_public: false
+};
+
+const doc = createFromDatabaseRecord(dbRecord, 'company-internal');
+```
+
+#### Example 3: Creating from External API
+
+```typescript
+import fetch from 'node-fetch';
+import type { NormalizedDoc } from '@cw-rag-core/shared';
+
+interface ExternalAPIResponse {
+  id: string;
+  title: string;
+  body: string;
+  userId: number;
+  tags?: string[];
+}
+
+async function createFromExternalAPI(
+  apiUrl: string,
+  apiKey: string,
+  tenant: string
+): Promise<NormalizedDoc[]> {
+  const response = await fetch(apiUrl, {
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json'
+    }
+  });
+
+  if (!response.ok) {
+    throw new Error(`API request failed: ${response.statusText}`);
+  }
+
+  const articles: ExternalAPIResponse[] = await response.json();
+
+  return articles.map(article => {
+    // Clean and structure content
+    const blocks: Block[] = [{
+      type: 'text' as const,
+      text: article.body
+    }];
+
+    const sha256 = computeSha256(article.body + article.title);
+
+    return {
+      meta: {
+        tenant,
+        docId: `external-${article.id}`,
+        source: 'external-api',
+        path: `articles/${article.id}`,
+        title: article.title,
+        lang: detectLanguage(article.body),
+        version: '1.0',
+        sha256,
+        acl: ['public'],
+        authors: [`user-${article.userId}`],
+        tags: article.tags || [],
+        timestamp: new Date().toISOString()
+      },
+      blocks
+    };
+  });
+}
+
+// Usage example
+const docs = await createFromExternalAPI(
+  'https://jsonplaceholder.typicode.com/posts',
+  'your-api-key',
+  'external-content'
+);
+```
+
+### PII Policy Configuration Examples
+
+#### Example 1: Multi-tenant Policy Configuration
+
+```typescript
+import { PIIPolicy } from '@cw-rag-core/ingestion-sdk';
+
+// Corporate tenant with strict PII handling
+const corporatePolicy: PIIPolicy = {
+  mode: 'block',
+  tenantId: 'acme-corp',
+  sourceOverrides: {
+    // Internal documentation can contain emails
+    'internal-docs/*': {
+      mode: 'allowlist',
+      allowedTypes: ['email']
+    },
+    // HR documents require complete blocking
+    'hr-documents/*': {
+      mode: 'block'
+    },
+    // Public website content must be PII-free
+    'public-website/*': {
+      mode: 'block'
+    },
+    // Technical documentation can mask PII
+    'tech-docs/*': {
+      mode: 'mask'
+    }
+  }
+};
+
+// Customer-facing tenant with relaxed email policy
+const customerPolicy: PIIPolicy = {
+  mode: 'mask',
+  tenantId: 'customer-portal',
+  allowedTypes: ['email'], // Emails are common in customer communications
+  sourceOverrides: {
+    // Support tickets may contain sensitive data
+    'support-tickets/*': {
+      mode: 'allowlist',
+      allowedTypes: ['email', 'phone']
+    },
+    // Public FAQ should have no PII
+    'public-faq/*': {
+      mode: 'block'
+    }
+  }
+};
+
+// Development/testing tenant with PII detection disabled
+const devPolicy: PIIPolicy = {
+  mode: 'off',
+  tenantId: 'development'
+};
+
+// Policy selection logic
+function getPolicyForTenant(tenantId: string): PIIPolicy {
+  switch (tenantId) {
+    case 'acme-corp':
+      return corporatePolicy;
+    case 'customer-portal':
+      return customerPolicy;
+    case 'development':
+    case 'testing':
+      return devPolicy;
+    default:
+      // Default to strict policy for unknown tenants
+      return {
+        mode: 'block',
+        tenantId
+      };
+  }
+}
+```
+
+#### Example 2: Dynamic Policy Based on Content Classification
+
+```typescript
+import { PIIPolicy } from '@cw-rag-core/ingestion-sdk';
+
+interface ContentClassification {
+  sensitivity: 'public' | 'internal' | 'confidential' | 'restricted';
+  dataTypes: string[];
+  department: string;
+}
+
+function createDynamicPolicy(
+  tenantId: string,
+  classification: ContentClassification
+): PIIPolicy {
+  const basePolicy: PIIPolicy = {
+    mode: 'mask',
+    tenantId
+  };
+
+  switch (classification.sensitivity) {
+    case 'public':
+      return {
+        ...basePolicy,
+        mode: 'block' // No PII in public content
+      };
+
+    case 'internal':
+      return {
+        ...basePolicy,
+        mode: 'allowlist',
+        allowedTypes: ['email'] // Internal comms can have emails
+      };
+
+    case 'confidential':
+      if (classification.department === 'hr') {
+        return {
+          ...basePolicy,
+          mode: 'allowlist',
+          allowedTypes: ['email', 'phone'] // HR needs contact info
+        };
+      }
+      return {
+        ...basePolicy,
+        mode: 'mask' // General confidential content
+      };
+
+    case 'restricted':
+      return {
+        ...basePolicy,
+        mode: 'off' // No PII detection for restricted content
+      };
+
+    default:
+      return basePolicy;
+  }
+}
+
+// Usage in ingestion pipeline
+async function ingestWithDynamicPolicy(
+  document: NormalizedDoc,
+  classification: ContentClassification
+) {
+  const policy = createDynamicPolicy(document.meta.tenant, classification);
+
+  // Apply policy during preview
+  const previewResponse = await fetch('/ingest/preview', {
+    method: 'POST',
+    headers: {
+      'x-ingest-token': process.env.INGEST_TOKEN!,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify([document])
+  });
+
+  const preview = await previewResponse.json();
+
+  if (!preview.wouldPublish) {
+    console.log(`Document blocked by ${classification.sensitivity} policy:`,
+                preview.findings);
+    return null;
+  }
+
+  // Proceed with publication
+  return await publishDocument(document);
+}
+```
+
+### n8n Workflow Customization Examples
+
+#### Example 1: Custom Document Processor Node
+
+```javascript
+// n8n Function Node: Custom Document Processor
+// This node can be added to any workflow for advanced document processing
+
+const items = $input.all();
+const processedDocuments = [];
+
+for (const item of items) {
+  try {
+    const document = item.json;
+
+    // Custom processing logic
+    const processedDoc = {
+      ...document,
+      meta: {
+        ...document.meta,
+        // Add custom metadata
+        processingTimestamp: new Date().toISOString(),
+        processingNode: 'custom-processor',
+        // Extract entities or perform custom analysis
+        entityCount: extractEntityCount(document.blocks),
+        wordCount: calculateWordCount(document.blocks),
+        // Add custom tags based on content analysis
+        autoTags: generateAutoTags(document.blocks)
+      },
+      // Transform blocks if needed
+      blocks: enhanceBlocks(document.blocks)
+    };
+
+    processedDocuments.push(processedDoc);
+
+  } catch (error) {
+    console.error(`Error processing document: ${error.message}`);
+    // Add error document for tracking
+    processedDocuments.push({
+      ...item.json,
+      _processingError: error.message,
+      _errorTimestamp: new Date().toISOString()
+    });
+  }
+}
+
+// Helper functions
+function extractEntityCount(blocks) {
+  const text = blocks.map(b => b.text || '').join(' ');
+  // Simple entity extraction (emails, URLs, etc.)
+  const emails = (text.match(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/g) || []).length;
+  const urls = (text.match(/https?:\/\/[^\s]+/g) || []).length;
+  return { emails, urls };
+}
+
+function calculateWordCount(blocks) {
+  const text = blocks.map(b => b.text || '').join(' ');
+  return text.split(/\s+/).filter(word => word.length > 0).length;
+}
+
+function generateAutoTags(blocks) {
+  const text = blocks.map(b => b.text || '').join(' ').toLowerCase();
+  const tags = [];
+
+  // Simple keyword-based tagging
+  if (text.includes('api') || text.includes('endpoint')) tags.push('api');
+  if (text.includes('tutorial') || text.includes('guide')) tags.push('documentation');
+  if (text.includes('error') || text.includes('troubleshoot')) tags.push('troubleshooting');
+  if (text.includes('security') || text.includes('auth')) tags.push('security');
+
+  return tags;
+}
+
+function enhanceBlocks(blocks) {
+  return blocks.map(block => {
+    if (block.type === 'code') {
+      // Add language detection for code blocks
+      const language = detectCodeLanguage(block.text);
+      return {
+        ...block,
+        metadata: { language }
+      };
+    }
+    return block;
+  });
+}
+
+function detectCodeLanguage(code) {
+  if (code.includes('function') && code.includes('=>')) return 'javascript';
+  if (code.includes('def ') && code.includes(':')) return 'python';
+  if (code.includes('SELECT') && code.includes('FROM')) return 'sql';
+  if (code.includes('curl ')) return 'bash';
+  return 'text';
+}
+
+return processedDocuments;
+```
+
+#### Example 2: Conditional Workflow Based on Content Analysis
+
+```javascript
+// n8n Function Node: Content-Based Routing
+// Routes documents to different processing paths based on content analysis
+
+const document = $input.first().json;
+const content = document.blocks.map(b => b.text || '').join(' ').toLowerCase();
+
+// Content analysis
+const analysis = {
+  isApiDocumentation: /\b(api|endpoint|rest|graphql|sdk)\b/.test(content),
+  isTechnicalGuide: /\b(tutorial|guide|howto|setup|install)\b/.test(content),
+  isSecurityRelated: /\b(security|auth|oauth|token|encrypt)\b/.test(content),
+  isTroubleshooting: /\b(error|debug|troubleshoot|issue|problem)\b/.test(content),
+  hasCode: document.blocks.some(b => b.type === 'code'),
+  hasImages: document.blocks.some(b => b.type === 'image-ref'),
+  wordCount: content.split(/\s+/).length,
+  containsPII: /\b[\w._%+-]+@[\w.-]+\.[A-Z|a-z]{2,}\b/.test(content)
+};
+
+// Determine processing path
+let processingPath = 'standard';
+let priority = 'normal';
+let additionalTags = [];
+
+if (analysis.isSecurityRelated) {
+  processingPath = 'security-review';
+  priority = 'high';
+  additionalTags.push('security');
+}
+
+if (analysis.containsPII) {
+  processingPath = 'pii-review';
+  priority = 'high';
+  additionalTags.push('pii-detected');
+}
+
+if (analysis.isApiDocumentation) {
+  processingPath = 'api-docs';
+  additionalTags.push('api', 'documentation');
+}
+
+if (analysis.wordCount > 5000) {
+  processingPath = 'large-document';
+  priority = 'low'; // Large docs take longer to process
+}
+
+// Enhanced document with routing metadata
+const enhancedDocument = {
+  ...document,
+  meta: {
+    ...document.meta,
+    tags: [...(document.meta.tags || []), ...additionalTags],
+    processingPath,
+    priority,
+    contentAnalysis: analysis
+  }
+};
+
+// Return routing decision
+return [{
+  document: enhancedDocument,
+  route: processingPath,
+  priority: priority,
+  analysis: analysis
+}];
+```
+
+#### Example 3: Batch Processing with Error Handling
+
+```javascript
+// n8n Function Node: Resilient Batch Processor
+// Processes documents in batches with comprehensive error handling and retries
+
+const allDocuments = $input.all().map(item => item.json);
+const config = {
+  batchSize: parseInt($env.BATCH_SIZE) || 10,
+  maxRetries: parseInt($env.MAX_RETRIES) || 3,
+  retryDelay: parseInt($env.RETRY_DELAY) || 2000,
+  maxConcurrent: parseInt($env.MAX_CONCURRENT) || 3
+};
+
+// Split into batches
+const batches = [];
+for (let i = 0; i < allDocuments.length; i += config.batchSize) {
+  batches.push(allDocuments.slice(i, i + config.batchSize));
+}
+
+const results = [];
+let processedCount = 0;
+let errorCount = 0;
+
+// Process batches with concurrency control
+for (let i = 0; i < batches.length; i += config.maxConcurrent) {
+  const concurrentBatches = batches.slice(i, i + config.maxConcurrent);
+
+  const batchPromises = concurrentBatches.map(async (batch, batchIndex) => {
+    const actualBatchIndex = i + batchIndex;
+
+    for (let retry = 0; retry <= config.maxRetries; retry++) {
+      try {
+        console.log(`Processing batch ${actualBatchIndex + 1}/${batches.length} (attempt ${retry + 1})`);
+
+        // Simulate API call (replace with actual API call)
+        const response = await $http.request({
+          method: 'POST',
+          url: `${$env.API_URL}/ingest/publish`,
+          headers: {
+            'x-ingest-token': $env.INGEST_TOKEN,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(batch),
+          timeout: 30000
+        });
+
+        // Success
+        const result = response.data;
+        processedCount += result.summary.published;
+        errorCount += result.summary.errors;
+
+        return {
+          batchIndex: actualBatchIndex,
+          status: 'success',
+          result: result,
+          retryCount: retry
+        };
+
+      } catch (error) {
+        console.error(`Batch ${actualBatchIndex + 1} attempt ${retry + 1} failed:`, error.message);
+
+        if (retry === config.maxRetries) {
+          // Final retry failed
+          errorCount += batch.length;
+          return {
+            batchIndex: actualBatchIndex,
+            status: 'failed',
+            error: error.message,
+            retryCount: retry,
+            documents: batch.map(doc => doc.meta.docId)
+          };
+        }
+
+        // Wait before retry
+        await new Promise(resolve => setTimeout(resolve, config.retryDelay * (retry + 1)));
+      }
+    }
+  });
+
+  const batchResults = await Promise.all(batchPromises);
+  results.push(...batchResults);
+
+  // Progress logging
+  const completedBatches = Math.min(i + config.maxConcurrent, batches.length);
+  console.log(`Completed ${completedBatches}/${batches.length} batches`);
+}
+
+// Final summary
+const summary = {
+  totalDocuments: allDocuments.length,
+  totalBatches: batches.length,
+  processedDocuments: processedCount,
+  errorDocuments: errorCount,
+  successfulBatches: results.filter(r => r.status === 'success').length,
+  failedBatches: results.filter(r => r.status === 'failed').length,
+  processingTime: new Date().toISOString(),
+  config: config
+};
+
+console.log('=== Batch Processing Complete ===');
+console.log(`Processed: ${processedCount}/${allDocuments.length} documents`);
+console.log(`Successful batches: ${summary.successfulBatches}/${batches.length}`);
+console.log(`Failed batches: ${summary.failedBatches}/${batches.length}`);
+
+return [{
+  summary: summary,
+  results: results,
+  failedDocuments: results
+    .filter(r => r.status === 'failed')
+    .flatMap(r => r.documents || [])
+}];
+```
+
+### API Usage Patterns
+
+#### Example 1: Progressive Document Ingestion
+
+```typescript
+// Progressive ingestion with validation and error handling
+import { NormalizedDoc } from '@cw-rag-core/shared';
+
+class DocumentIngestionClient {
+  private apiUrl: string;
+  private ingestToken: string;
+
+  constructor(apiUrl: string, ingestToken: string) {
+    this.apiUrl = apiUrl;
+    this.ingestToken = ingestToken;
+  }
+
+  async ingestDocuments(documents: NormalizedDoc[]): Promise<IngestionResult> {
+    const result: IngestionResult = {
+      total: documents.length,
+      processed: 0,
+      failed: 0,
+      results: []
+    };
+
+    // Step 1: Validate all documents
+    console.log('Validating documents...');
+    const validationErrors = await this.validateDocuments(documents);
+    if (validationErrors.length > 0) {
+      throw new Error(`Validation failed: ${validationErrors.join(', ')}`);
+    }
+
+    // Step 2: Preview for policy compliance
+    console.log('Checking policy compliance...');
+    const previewResult = await this.previewDocuments(documents);
+    if (!previewResult.wouldPublish) {
+      console.warn('Some documents would be blocked by policy:', previewResult.findings);
+    }
+
+    // Step 3: Process in batches
+    const batchSize = 10;
+    for (let i = 0; i < documents.length; i += batchSize) {
+      const batch = documents.slice(i, i + batchSize);
+      console.log(`Processing batch ${Math.floor(i/batchSize) + 1}/${Math.ceil(documents.length/batchSize)}`);
+
+      try {
+        const batchResult = await this.publishBatch(batch);
+        result.processed += batchResult.summary.published;
+        result.failed += batchResult.summary.errors + batchResult.summary.blocked;
+        result.results.push(...batchResult.results);
+      } catch (error) {
+        console.error(`Batch failed:`, error);
+        result.failed += batch.length;
+        result.results.push(...batch.map(doc => ({
+          docId: doc.meta.docId,
+          status: 'error' as const,
+          message: error.message
+        })));
+      }
+    }
+
+    return result;
+  }
+
+  private async validateDocuments(documents: NormalizedDoc[]): Promise<string[]> {
+    const errors: string[] = [];
+
+    documents.forEach((doc, index) => {
+      if (!doc.meta.tenant) errors.push(`Document ${index}: missing tenant`);
+      if (!doc.meta.docId) errors.push(`Document ${index}: missing docId`);
+      if (!doc.meta.sha256) errors.push(`Document ${index}: missing sha256`);
+      if (!doc.blocks || doc.blocks.length === 0) {
+        errors.push(`Document ${index}: no content blocks`);
+      }
+    });
+
+    return errors;
+  }
+
+  private async previewDocuments(documents: NormalizedDoc[]) {
+    const response = await fetch(`${this.apiUrl}/ingest/preview`, {
+      method: 'POST',
+      headers: {
+        'x-ingest-token': this.ingestToken,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(documents)
+    });
+
+    if (!response.ok) {
+      throw new Error(`Preview failed: ${response.statusText}`);
+    }
+
+    return await response.json();
+  }
+
+  private async publishBatch(documents: NormalizedDoc[]) {
+    const response = await fetch(`${this.apiUrl}/ingest/publish`, {
+      method: 'POST',
+      headers: {
+        'x-ingest-token': this.ingestToken,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(documents)
+    });
+
+    if (!response.ok) {
+      throw new Error(`Publish failed: ${response.statusText}`);
+    }
+
+    return await response.json();
+  }
+}
+
+interface IngestionResult {
+  total: number;
+  processed: number;
+  failed: number;
+  results: Array<{
+    docId: string;
+    status: 'published' | 'blocked' | 'error';
+    message?: string;
+  }>;
+}
+
+// Usage example
+const client = new DocumentIngestionClient(
+  'http://localhost:3000',
+  process.env.INGEST_TOKEN!
+);
+
+const documents: NormalizedDoc[] = [
+  // ... your documents
+];
+
+try {
+  const result = await client.ingestDocuments(documents);
+  console.log(`Ingestion complete: ${result.processed}/${result.total} documents processed`);
+} catch (error) {
+  console.error('Ingestion failed:', error);
+}
+```
+
+#### Example 2: Real-time Document Synchronization
+
+```typescript
+// Real-time sync with change detection and conflict resolution
+class DocumentSynchronizer {
+  private client: DocumentIngestionClient;
+  private syncState: Map<string, string> = new Map(); // docId -> sha256
+
+  constructor(client: DocumentIngestionClient) {
+    this.client = client;
+  }
+
+  async syncDirectory(directoryPath: string): Promise<SyncResult> {
+    const result: SyncResult = {
+      added: 0,
+      updated: 0,
+      deleted: 0,
+      unchanged: 0,
+      errors: []
+    };
+
+    // Get current files
+    const currentFiles = await this.scanDirectory(directoryPath);
+    const currentDocIds = new Set<string>();
+
+    // Process each file
+    for (const filePath of currentFiles) {
+      try {
+        const doc = await this.createDocumentFromFile(filePath);
+        currentDocIds.add(doc.meta.docId);
+
+        const lastKnownHash = this.syncState.get(doc.meta.docId);
+
+        if (!lastKnownHash) {
+          // New document
+          await this.client.ingestDocuments([doc]);
+          this.syncState.set(doc.meta.docId, doc.meta.sha256);
+          result.added++;
+        } else if (lastKnownHash !== doc.meta.sha256) {
+          // Modified document
+          await this.client.ingestDocuments([doc]);
+          this.syncState.set(doc.meta.docId, doc.meta.sha256);
+          result.updated++;
+        } else {
+          // Unchanged document
+          result.unchanged++;
+        }
+      } catch (error) {
+        result.errors.push({
+          file: filePath,
+          error: error.message
+        });
+      }
+    }
+
+    // Handle deletions
+    for (const [docId, hash] of this.syncState.entries()) {
+      if (!currentDocIds.has(docId)) {
+        await this.deleteDocument(docId);
+        this.syncState.delete(docId);
+        result.deleted++;
+      }
+    }
+
+    return result;
+  }
+
+  private async scanDirectory(directoryPath: string): Promise<string[]> {
+    // Implementation depends on your file system access
+    // This is a placeholder
+    const fs = await import('fs/promises');
+    const path = await import('path');
+
+    const files: string[] = [];
+
+    async function scan(dir: string) {
+      const entries = await fs.readdir(dir, { withFileTypes: true });
+
+      for (const entry of entries) {
+        const fullPath = path.join(dir, entry.name);
+
+        if (entry.isDirectory()) {
+          await scan(fullPath);
+        } else if (entry.name.endsWith('.md')) {
+          files.push(fullPath);
+        }
+      }
+    }
+
+    await scan(directoryPath);
+    return files;
+  }
+
+  private async createDocumentFromFile(filePath: string): Promise<NormalizedDoc> {
+    const fs = await import('fs/promises');
+    const content = await fs.readFile(filePath, 'utf-8');
+
+    // Use the createFromMarkdown function from earlier example
+    return createFromMarkdown(filePath, content, 'file-sync');
+  }
+
+  private async deleteDocument(docId: string): Promise<void> {
+    const tombstone: NormalizedDoc = {
+      meta: {
+        tenant: 'file-sync',
+        docId,
+        source: 'file-sync',
+        sha256: 'tombstone',
+        acl: ['system'],
+        timestamp: new Date().toISOString(),
+        deleted: true
+      },
+      blocks: []
+    };
+
+    await this.client.ingestDocuments([tombstone]);
+  }
+}
+
+interface SyncResult {
+  added: number;
+  updated: number;
+  deleted: number;
+  unchanged: number;
+  errors: Array<{
+    file: string;
+    error: string;
+  }>;
+}
+
+// Usage with file watching
+import { watch } from 'fs';
+
+const synchronizer = new DocumentSynchronizer(client);
+
+// Initial sync
+const initialResult = await synchronizer.syncDirectory('./docs');
+console.log('Initial sync:', initialResult);
+
+// Watch for changes
+watch('./docs', { recursive: true }, async (eventType, filename) => {
+  if (filename && filename.endsWith('.md')) {
+    console.log(`File ${eventType}: ${filename}`);
+
+    // Debounce rapid changes
+    setTimeout(async () => {
+      const result = await synchronizer.syncDirectory('./docs');
+      console.log('Sync result:', result);
+    }, 1000);
+  }
+});
+```
+
+## 8. Development Guide
 
 This guide provides instructions for developers to work on the project, including how to add new endpoints, modify shared types, and run tests.
 
@@ -441,7 +1777,7 @@ When developing, it's often useful to run individual services outside of the ful
        ```
     The web application can then communicate with this locally running API if its `NEXT_PUBLIC_API_URL` (or similar) environment variable is set to `http://localhost:3000`.
 
-## 7. Docker Services
+## 9. Docker Services
 
 The project uses Docker Compose to manage its services. The main configuration can be found at [`ops/compose/docker-compose.yml`](ops/compose/docker-compose.yml:1).
 
@@ -475,7 +1811,7 @@ To wipe all data stored in Qdrant, you can remove the Docker volume associated w
     ```
     Qdrant will start with an empty database.
 
-## 8. n8n Workflows
+## 10. n8n Workflows
 
 n8n is used for orchestrating data ingestion and other backend workflows.
 
@@ -489,7 +1825,7 @@ n8n is used for orchestrating data ingestion and other backend workflows.
 3.  **Activate workflow**: After importing, the workflow will appear in your list. Ensure it's active by toggling the "Active" switch in the top right corner of the workflow editor.
 4.  **Test workflow**: You can manually trigger the workflow from the n8n UI or by sending a POST request to its webhook URL if configured. The webhook URL for the `ingest-baseline` workflow would typically be `http://localhost:5678/webhook-test/ingest` during development and `http://localhost:5678/webhook/ingest` in production, assuming standard n8n setup and the workflow responding to `/webhook/ingest`. Update `N8N_WEBHOOK_URL` in your `.env` files accordingly.
 
-## 9. Troubleshooting
+## 11. Troubleshooting
 
 This section provides solutions to common issues you might encounter during development or operation.
 
@@ -524,6 +1860,6 @@ This section provides solutions to common issues you might encounter during deve
     -   Check the workflow execution history within n8n UI for errors or unexpected behavior.
     -   If using webhooks, ensure the `N8N_WEBHOOK_URL` in your API's `.env` (or root `.env`) correctly points to the n8n webhook URL. Remember that in a Docker Compose setup, `n8n` is the hostname for inter-service communication.
 
-## 10. Contributing
+## 12. Contributing
 
 (Guidelines for contributing to the project will be added here.)

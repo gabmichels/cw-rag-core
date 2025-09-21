@@ -628,4 +628,215 @@ export declare const AskResponseSchema: z.ZodObject<{
     }[];
     queryId: string;
 }>;
-//# sourceMappingURL=index.d.ts.map
+/**
+ * Schema for normalized document metadata.
+ * Validates all required and optional fields for document metadata.
+ */
+export declare const NormalizedMetaSchema: z.ZodObject<{
+    /** Tenant identifier for multi-tenancy support */
+    tenant: z.ZodString;
+    /** Unique document identifier within the tenant */
+    docId: z.ZodString;
+    /** Source system or origin of the document */
+    source: z.ZodString;
+    /** Optional path to the document in the source system */
+    path: z.ZodOptional<z.ZodString>;
+    /** Optional human-readable title of the document */
+    title: z.ZodOptional<z.ZodString>;
+    /** Optional language code (ISO 639-1 format) */
+    lang: z.ZodOptional<z.ZodString>;
+    /** Optional version identifier for document versioning */
+    version: z.ZodOptional<z.ZodString>;
+    /** SHA256 hash of the document content (64 hex characters) */
+    sha256: z.ZodString;
+    /** Access Control List - array of user/group identifiers */
+    acl: z.ZodArray<z.ZodString, "many">;
+    /** Optional array of document authors */
+    authors: z.ZodOptional<z.ZodArray<z.ZodString, "many">>;
+    /** Optional array of tags or keywords */
+    tags: z.ZodOptional<z.ZodArray<z.ZodString, "many">>;
+    /** ISO 8601 timestamp when document was first ingested */
+    timestamp: z.ZodString;
+    /** Optional ISO 8601 timestamp of last modification */
+    modifiedAt: z.ZodOptional<z.ZodString>;
+    /** Optional soft delete flag */
+    deleted: z.ZodOptional<z.ZodBoolean>;
+}, "strip", z.ZodTypeAny, {
+    docId: string;
+    acl: string[];
+    sha256: string;
+    tenant: string;
+    source: string;
+    timestamp: string;
+    version?: string | undefined;
+    authors?: string[] | undefined;
+    path?: string | undefined;
+    title?: string | undefined;
+    lang?: string | undefined;
+    tags?: string[] | undefined;
+    modifiedAt?: string | undefined;
+    deleted?: boolean | undefined;
+}, {
+    docId: string;
+    acl: string[];
+    sha256: string;
+    tenant: string;
+    source: string;
+    timestamp: string;
+    version?: string | undefined;
+    authors?: string[] | undefined;
+    path?: string | undefined;
+    title?: string | undefined;
+    lang?: string | undefined;
+    tags?: string[] | undefined;
+    modifiedAt?: string | undefined;
+    deleted?: boolean | undefined;
+}>;
+/**
+ * Schema for content blocks within a normalized document.
+ * Validates block type and optional content fields.
+ */
+export declare const BlockSchema: z.ZodObject<{
+    /** Type of content block */
+    type: z.ZodEnum<["text", "table", "code", "image-ref"]>;
+    /** Optional plain text content */
+    text: z.ZodOptional<z.ZodString>;
+    /** Optional HTML representation */
+    html: z.ZodOptional<z.ZodString>;
+}, "strip", z.ZodTypeAny, {
+    type: "text" | "table" | "code" | "image-ref";
+    text?: string | undefined;
+    html?: string | undefined;
+}, {
+    type: "text" | "table" | "code" | "image-ref";
+    text?: string | undefined;
+    html?: string | undefined;
+}>;
+/**
+ * Schema for complete normalized document structure.
+ * Contains validated metadata and array of content blocks.
+ */
+export declare const NormalizedDocSchema: z.ZodObject<{
+    /** Document metadata */
+    meta: z.ZodObject<{
+        /** Tenant identifier for multi-tenancy support */
+        tenant: z.ZodString;
+        /** Unique document identifier within the tenant */
+        docId: z.ZodString;
+        /** Source system or origin of the document */
+        source: z.ZodString;
+        /** Optional path to the document in the source system */
+        path: z.ZodOptional<z.ZodString>;
+        /** Optional human-readable title of the document */
+        title: z.ZodOptional<z.ZodString>;
+        /** Optional language code (ISO 639-1 format) */
+        lang: z.ZodOptional<z.ZodString>;
+        /** Optional version identifier for document versioning */
+        version: z.ZodOptional<z.ZodString>;
+        /** SHA256 hash of the document content (64 hex characters) */
+        sha256: z.ZodString;
+        /** Access Control List - array of user/group identifiers */
+        acl: z.ZodArray<z.ZodString, "many">;
+        /** Optional array of document authors */
+        authors: z.ZodOptional<z.ZodArray<z.ZodString, "many">>;
+        /** Optional array of tags or keywords */
+        tags: z.ZodOptional<z.ZodArray<z.ZodString, "many">>;
+        /** ISO 8601 timestamp when document was first ingested */
+        timestamp: z.ZodString;
+        /** Optional ISO 8601 timestamp of last modification */
+        modifiedAt: z.ZodOptional<z.ZodString>;
+        /** Optional soft delete flag */
+        deleted: z.ZodOptional<z.ZodBoolean>;
+    }, "strip", z.ZodTypeAny, {
+        docId: string;
+        acl: string[];
+        sha256: string;
+        tenant: string;
+        source: string;
+        timestamp: string;
+        version?: string | undefined;
+        authors?: string[] | undefined;
+        path?: string | undefined;
+        title?: string | undefined;
+        lang?: string | undefined;
+        tags?: string[] | undefined;
+        modifiedAt?: string | undefined;
+        deleted?: boolean | undefined;
+    }, {
+        docId: string;
+        acl: string[];
+        sha256: string;
+        tenant: string;
+        source: string;
+        timestamp: string;
+        version?: string | undefined;
+        authors?: string[] | undefined;
+        path?: string | undefined;
+        title?: string | undefined;
+        lang?: string | undefined;
+        tags?: string[] | undefined;
+        modifiedAt?: string | undefined;
+        deleted?: boolean | undefined;
+    }>;
+    /** Array of content blocks */
+    blocks: z.ZodArray<z.ZodObject<{
+        /** Type of content block */
+        type: z.ZodEnum<["text", "table", "code", "image-ref"]>;
+        /** Optional plain text content */
+        text: z.ZodOptional<z.ZodString>;
+        /** Optional HTML representation */
+        html: z.ZodOptional<z.ZodString>;
+    }, "strip", z.ZodTypeAny, {
+        type: "text" | "table" | "code" | "image-ref";
+        text?: string | undefined;
+        html?: string | undefined;
+    }, {
+        type: "text" | "table" | "code" | "image-ref";
+        text?: string | undefined;
+        html?: string | undefined;
+    }>, "many">;
+}, "strip", z.ZodTypeAny, {
+    meta: {
+        docId: string;
+        acl: string[];
+        sha256: string;
+        tenant: string;
+        source: string;
+        timestamp: string;
+        version?: string | undefined;
+        authors?: string[] | undefined;
+        path?: string | undefined;
+        title?: string | undefined;
+        lang?: string | undefined;
+        tags?: string[] | undefined;
+        modifiedAt?: string | undefined;
+        deleted?: boolean | undefined;
+    };
+    blocks: {
+        type: "text" | "table" | "code" | "image-ref";
+        text?: string | undefined;
+        html?: string | undefined;
+    }[];
+}, {
+    meta: {
+        docId: string;
+        acl: string[];
+        sha256: string;
+        tenant: string;
+        source: string;
+        timestamp: string;
+        version?: string | undefined;
+        authors?: string[] | undefined;
+        path?: string | undefined;
+        title?: string | undefined;
+        lang?: string | undefined;
+        tags?: string[] | undefined;
+        modifiedAt?: string | undefined;
+        deleted?: boolean | undefined;
+    };
+    blocks: {
+        type: "text" | "table" | "code" | "image-ref";
+        text?: string | undefined;
+        html?: string | undefined;
+    }[];
+}>;

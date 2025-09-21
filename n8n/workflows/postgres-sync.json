@@ -1,0 +1,523 @@
+{
+  "meta": {
+    "instanceId": "postgres-sync-workflow"
+  },
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 0 */6 * * *"
+            }
+          ]
+        }
+      },
+      "name": "Cron Trigger",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [200, 300],
+      "id": "cronTrigger1",
+      "notes": "Configurable schedule trigger - default every 6 hours\nModify cronExpression in workflow settings:\n- Every hour: 0 0 * * * *\n- Every day at 3 AM: 0 0 3 * * *\n- Every 2 hours: 0 0 */2 * * *"
+    },
+    {
+      "parameters": {},
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [200, 200],
+      "id": "manualTrigger1",
+      "notes": "Manual trigger for testing and on-demand sync"
+    },
+    {
+      "parameters": {
+        "functionCode": "// Database sync configuration\nconst config = {\n  tenantId: $env.TENANT_ID || 'postgres-tenant',\n  batchSize: parseInt($env.BATCH_SIZE) || 20,\n  maxRows: parseInt($env.MAX_ROWS_PER_RUN) || 1000,\n  \n  // Database table configuration\n  tableName: $env.DB_TABLE_NAME || 'documents',\n  schemaName: $env.DB_SCHEMA_NAME || 'public',\n  \n  // Column mappings\n  columns: {\n    primaryKey: $env.DB_PK_COLUMN || 'id',\n    contentColumn: $env.DB_CONTENT_COLUMN || 'content',\n    titleColumn: $env.DB_TITLE_COLUMN || 'title',\n    updatedAtColumn: $env.DB_UPDATED_AT_COLUMN || 'updated_at',\n    deletedAtColumn: $env.DB_DELETED_AT_COLUMN || 'deleted_at',\n    aclColumn: $env.DB_ACL_COLUMN || 'acl',\n    authorColumn: $env.DB_AUTHOR_COLUMN || 'author',\n    tagsColumn: $env.DB_TAGS_COLUMN || 'tags',\n    pathColumn: $env.DB_PATH_COLUMN || 'path',\n    versionColumn: $env.DB_VERSION_COLUMN || 'version'\n  },\n  \n  // Sync behavior\n  incrementalSync: ($env.INCREMENTAL_SYNC || 'true') === 'true',\n  includeDeleted: ($env.INCLUDE_DELETED || 'true') === 'true'\n};\n\n// Get last sync timestamp from workflow static data\nconst staticData = $workflow.staticData || {};\nconst lastSyncTime = staticData.lastSyncTime || null;\nconst currentSyncTime = new Date().toISOString();\n\n// Store current sync time for next execution\n$workflow.staticData = { ...staticData, lastSyncTime: currentSyncTime };\n\nreturn [{\n  config,\n  lastSyncTime,\n  currentSyncTime\n}];"
+      },
+      "name": "Initialize Config",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [400, 250],
+      "id": "initConfig1",
+      "notes": "Initialize database sync configuration\nEnvironment variables:\n- TENANT_ID: Tenant identifier\n- DB_TABLE_NAME: Source table name\n- DB_SCHEMA_NAME: Database schema\n- DB_*_COLUMN: Column mappings\n- BATCH_SIZE: Processing batch size\n- MAX_ROWS_PER_RUN: Maximum rows per sync\n- INCREMENTAL_SYNC: Enable incremental sync\n- INCLUDE_DELETED: Include soft-deleted records"
+    },
+    {
+      "parameters": {
+        "functionCode": "// Build incremental query for active records\nconst config = $json.config;\nconst lastSyncTime = $json.lastSyncTime;\n\nlet whereClause = '1=1';\nlet queryParams = [];\n\n// Add incremental sync condition\nif (config.incrementalSync && lastSyncTime) {\n  whereClause += ` AND ${config.columns.updatedAtColumn} > $1`;\n  queryParams.push(lastSyncTime);\n}\n\n// Exclude soft-deleted records for main query\nif (config.columns.deletedAtColumn) {\n  whereClause += ` AND ${config.columns.deletedAtColumn} IS NULL`;\n}\n\n// Build main query\nconst mainQuery = `\n  SELECT \n    ${config.columns.primaryKey} as id,\n    ${config.columns.contentColumn} as content,\n    ${config.columns.titleColumn} as title,\n    ${config.columns.updatedAtColumn} as updated_at,\n    ${config.columns.aclColumn} as acl,\n    ${config.columns.authorColumn} as author,\n    ${config.columns.tagsColumn} as tags,\n    ${config.columns.pathColumn} as path,\n    ${config.columns.versionColumn} as version,\n    false as is_deleted\n  FROM ${config.schemaName}.${config.tableName}\n  WHERE ${whereClause}\n  ORDER BY ${config.columns.updatedAtColumn} ASC\n  LIMIT ${config.maxRows}\n`;\n\nreturn [{\n  query: mainQuery,\n  parameters: queryParams,\n  config: config,\n  queryType: 'main'\n}];"
+      },
+      "name": "Build Main Query",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [600, 200],
+      "id": "buildMainQuery1",
+      "notes": "Build SQL query for active records\nSupports incremental sync based on updated_at\nExcludes soft-deleted records"
+    },
+    {
+      "parameters": {
+        "functionCode": "// Build query for deleted records (tombstones)\nconst config = $('Initialize Config').item.json.config;\nconst lastSyncTime = $('Initialize Config').item.json.lastSyncTime;\n\nif (!config.includeDeleted || !config.columns.deletedAtColumn) {\n  return [];\n}\n\nlet whereClause = `${config.columns.deletedAtColumn} IS NOT NULL`;\nlet queryParams = [];\n\n// Add incremental sync condition for deletions\nif (config.incrementalSync && lastSyncTime) {\n  whereClause += ` AND ${config.columns.deletedAtColumn} > $1`;\n  queryParams.push(lastSyncTime);\n}\n\n// Build deletion query\nconst deletionQuery = `\n  SELECT \n    ${config.columns.primaryKey} as id,\n    ${config.columns.titleColumn} as title,\n    ${config.columns.deletedAtColumn} as deleted_at,\n    ${config.columns.pathColumn} as path,\n    true as is_deleted\n  FROM ${config.schemaName}.${config.tableName}\n  WHERE ${whereClause}\n  ORDER BY ${config.columns.deletedAtColumn} ASC\n  LIMIT ${Math.floor(config.maxRows / 4)}\n`;\n\nreturn [{\n  query: deletionQuery,\n  parameters: queryParams,\n  config: config,\n  queryType: 'deletions'\n}];"
+      },
+      "name": "Build Deletion Query",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [600, 350],
+      "id": "buildDeletionQuery1",
+      "notes": "Build SQL query for soft-deleted records\nCreates tombstone documents for deletion handling"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.query }}",
+        "additionalFields": {
+          "queryParameters": "={{ $json.parameters.join(',') }}"
+        }
+      },
+      "name": "Execute Main Query",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [800, 200],
+      "id": "executeMainQuery1",
+      "credentials": {
+        "postgres": {
+          "id": "postgres-credentials",
+          "name": "Postgres Database"
+        }
+      },
+      "notes": "Execute main query for active records\nUses Postgres credentials for database connection\nSupports parameterized queries for security"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.query }}",
+        "additionalFields": {
+          "queryParameters": "={{ $json.parameters.join(',') }}"
+        }
+      },
+      "name": "Execute Deletion Query",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [800, 350],
+      "id": "executeDeletionQuery1",
+      "credentials": {
+        "postgres": {
+          "id": "postgres-credentials",
+          "name": "Postgres Database"
+        }
+      },
+      "notes": "Execute deletion query for tombstone records\nUses same database credentials as main query"
+    },
+    {
+      "parameters": {
+        "functionCode": "// Transform database rows to NormalizedDoc format\nconst crypto = require('crypto');\nconst config = $('Build Main Query').item.json.config;\n\nconst rows = $input.all().map(item => item.json);\n\nif (!rows || rows.length === 0) {\n  return [];\n}\n\nconst normalizedDocs = rows.map(row => {\n  try {\n    // Generate docId from table and primary key\n    const docId = `${config.tableName}:${row.id}`;\n    \n    // Parse ACL - handle both JSON array and comma-separated string\n    let acl = ['public'];\n    if (row.acl) {\n      try {\n        if (typeof row.acl === 'string') {\n          if (row.acl.startsWith('[')) {\n            acl = JSON.parse(row.acl);\n          } else {\n            acl = row.acl.split(',').map(s => s.trim());\n          }\n        } else if (Array.isArray(row.acl)) {\n          acl = row.acl;\n        }\n      } catch (aclError) {\n        console.log(`Failed to parse ACL for ${docId}:`, aclError);\n        acl = ['public'];\n      }\n    }\n    \n    // Parse tags - handle both JSON array and comma-separated string\n    let tags = [];\n    if (row.tags) {\n      try {\n        if (typeof row.tags === 'string') {\n          if (row.tags.startsWith('[')) {\n            tags = JSON.parse(row.tags);\n          } else {\n            tags = row.tags.split(',').map(s => s.trim());\n          }\n        } else if (Array.isArray(row.tags)) {\n          tags = row.tags;\n        }\n      } catch (tagsError) {\n        console.log(`Failed to parse tags for ${docId}:`, tagsError);\n      }\n    }\n    \n    // Parse authors\n    let authors = [];\n    if (row.author) {\n      if (typeof row.author === 'string') {\n        authors = [row.author];\n      } else if (Array.isArray(row.author)) {\n        authors = row.author;\n      }\n    }\n    \n    // Process content into blocks\n    const content = row.content || '';\n    const blocks = [];\n    \n    if (content.trim()) {\n      // Simple content chunking - split by paragraphs or sentences\n      const chunks = content.split(/\\n\\s*\\n/).filter(chunk => chunk.trim());\n      \n      if (chunks.length === 0) {\n        // Single block if no natural breaks\n        blocks.push({\n          type: 'text',\n          text: content.trim()\n        });\n      } else {\n        // Multiple blocks for paragraphs\n        chunks.forEach(chunk => {\n          const trimmed = chunk.trim();\n          if (trimmed) {\n            blocks.push({\n              type: 'text',\n              text: trimmed\n            });\n          }\n        });\n      }\n    }\n    \n    // Generate content hash\n    const contentForHash = content + (row.title || '') + (row.version || '');\n    const sha256 = crypto.createHash('sha256').update(contentForHash).digest('hex');\n    \n    // Create NormalizedDoc\n    const normalizedDoc = {\n      meta: {\n        tenant: config.tenantId,\n        docId: docId,\n        source: 'postgres',\n        path: row.path || `${config.schemaName}.${config.tableName}/${row.id}`,\n        title: row.title || `Record ${row.id}`,\n        lang: 'en', // Default language\n        version: row.version || '1.0',\n        sha256: sha256,\n        acl: acl,\n        authors: authors,\n        tags: tags,\n        timestamp: new Date().toISOString(),\n        modifiedAt: row.updated_at || new Date().toISOString(),\n        deleted: row.is_deleted || false\n      },\n      blocks: blocks\n    };\n    \n    return {\n      ...normalizedDoc,\n      _dbId: row.id,\n      _processedAt: new Date().toISOString()\n    };\n    \n  } catch (error) {\n    console.error(`Error processing row ${row.id}:`, error);\n    return {\n      _error: true,\n      _dbId: row.id,\n      _errorMessage: error.message,\n      _processedAt: new Date().toISOString()\n    };\n  }\n});\n\nreturn normalizedDocs;"
+      },
+      "name": "Transform to NormalizedDoc",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [1000, 200],
+      "id": "transformDocs1",
+      "notes": "Transform database rows to NormalizedDoc format\nHandles ACL, tags, and content parsing\nGenerates appropriate document IDs and metadata"
+    },
+    {
+      "parameters": {
+        "functionCode": "// Process deletion records into tombstone documents\nconst config = $('Build Deletion Query').item.json.config;\nconst deletionRows = $input.all().map(item => item.json);\n\nif (!deletionRows || deletionRows.length === 0) {\n  return [];\n}\n\nconst tombstones = deletionRows.map(row => {\n  const docId = `${config.tableName}:${row.id}`;\n  \n  return {\n    meta: {\n      tenant: config.tenantId,\n      docId: docId,\n      source: 'postgres',\n      path: row.path || `${config.schemaName}.${config.tableName}/${row.id}`,\n      title: row.title || `Deleted Record ${row.id}`,\n      sha256: 'tombstone',\n      acl: ['system'],\n      timestamp: new Date().toISOString(),\n      modifiedAt: row.deleted_at,\n      deleted: true\n    },\n    blocks: [],\n    _dbId: row.id,\n    _deletedAt: row.deleted_at,\n    _processedAt: new Date().toISOString()\n  };\n});\n\nconsole.log(`Created ${tombstones.length} tombstone documents for deleted records`);\nreturn tombstones;"
+      },
+      "name": "Create Tombstones",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [1000, 350],
+      "id": "createTombstones1",
+      "notes": "Create tombstone documents for deleted records\nMarks documents as deleted for removal from vector store"
+    },
+    {
+      "parameters": {
+        "functionCode": "// Combine active documents and tombstones, then create batches\nconst activeDocInputs = $('Transform to NormalizedDoc').all();\nconst tombstoneInputs = $('Create Tombstones').all();\n\n// Filter out errors from active docs\nconst validActiveDocs = activeDocInputs.filter(item => !item.json._error);\nconst errorDocs = activeDocInputs.filter(item => item.json._error);\n\nif (errorDocs.length > 0) {\n  console.log(`Skipping ${errorDocs.length} documents due to errors:`);\n  errorDocs.forEach(doc => {\n    console.log(`- DB ID ${doc.json._dbId}: ${doc.json._errorMessage}`);\n  });\n}\n\n// Combine all valid documents\nconst allDocs = [...validActiveDocs, ...tombstoneInputs];\n\nif (allDocs.length === 0) {\n  return [];\n}\n\n// Get batch size from config\nconst config = $('Initialize Config').item.json.config;\nconst batchSize = config.batchSize;\n\n// Create batches\nconst batches = [];\nfor (let i = 0; i < allDocs.length; i += batchSize) {\n  const batchDocs = allDocs.slice(i, i + batchSize);\n  \n  // Clean up documents (remove internal fields)\n  const cleanedDocs = batchDocs.map(item => {\n    const { _dbId, _processedAt, _deletedAt, ...normalizedDoc } = item.json;\n    return normalizedDoc;\n  });\n  \n  batches.push({\n    batch: cleanedDocs,\n    batchNumber: Math.floor(i / batchSize) + 1,\n    totalBatches: Math.ceil(allDocs.length / batchSize),\n    batchSize: cleanedDocs.length,\n    activeCount: batchDocs.filter(item => !item.json.meta.deleted).length,\n    tombstoneCount: batchDocs.filter(item => item.json.meta.deleted).length\n  });\n}\n\nconsole.log(`Created ${batches.length} batches from ${validActiveDocs.length} active docs and ${tombstoneInputs.length} tombstones`);\nreturn batches;"
+      },
+      "name": "Create Batches",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [1200, 275],
+      "id": "createBatches1",
+      "notes": "Combine active documents and tombstones into processing batches\nFilters out error documents and prepares clean data for API calls"
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.API_URL }}/ingest/preview",
+        "method": "POST",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-ingest-token",
+              "value": "={{ $env.INGEST_TOKEN }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyContentType": "json",
+        "jsonBody": "={{ JSON.stringify($json.batch) }}",
+        "options": {
+          "timeout": 45000,
+          "retry": {
+            "enabled": true,
+            "maxTries": 3,
+            "waitBetween": 2000
+          }
+        }
+      },
+      "name": "Preview Batch",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1400, 275],
+      "id": "previewBatch1",
+      "notes": "Call /ingest/preview endpoint for policy validation\nUses INGEST_TOKEN credential for authentication\nExtended timeout for larger database batches"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "preview-check",
+              "leftValue": "={{ $json.wouldPublish }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equal"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "name": "Check Preview Result",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1600, 275],
+      "id": "checkPreview1",
+      "notes": "Branch based on preview policy result\nTrue: Proceed to publish batch\nFalse: Log policy violations"
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.API_URL }}/ingest/publish",
+        "method": "POST",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-ingest-token",
+              "value": "={{ $env.INGEST_TOKEN }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyContentType": "json",
+        "jsonBody": "={{ JSON.stringify($('Create Batches').item.json.batch) }}",
+        "options": {
+          "timeout": 90000,
+          "retry": {
+            "enabled": true,
+            "maxTries": 3,
+            "waitBetween": 3000
+          }
+        }
+      },
+      "name": "Publish Batch",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1800, 175],
+      "id": "publishBatch1",
+      "notes": "Call /ingest/publish endpoint for approved documents\nExtended timeout for database processing\nRetries with longer intervals for resilience"
+    },
+    {
+      "parameters": {
+        "functionCode": "// Log blocked batch\nconst previewResult = $json;\nconst batchInfo = $('Create Batches').item.json;\n\nconsole.log(`Database Batch ${batchInfo.batchNumber}/${batchInfo.totalBatches} BLOCKED by policy:`);\nconsole.log(`- Would publish: ${previewResult.wouldPublish}`);\nconsole.log(`- Policy findings: ${JSON.stringify(previewResult.findings)}`);\nconsole.log(`- Active documents: ${batchInfo.activeCount}`);\nconsole.log(`- Tombstones: ${batchInfo.tombstoneCount}`);\nconsole.log(`- Total documents: ${batchInfo.batchSize}`);\n\nif (previewResult.errors && previewResult.errors.length > 0) {\n  console.log('- Processing errors:', previewResult.errors);\n}\n\nreturn [{\n  status: 'blocked',\n  batchNumber: batchInfo.batchNumber,\n  batchSize: batchInfo.batchSize,\n  activeCount: batchInfo.activeCount,\n  tombstoneCount: batchInfo.tombstoneCount,\n  findings: previewResult.findings,\n  errors: previewResult.errors || [],\n  timestamp: new Date().toISOString()\n}];"
+      },
+      "name": "Log Policy Block",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [1800, 375],
+      "id": "logBlock1",
+      "notes": "Log database batches blocked by PII policy\nProvides detailed metrics for monitoring and compliance"
+    },
+    {
+      "parameters": {
+        "functionCode": "// Log successful batch publication\nconst publishResult = $json;\nconst batchInfo = $('Create Batches').item.json;\n\nconsole.log(`Database Batch ${batchInfo.batchNumber}/${batchInfo.totalBatches} PUBLISHED successfully:`);\nconsole.log(`- Total documents processed: ${publishResult.summary.total}`);\nconsole.log(`- Successfully published: ${publishResult.summary.published}`);\nconsole.log(`- Updated (duplicates): ${publishResult.summary.updated}`);\nconsole.log(`- Policy blocked: ${publishResult.summary.blocked}`);\nconsole.log(`- Deleted (tombstones): ${publishResult.summary.deleted}`);\nconsole.log(`- Processing errors: ${publishResult.summary.errors}`);\n\n// Log individual document results with database context\nif (publishResult.results) {\n  publishResult.results.forEach(result => {\n    const dbId = result.docId.split(':')[1]; // Extract DB ID from docId\n    console.log(`  - DB ID ${dbId} (${result.docId}): ${result.status}${result.pointsUpserted ? ` (${result.pointsUpserted} vectors)` : ''}`);\n    if (result.message) {\n      console.log(`    Details: ${result.message}`);\n    }\n  });\n}\n\nreturn [{\n  status: 'published',\n  batchNumber: batchInfo.batchNumber,\n  batchSize: batchInfo.batchSize,\n  activeCount: batchInfo.activeCount,\n  tombstoneCount: batchInfo.tombstoneCount,\n  summary: publishResult.summary,\n  results: publishResult.results || [],\n  timestamp: new Date().toISOString()\n}];"
+      },
+      "name": "Log Publish Success",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [2000, 175],
+      "id": "logSuccess1",
+      "notes": "Log successful database batch publication\nProvides comprehensive metrics including database context"
+    },
+    {
+      "parameters": {
+        "functionCode": "// Update sync checkpoint after successful processing\nconst config = $('Initialize Config').item.json.config;\nconst currentSyncTime = $('Initialize Config').item.json.currentSyncTime;\n\n// Collect all processing results\nconst publishResults = $('Log Publish Success').all();\nconst blockResults = $('Log Policy Block').all();\n\nconst totalBatches = publishResults.length + blockResults.length;\n\nif (totalBatches > 0) {\n  // Update static data with successful sync\n  const staticData = $workflow.staticData || {};\n  staticData.lastSyncTime = currentSyncTime;\n  staticData.lastSuccessfulSync = {\n    timestamp: currentSyncTime,\n    batchesProcessed: totalBatches,\n    publishedBatches: publishResults.length,\n    blockedBatches: blockResults.length\n  };\n  $workflow.staticData = staticData;\n  \n  console.log(`Sync checkpoint updated: ${currentSyncTime}`);\n  console.log(`Processed ${totalBatches} batches (${publishResults.length} published, ${blockResults.length} blocked)`);\n}\n\nreturn [{\n  syncCompleted: true,\n  checkpointTime: currentSyncTime,\n  totalBatches: totalBatches,\n  timestamp: new Date().toISOString()\n}];"
+      },
+      "name": "Update Sync Checkpoint",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [2200, 275],
+      "id": "updateCheckpoint1",
+      "notes": "Update sync checkpoint for incremental sync\nStores last successful sync time in workflow static data"
+    },
+    {
+      "parameters": {
+        "functionCode": "// Generate comprehensive workflow summary\nconst publishResults = $('Log Publish Success').all();\nconst blockResults = $('Log Policy Block').all();\nconst checkpointResult = $('Update Sync Checkpoint').first();\nconst config = $('Initialize Config').item.json.config;\n\n// Aggregate document statistics\nlet totalDocs = 0;\nlet publishedDocs = 0;\nlet updatedDocs = 0;\nlet blockedDocs = 0;\nlet deletedDocs = 0;\nlet errorDocs = 0;\nlet totalVectors = 0;\n\npublishResults.forEach(result => {\n  if (result.json.summary) {\n    totalDocs += result.json.summary.total;\n    publishedDocs += result.json.summary.published;\n    updatedDocs += result.json.summary.updated;\n    blockedDocs += result.json.summary.blocked;\n    deletedDocs += result.json.summary.deleted;\n    errorDocs += result.json.summary.errors;\n  }\n  \n  // Count vectors created\n  if (result.json.results) {\n    result.json.results.forEach(docResult => {\n      if (docResult.pointsUpserted) {\n        totalVectors += docResult.pointsUpserted;\n      }\n    });\n  }\n});\n\n// Add blocked documents from policy\nblockResults.forEach(result => {\n  blockedDocs += result.json.batchSize;\n});\n\nconst summary = {\n  database: {\n    table: `${config.schemaName}.${config.tableName}`,\n    tenant: config.tenantId,\n    incrementalSync: config.incrementalSync,\n    includeDeleted: config.includeDeleted\n  },\n  processing: {\n    totalBatches: publishResults.length + blockResults.length,\n    publishedBatches: publishResults.length,\n    blockedBatches: blockResults.length,\n    checkpointUpdated: checkpointResult?.json.syncCompleted || false\n  },\n  documents: {\n    total: totalDocs,\n    published: publishedDocs,\n    updated: updatedDocs,\n    blocked: blockedDocs,\n    deleted: deletedDocs,\n    errors: errorDocs\n  },\n  vectors: {\n    totalPointsCreated: totalVectors\n  },\n  timestamp: new Date().toISOString()\n};\n\nconsole.log('=== Postgres Sync Workflow Complete ===');\nconsole.log(`Database: ${summary.database.table}`);\nconsole.log(`Processed ${summary.processing.totalBatches} batches`);\nconsole.log(`Documents: ${summary.documents.published} published, ${summary.documents.blocked} blocked, ${summary.documents.deleted} deleted`);\nconsole.log(`Vectors: ${summary.vectors.totalPointsCreated} points created`);\nconsole.log(`Incremental sync: ${summary.database.incrementalSync ? 'enabled' : 'disabled'}`);\nconsole.log('==========================================');\n\nreturn [summary];"
+      },
+      "name": "Final Summary",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [2400, 275],
+      "id": "finalSummary1",
+      "notes": "Generate comprehensive workflow execution summary\nIncludes database context and detailed metrics"
+    },
+    {
+      "parameters": {
+        "functionCode": "// Global error handler for database operations\nconst error = $json.error || $json;\nconst config = $('Initialize Config').item?.json?.config;\nconst timestamp = new Date().toISOString();\n\nconsole.error(`=== Postgres Sync Workflow Error ===`);\nconsole.error(`Time: ${timestamp}`);\nconsole.error(`Database: ${config?.schemaName || 'unknown'}.${config?.tableName || 'unknown'}`);\nconsole.error(`Error: ${error.message || JSON.stringify(error)}`);\n\n// Check if it's a database connection error\nif (error.message && error.message.includes('connection')) {\n  console.error(`Database connection failed - check credentials and network connectivity`);\n} else if (error.message && error.message.includes('permission')) {\n  console.error(`Database permission denied - check user privileges`);\n} else if (error.message && error.message.includes('relation')) {\n  console.error(`Table/column not found - check database schema configuration`);\n}\n\nconsole.error(`=====================================`);\n\n// Store error details in static data for monitoring\nconst staticData = $workflow.staticData || {};\nstaticData.lastError = {\n  timestamp,\n  database: config ? `${config.schemaName}.${config.tableName}` : 'unknown',\n  error: error.message || JSON.stringify(error),\n  type: error.name || 'UnknownError'\n};\n$workflow.staticData = staticData;\n\nreturn [{\n  status: 'error',\n  timestamp,\n  database: config ? `${config.schemaName}.${config.tableName}` : 'unknown',\n  error: error.message || JSON.stringify(error),\n  type: error.name || 'UnknownError'\n}];"
+      },
+      "name": "Error Handler",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [2400, 450],
+      "id": "errorHandler1",
+      "notes": "Global error handler for database sync failures\nProvides specific guidance for common database issues\nStores error context for monitoring"
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Initialize Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cron Trigger": {
+      "main": [
+        [
+          {
+            "node": "Initialize Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Initialize Config": {
+      "main": [
+        [
+          {
+            "node": "Build Main Query",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Build Deletion Query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Main Query": {
+      "main": [
+        [
+          {
+            "node": "Execute Main Query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Deletion Query": {
+      "main": [
+        [
+          {
+            "node": "Execute Deletion Query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Main Query": {
+      "main": [
+        [
+          {
+            "node": "Transform to NormalizedDoc",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Deletion Query": {
+      "main": [
+        [
+          {
+            "node": "Create Tombstones",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transform to NormalizedDoc": {
+      "main": [
+        [
+          {
+            "node": "Create Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Tombstones": {
+      "main": [
+        [
+          {
+            "node": "Create Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Batches": {
+      "main": [
+        [
+          {
+            "node": "Preview Batch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preview Batch": {
+      "main": [
+        [
+          {
+            "node": "Check Preview Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Preview Result": {
+      "main": [
+        [
+          {
+            "node": "Publish Batch",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log Policy Block",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Publish Batch": {
+      "main": [
+        [
+          {
+            "node": "Log Publish Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Policy Block": {
+      "main": [
+        [
+          {
+            "node": "Update Sync Checkpoint",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Publish Success": {
+      "main": [
+        [
+          {
+            "node": "Update Sync Checkpoint",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Sync Checkpoint": {
+      "main": [
+        [
+          {
+            "node": "Final Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "errorHandler1"
+  },
+  "staticData": {},
+  "tags": [
+    {
+      "createdAt": "2024-01-01T00:00:00.000Z",
+      "updatedAt": "2024-01-01T00:00:00.000Z",
+      "id": "postgres",
+      "name": "postgres"
+    },
+    {
+      "createdAt": "2024-01-01T00:00:00.000Z",
+      "updatedAt": "2024-01-01T00:00:00.000Z",
+      "id": "database",
+      "name": "database"
+    },
+    {
+      "createdAt": "2024-01-01T00:00:00.000Z",
+      "updatedAt": "2024-01-01T00:00:00.000Z",
+      "id": "ingestion",
+      "name": "ingestion"
+    }
+  ],
+  "triggerCount": 2,
+  "updatedAt": "2024-01-01T00:00:00.000Z",
+  "versionId": "postgres-sync-v1.0",
+  "name": "Postgres Database Sync",
+  "active": false,
+  "id": "postgres-sync",
+  "createdAt": "2024-01-01T00:00:00.000Z"
+}

@@ -10,4 +10,3 @@ export declare function hasDocumentAccess(userContext: UserContext, docMetadata:
 export declare function filterDocumentsByAccess<T extends {
     metadata: DocumentMetadata;
 }>(userContext: UserContext, documents: T[]): T[];
-//# sourceMappingURL=rbac.d.ts.map

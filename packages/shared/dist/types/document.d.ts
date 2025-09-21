@@ -15,4 +15,3 @@ export interface Document {
     content: string;
     metadata: DocumentMetadata;
 }
-//# sourceMappingURL=document.d.ts.map

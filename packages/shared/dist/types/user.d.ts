@@ -5,4 +5,3 @@ export interface UserContext {
     groupIds: GroupId[];
     tenantId: string;
 }
-//# sourceMappingURL=user.d.ts.map

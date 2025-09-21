@@ -31,4 +31,3 @@ export interface AskResponse {
     retrievedDocuments: RetrievedDocument[];
     queryId: string;
 }
-//# sourceMappingURL=api.d.ts.map

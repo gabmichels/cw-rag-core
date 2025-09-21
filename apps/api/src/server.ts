@@ -10,6 +10,7 @@ import { healthzRoute } from './routes/healthz.js';
 import { readyzRoute } from './routes/readyz.js';
 import { ingestNormalizeRoute } from './routes/ingestNormalize.js';
 import { askRoute } from './routes/ask.js';
+import { ingestRoutes } from './routes/ingest/index.js';
 import { DOCUMENT_VECTOR_DIMENSION } from '@cw-rag-core/shared';
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
@@ -85,6 +86,7 @@ async function startServer() {
   server.register(readyzRoute, { qdrantClient, collectionName: QDRANT_COLLECTION_NAME });
   server.register(ingestNormalizeRoute, { qdrantClient, collectionName: QDRANT_COLLECTION_NAME });
   server.register(askRoute, { qdrantClient, collectionName: QDRANT_COLLECTION_NAME });
+  server.register(ingestRoutes, { qdrantClient, collectionName: QDRANT_COLLECTION_NAME });
 
   try {
     await bootstrapQdrant();
