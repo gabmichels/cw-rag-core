@@ -1,0 +1,27 @@
+# Node.js
+node_modules
+*.log
+.npm/
+.pnpm-store/
+.pnpm-state/
+.pnp/
+.pnp.js
+
+# Next.js
+.next/
+out/
+
+# TypeScript
+*.tsbuildinfo
+
+# Environment variables
+.env
+.env*.local
+.env.production.local
+.env.development.local
+
+# Docker
+!ops/compose/.env
+*.swp
+.DS_Store
+.vscode/

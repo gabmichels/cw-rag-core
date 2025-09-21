@@ -1,0 +1,18 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "composite": true,
+    "target": "es2022",
+    "module": "node16",
+    "moduleResolution": "node16",
+    "outDir": "dist",
+    "rootDir": "src",
+    "tsBuildInfoFile": "dist/.tsbuildinfo",
+    "baseUrl": ".",
+    "paths": {
+      "@cw-rag-core/shared": ["../shared/dist"]
+    }
+  },
+  "include": ["src/**/*.ts", "../shared/dist/**/*.d.ts"],
+  "exclude": ["node_modules", "dist"]
+}

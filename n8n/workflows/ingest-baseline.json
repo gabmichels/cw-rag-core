@@ -1,0 +1,117 @@
+{
+  "nodes": [
+    {
+      "parameters": {},
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "id": "manualTrigger1",
+      "position": [400, 240]
+    },
+    {
+      "parameters": {
+        "url": "=process.env.API_URL + '/ingest/normalize'",
+        "method": "POST",
+        "jsonBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "meta",
+              "value": {
+                "tenant": "demo",
+                "docId": "n8n-sample-doc",
+                "acl": ["public", "demo-users"],
+                "title": "n8n Workflow Sample Document",
+                "source": "n8n-automation",
+                "tags": ["automation", "workflow", "sample"]
+              }
+            },
+            {
+              "name": "text",
+              "value": "This document was ingested via n8n automation workflow. It demonstrates how external systems can feed content into the RAG system through the ingestion API. This enables automated document processing pipelines."
+            }
+          ]
+        },
+        "options": {
+          "continueOnFail": true
+        },
+        "sendBinaryData": false,
+        "fullResponse": true
+      },
+      "name": "Ingest Document",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "id": "httpRequest1",
+      "position": [640, 240]
+    },
+    {
+      "parameters": {
+        "fileName": "Success",
+        "value": "=JSON.stringify({ \"status\": \"Success\", \"response\": $json.response_body, \"statusCode\": $json.statusCode }, null, 2)"
+      },
+      "name": "Success Handler",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "id": "successHandler1",
+      "position": [1120, 160]
+    },
+    {
+      "parameters": {
+        "fileName": "Error",
+        "value": "=JSON.stringify({ \"status\": \"Error\", \"errorMessage\": $json.error?.message || $json.response_body, \"statusCode\": $json.statusCode }, null, 2)"
+      },
+      "name": "Error Handler",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "id": "errorHandler1",
+      "position": [1120, 320]
+    },
+    {
+      "parameters": {
+        "conditions": [
+          {
+            "value1": "={{ String($json.statusCode)[0] == '2' }}",
+            "operation": "true"
+          }
+        ]
+      },
+      "name": "Check Response Status",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "id": "ifNode1",
+      "position": [880, 240]
+    }
+  ],
+  "connections": {
+    "manualTrigger1": {
+      "main": [
+        [{ "node": "Ingest Document", "input": "main" }]
+      ]
+    },
+    "httpRequest1": {
+      "main": [
+        [{ "node": "Check Response Status", "input": "main" }]
+      ]
+    },
+    "ifNode1": {
+      "main": [
+        [{ "node": "Success Handler", "index": 0 }],
+        [{ "node": "Error Handler", "index": 0 }]
+      ]
+    }
+  },
+  "labels": [],
+  "active": false,
+  "nodesPositions": {
+    "manualTrigger1": [400, 240],
+    "httpRequest1": [640, 240],
+    "successHandler1": [1120, 160],
+    "errorHandler1": [1120, 320],
+    "ifNode1": [880, 240]
+  },
+  "staticData": {},
+  "name": "Document Ingestion Baseline",
+  "id": "documentIngestionBaseline",
+  "version": 1,
+  "exampleFlow": ""
+}

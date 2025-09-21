@@ -1,0 +1,40 @@
+{
+  "name": "@cw-rag-core/api",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Fastify API application with Qdrant integration",
+  "main": "dist/server.js",
+  "scripts": {
+    "build": "tsc",
+    "predev": "npm run build",
+    "dev": "npm run build -- --watch && node --enable-source-maps dist/server.js",
+    "start": "node --enable-source-maps dist/server.js",
+    "test": "NODE_OPTIONS=\"--experimental-vm-modules\" jest --config=jest.config.cjs --passWithNoTests"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@cw-rag-core/retrieval": "file:../../packages/retrieval",
+    "@cw-rag-core/shared": "file:../../packages/shared",
+    "@qdrant/js-client-rest": "^1.8.0",
+    "fastify": "^4.24.3",
+    "@fastify/cors": "^8.0.0",
+    "pino": "^8.16.1",
+    "zod": "^3.22.4",
+    "crypto": "^1.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.8.10",
+    "@types/pino": "^7.0.5",
+    "dotenv": "^16.3.1",
+    "pino-pretty": "^10.2.3",
+    "typescript": "^5.2.2",
+    "eslint": "^8.57.0",
+    "@typescript-eslint/parser": "^6.21.0",
+    "@typescript-eslint/eslint-plugin": "^6.21.0",
+    "jest": "^29.7.0",
+    "@types/jest": "^29.5.12",
+    "ts-jest": "^29.1.2"
+  }
+}
