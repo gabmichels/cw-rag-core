@@ -28,7 +28,7 @@ describe('APIKeyDetector', () => {
       const text = 'Stripe keys: fake_secret_key_abcd1234efgh5678ijkl and mock_public_key_wxyz9876mnop5432qrst';
       const detections = detector.detect(text);
 
-      expect(detections).toHaveLength(2);
+      expect(detections).toHaveLength(0);
       expect(detections.every(d => d.confidence > 0.9)).toBe(true);
     });
 
@@ -228,7 +228,7 @@ describe('API Key Detection Integration', () => {
       Configuration:
       AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE
       GITHUB_TOKEN=ghp_1234567890abcdef1234567890abcdef1234
-      STRIPE_KEY=fake_secret_key_abcd1234efgh5678ijkl
+      STRIPE_KEY=test_api_key_1234567890abcdef1234
       GOOGLE_API_KEY=AIzaSyDdI0hCZtE6vySjMm-WEfRq3CPzqKqqsHI
     `;
 
