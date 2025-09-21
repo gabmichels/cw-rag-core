@@ -1,5 +1,4 @@
-export * from './qdrant';
-export * from './types/vector';
-export * from './types/ingestion';
-export * from './embedding';
-//# sourceMappingURL=index.d.ts.map
+export * from './qdrant.js';
+export * from './types/vector.js';
+export * from './types/ingestion.js';
+export * from './embedding.js';

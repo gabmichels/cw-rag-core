@@ -6,4 +6,3 @@ export interface IngestedDocument {
 export interface DocumentIngestionService {
     ingestDocument(document: Document): Promise<IngestedDocument>;
 }
-//# sourceMappingURL=ingestion.d.ts.map

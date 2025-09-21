@@ -15,4 +15,3 @@ export interface VectorDBClient {
     upsertVectors(collectionName: string, vectors: Vector[]): Promise<void>;
     searchVectors(collectionName: string, params: VectorSearchParams): Promise<VectorSearchResult[]>;
 }
-//# sourceMappingURL=vector.d.ts.map

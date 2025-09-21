@@ -22,6 +22,280 @@ This runbook provides comprehensive operational guidance for the production-grad
 - **n8n Workflows**: [`n8n/workflows/`](n8n/workflows/) - Automated ingestion pipelines
 - **Vector Store**: Qdrant - Document storage and retrieval
 
+## Zenithfall Tenant Configuration
+
+### Phase 0+1 Validated Setup
+
+**Tenant Information:**
+- **Tenant ID**: `zenithfall`
+- **Embedding Model**: BAAI/bge-small-en-v1.5 (384 dimensions)
+- **PII Policy**: OFF (validated working)
+- **Authentication Token**: `zenithfall-secure-token-2024`
+- **Container Naming**: Mixed (requires standardization)
+
+**Validated Components:**
+- ✅ Zenithfall tenant configuration (384-dim, PII OFF)
+- ✅ BGE embeddings service (bge-small-en-v1.5)
+- ✅ PII detection system (83 tests passed, OFF policy working)
+- ✅ Authentication & token system
+- ✅ Security hardening (CORS, rate limiting, headers)
+- ✅ Obsidian workflow implementation
+- ✅ Document processing pipeline
+
+### Environment Configuration
+
+```bash
+# Zenithfall Tenant Environment Variables
+TENANT_ID=zenithfall
+INGEST_TOKEN=zenithfall-secure-token-2024
+PII_POLICY=OFF
+
+# Embedding Service Configuration
+EMBEDDING_MODEL=bge-small-en-v1.5
+VECTOR_DIMENSIONS=384
+EMBEDDING_SERVICE_URL=http://localhost:8080
+
+# Qdrant Configuration
+QDRANT_HOST=localhost
+QDRANT_PORT=6333
+QDRANT_COLLECTION=documents
+QDRANT_VECTOR_SIZE=384
+
+# Obsidian Workflow Configuration
+OBSIDIAN_VAULT_PATH=/path/to/zenithfall/vault
+OBSIDIAN_SYNC_ENABLED=true
+OBSIDIAN_INCREMENTAL_SYNC=true
+```
+
+### Docker Container Setup
+
+**Current Container Names:**
+```bash
+# Working containers
+cw-rag-zenithfall-embeddings    # ✅ Correct naming
+cw-rag-demo-qdrant             # ❌ Should be: cw-rag-zenithfall-qdrant
+cw-rag-demo-api                # ❌ Should be: cw-rag-zenithfall-api
+```
+
+**Standardization Commands:**
+```bash
+# Update docker-compose.yml for consistent naming
+sed -i 's/cw-rag-demo-/cw-rag-zenithfall-/g' ops/compose/docker-compose.yml
+
+# Restart with standardized names
+docker-compose down
+docker-compose up --build -d
+```
+
+### PII Policy Management
+
+**Zenithfall PII Configuration:**
+```typescript
+const zenithfallPolicy: PIIPolicy = {
+  mode: 'off',
+  tenantId: 'zenithfall'
+};
+```
+
+**Policy Validation:**
+```bash
+# Test PII OFF policy
+curl -X POST http://localhost:3000/ingest/preview \
+  -H "x-ingest-token: zenithfall-secure-token-2024" \
+  -H "Content-Type: application/json" \
+  -d '[{
+    "meta": {
+      "tenant": "zenithfall",
+      "docId": "test-pii-off",
+      "source": "manual",
+      "sha256": "test",
+      "acl": ["public"],
+      "timestamp": "'$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)'"
+    },
+    "blocks": [{
+      "type": "text",
+      "text": "Test content with john@example.com and phone 555-123-4567"
+    }]
+  }]'
+
+# Expected: wouldPublish: true (PII not blocked when policy is OFF)
+```
+
+### Token Rotation for Zenithfall
+
+**Current Token**: `zenithfall-secure-token-2024`
+
+**Rotation Procedure:**
+```bash
+# 1. Generate new zenithfall token
+NEW_ZENITHFALL_TOKEN="zenithfall-secure-token-$(date +%Y%m%d)"
+echo "New zenithfall token: $NEW_ZENITHFALL_TOKEN"
+
+# 2. Update API configuration
+export INGEST_TOKEN="$NEW_ZENITHFALL_TOKEN"
+docker-compose restart api
+
+# 3. Update n8n credentials for zenithfall workflows
+# Go to n8n UI → Settings → Credentials → "zenithfall-ingest-token"
+# Update header value with new token
+
+# 4. Update Obsidian workflow configuration
+# Edit n8n/workflows/obsidian-zenithfall.json
+# Update HTTP request authentication
+
+# 5. Validate new token
+curl -X POST http://localhost:3000/ingest/preview \
+  -H "x-ingest-token: $NEW_ZENITHFALL_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '[]'
+```
+
+### Obsidian Zenithfall Vault Setup
+
+**Vault Configuration:**
+```bash
+# Zenithfall vault structure
+/path/to/zenithfall/vault/
+├── .obsidian/           # Obsidian configuration (excluded from sync)
+├── docs/                # Main documentation
+│   ├── architecture/
+│   ├── guides/
+│   └── troubleshooting/
+├── projects/            # Project-specific documents
+├── templates/           # Document templates (excluded from sync)
+└── archive/             # Archived content
+```
+
+**n8n Workflow Setup:**
+```javascript
+// Zenithfall-specific workflow configuration
+const zenithfallConfig = {
+  vaultPath: '/path/to/zenithfall/vault',
+  tenantId: 'zenithfall',
+  includePatterns: [
+    'docs/**/*.md',
+    'projects/**/*.md'
+  ],
+  excludePatterns: [
+    '.obsidian/**',
+    'templates/**',
+    '**/.DS_Store'
+  ],
+  batchSize: 10,
+  incrementalSync: true,
+  piiPolicy: 'off'
+};
+```
+
+**Workflow Import Steps:**
+1. Import [`n8n/workflows/obsidian-zenithfall.json`](n8n/workflows/obsidian-zenithfall.json)
+2. Configure zenithfall credentials in n8n
+3. Set environment variables for zenithfall vault
+4. Test workflow with small document set
+5. Enable automatic scheduling
+
+### Mixed Docker/Local Deployment Troubleshooting
+
+**Common Issues:**
+
+1. **Network Connectivity Between Services:**
+```bash
+# Check service connectivity
+docker exec cw-rag-zenithfall-api ping cw-rag-zenithfall-qdrant
+docker exec cw-rag-zenithfall-api curl http://cw-rag-zenithfall-embeddings:8080/health
+
+# If running API locally, update hosts
+export QDRANT_HOST=localhost
+export EMBEDDING_SERVICE_HOST=localhost
+```
+
+2. **Container Name Resolution:**
+```bash
+# Update /etc/hosts for local development
+echo "127.0.0.1 cw-rag-zenithfall-qdrant" >> /etc/hosts
+echo "127.0.0.1 cw-rag-zenithfall-embeddings" >> /etc/hosts
+```
+
+3. **Port Conflicts:**
+```bash
+# Check port usage
+netstat -tulpn | grep -E ':(3000|6333|8080)'
+
+# Stop conflicting services
+sudo lsof -ti:3000 | xargs kill -9
+```
+
+4. **Volume Mount Issues:**
+```bash
+# Verify volume mounts for zenithfall
+docker volume ls | grep zenithfall
+docker inspect cw-rag-zenithfall-qdrant | jq '.[0].Mounts'
+
+# Fix permissions
+sudo chown -R 1000:1000 /var/lib/docker/volumes/zenithfall_qdrant_data/
+```
+
+### Infrastructure Validation Commands
+
+**Health Check Suite:**
+```bash
+#!/bin/bash
+# zenithfall-health-check.sh
+
+echo "=== Zenithfall Tenant Health Check ==="
+
+# 1. Qdrant Health
+echo "Checking Qdrant..."
+QDRANT_STATUS=$(curl -s http://localhost:6333/healthz)
+echo "Qdrant: $QDRANT_STATUS"
+
+# 2. Embedding Service Health
+echo "Checking BGE Embeddings..."
+EMBEDDING_STATUS=$(curl -s http://localhost:8080/health)
+echo "Embeddings: $EMBEDDING_STATUS"
+
+# 3. Test embedding generation
+echo "Testing embedding generation..."
+EMBED_TEST=$(curl -s -X POST http://localhost:8080/embed \
+  -H "Content-Type: application/json" \
+  --data '{"inputs":"zenithfall test"}' | jq '.length')
+echo "Embedding dimensions: $EMBED_TEST"
+
+# 4. API connectivity (when available)
+echo "Checking API connectivity..."
+API_STATUS=$(curl -s http://localhost:3000/healthz 2>/dev/null || echo "API unavailable")
+echo "API: $API_STATUS"
+
+# 5. Collection configuration
+echo "Checking Qdrant collection..."
+COLLECTION_INFO=$(curl -s http://localhost:6333/collections/documents 2>/dev/null || echo "Collection not found")
+echo "Collection: $COLLECTION_INFO"
+```
+
+### Performance Monitoring for Zenithfall
+
+**Key Metrics:**
+```bash
+# Document processing rate for zenithfall
+curl -s "http://localhost:3001/api/ingest/ingests?tenant=zenithfall&dateFrom=$(date -d '1 hour ago' -u +%Y-%m-%dT%H:%M:%S.%3NZ)" | jq '.pagination.total'
+
+# Embedding service response time
+time curl -s -X POST http://localhost:8080/embed \
+  -H "Content-Type: application/json" \
+  --data '{"inputs":"zenithfall performance test"}'
+
+# Qdrant query performance
+time curl -s -X POST http://localhost:6333/collections/documents/points/search \
+  -H "Content-Type: application/json" \
+  -d '{
+    "vector": [0.1, 0.2, 0.3, 0.4],
+    "limit": 10,
+    "filter": {
+      "must": [{"key": "tenant", "match": {"value": "zenithfall"}}]
+    }
+  }'
+```
+
 ## Common Failures
 
 ### 401 Token Authentication Errors

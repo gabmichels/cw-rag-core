@@ -32,7 +32,7 @@ export async function ingestNormalizeRoute(fastify, options) {
             const failedDocuments = [];
             for (const doc of documents) {
                 try {
-                    const id = await ingestDocument(options.qdrantClient, options.collectionName, doc);
+                    const id = await ingestDocument(options.qdrantClient, options.embeddingService, options.collectionName, doc);
                     documentIds.push(id);
                 }
                 catch (error) {

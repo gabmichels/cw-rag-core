@@ -2,8 +2,8 @@
   "name": "@cw-rag-core/ingestion-sdk",
   "version": "1.0.0",
   "type": "module",
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
+  "main": "./src/index.js",
+  "types": "./src/index.d.ts",
   "license": "MIT",
   "scripts": {
     "build": "tsc",

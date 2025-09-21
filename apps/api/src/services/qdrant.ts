@@ -1,5 +1,6 @@
 import { QdrantClient, CollectionInfo, PointStruct, ScoredPoint, SearchParams } from '@qdrant/js-client-rest';
 import * as crypto from 'crypto';
+import { EmbeddingService, BgeSmallEnV15EmbeddingService } from '@cw-rag-core/retrieval';
 import { FastifyBaseLogger } from 'pino';
 import { Document, RetrievalRequest, DOCUMENT_VECTOR_DIMENSION } from '@cw-rag-core/shared';
 export { QdrantClient } from '@qdrant/js-client-rest'; // Explicitly export QdrantClient
@@ -50,17 +51,15 @@ export async function bootstrapQdrant(
   }
 }
 
-export function generateRandomVector(dimension: number): number[] {
-  return Array.from({ length: dimension }, () => Math.random());
-}
 
 export async function ingestDocument(
   qdrantClient: QdrantClient,
+  embeddingService: EmbeddingService,
   collectionName: string,
   document: Document
 ): Promise<string> {
   const docId = crypto.createHash('sha256').update(document.content).digest('hex');
-  const vector = generateRandomVector(DOCUMENT_VECTOR_DIMENSION);
+  const vector = await embeddingService.embed(document.content);
 
   const point: PointStruct = {
     id: docId,
@@ -94,7 +93,7 @@ export async function searchDocuments(
   userTenants: string[],
   userAcl: string[],
 ): Promise<PointStruct[]> {
-  const vector = generateRandomVector(DOCUMENT_VECTOR_DIMENSION); // Placeholder vector for search
+  const vector = Array.from({ length: DOCUMENT_VECTOR_DIMENSION }, () => Math.random()); // Placeholder vector for search
 
   const filter: any = {
     must: [

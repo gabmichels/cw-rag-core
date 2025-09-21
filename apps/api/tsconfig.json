@@ -10,8 +10,8 @@
     "tsBuildInfoFile": "dist/.tsbuildinfo",
     "baseUrl": ".",
     "paths": {
-      "@cw-rag-core/shared": ["../../packages/shared/dist"],
-      "@cw-rag-core/retrieval": ["../../packages/retrieval/dist"],
+      "@cw-rag-core/shared": ["../../packages/shared/src"],
+      "@cw-rag-core/retrieval": ["../../packages/retrieval/src"],
        "fastify": ["./src/types/stubs/fastify.d.ts"],
       "@fastify/cors": ["./src/types/stubs/@fastify/cors.d.ts"],
       "pino": ["./src/types/stubs/pino.d.ts"],
@@ -21,6 +21,6 @@
       "json-schema-to-ts": ["./src/types/stubs/json-schema-to-ts.d.ts"]
     }
   },
-  "include": ["src/**/*.ts", "src/__tests__/**/*.ts", "../../packages/shared/dist/**/*.d.ts", "../../packages/retrieval/dist/**/*.d.ts", "src/types/stubs/**/*.d.ts"],
+  "include": ["src/**/*.ts", "src/__tests__/**/*.ts", "../../packages/shared/src/**/*.d.ts", "../../packages/retrieval/src/**/*.d.ts", "src/types/stubs/**/*.d.ts"],
   "exclude": ["node_modules", "dist"]
 }

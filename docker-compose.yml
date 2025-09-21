@@ -1,0 +1,141 @@
+# Zenithfall Tenant Configuration for Phase 0+1
+# Includes embedding service for bge-small-en-v1.5 (384 dimensions) with L2 normalization
+# and n8n service for workflow automation
+
+services:
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: ${QDRANT_CONTAINER_NAME:-cw-rag-zenithfall-qdrant}
+    ports:
+      - "${QDRANT_PORT:-6333}:6333"
+      - "${QDRANT_GRPC_PORT:-6334}:6334"
+    volumes:
+      - qdrant_storage:/qdrant/data
+    networks:
+      - app_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:6333/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # BGE Small EN v1.5 Embedding Service (384 dimensions with L2 normalization)
+  embeddings:
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.8
+    container_name: ${PROJECT_PREFIX:-cw-rag}-${TENANT:-zenithfall}-embeddings
+    ports:
+      - "8080:80"
+    environment:
+      - MODEL_ID=BAAI/bge-small-en-v1.5
+      - REVISION=main
+      - MAX_CONCURRENT_REQUESTS=512
+      - MAX_BATCH_TOKENS=16384
+      - VECTOR_DIM=${VECTOR_DIM:-384}
+    volumes:
+      - embeddings_cache:/data
+    networks:
+      - app_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:80/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+
+  # N8N Workflow Automation Service
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: ${PROJECT_PREFIX:-cw-rag}-${TENANT:-zenithfall}-n8n
+    ports:
+      - "${N8N_PORT:-5678}:5678"
+    environment:
+      - N8N_BASIC_AUTH_ACTIVE=true
+      - N8N_BASIC_AUTH_USER=admin
+      - N8N_BASIC_AUTH_PASSWORD=password
+      - N8N_HOST=${N8N_HOST:-localhost}
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - NODE_ENV=production
+      - WEBHOOK_URL=http://localhost:5678/
+      - GENERIC_TIMEZONE=UTC
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./n8n/workflows:/home/node/.n8n/workflows:ro
+    networks:
+      - app_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:5678/healthz || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    container_name: ${API_CONTAINER_NAME:-cw-rag-zenithfall-api}
+    ports:
+      - "${API_PORT:-3000}:3000"
+    environment:
+      - QDRANT_URL=http://qdrant:6333
+      - QDRANT_COLLECTION=${QDRANT_COLLECTION:-docs_v1}
+      - PORT=3000
+      - CORS_ORIGIN=${CORS_ORIGIN:-http://localhost:3001}
+      - TENANT=${TENANT:-zenithfall}
+      - VECTOR_DIM=${VECTOR_DIM:-384}
+      - PII_POLICY=${PII_POLICY:-OFF}
+      - EMBEDDINGS_PROVIDER=${EMBEDDINGS_PROVIDER:-local}
+      - EMBEDDINGS_MODEL=${EMBEDDINGS_MODEL:-bge-small-en-v1.5}
+      - EMBEDDINGS_URL=http://embeddings:80
+      - INGEST_TOKEN=${INGEST_TOKEN:-zenithfall-secure-token-2024}
+    depends_on:
+      qdrant:
+        condition: service_healthy
+      embeddings:
+        condition: service_healthy
+    networks:
+      - app_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3000/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    container_name: ${WEB_CONTAINER_NAME:-cw-rag-zenithfall-web}
+    ports:
+      - "${WEB_PORT:-3001}:3001"
+    environment:
+      - API_URL=http://api:3000
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:3000}
+      - TENANT=${TENANT:-zenithfall}
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - app_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3001 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  qdrant_storage:
+    name: ${QDRANT_VOLUME_NAME:-cw_rag_zenithfall_qdrant_storage}
+  embeddings_cache:
+    name: ${PROJECT_PREFIX:-cw_rag}_${TENANT:-zenithfall}_embeddings_cache
+  n8n_data:
+    name: ${PROJECT_PREFIX:-cw_rag}_${TENANT:-zenithfall}_n8n_data
+
+networks:
+  app_network:
+    name: ${NETWORK_NAME:-cw-rag-zenithfall-network}
+    driver: bridge

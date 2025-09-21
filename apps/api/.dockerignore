@@ -1,6 +1,99 @@
+# Dependencies
 node_modules
-npm-debug.log
+*/node_modules
+*/*/node_modules
+.pnpm
+.pnpm-store
+
+# Build outputs
+dist
+*/dist
+*/*/dist
+build
+*/build
+*/*/build
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage directory used by tools like istanbul
+coverage
+*/coverage
+*/*/coverage
+.nyc_output
+
+# Environment files
 .env
+.env.*
+!.env.example
+
+# Cache directories
+.cache
+*/cache
+*/.cache
+*/*/.cache
+
+# Windows-specific files that cause permission issues
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# MacOS-specific files
 .DS_Store
-.git
+.AppleDouble
+.LSOverride
+
+# Linux-specific files
+*~
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.temp
+
+# Git
+.git/
 .gitignore
+.gitattributes
+
+# Docker
+Dockerfile*
+.dockerignore
+
+# Documentation
+README.md
+*.md
+
+# Test files
+*.test.*
+*.spec.*
+__tests__/
+*/__tests__/
+*/*/__tests__/
+test/
+*/test/
+*/*/test/
+tests/
+*/tests/
+*/*/tests/

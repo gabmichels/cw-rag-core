@@ -131,7 +131,6 @@ const PreviewResponseSchema = z.object({
 
 interface PreviewRouteOptions {
   auditLogger: AuditLogger;
-  ingestToken: string;
 }
 
 export async function previewRoute(fastify: FastifyInstance, options: PreviewRouteOptions) {
@@ -143,15 +142,7 @@ export async function previewRoute(fastify: FastifyInstance, options: PreviewRou
       },
     },
     handler: async (request: FastifyRequest, reply: FastifyReply) => {
-      // Authentication check
-      const ingestToken = (request.headers as any)['x-ingest-token'];
-
-      if (!ingestToken || ingestToken !== options.ingestToken) {
-        return reply.status(401).send({
-          error: 'Unauthorized',
-          message: 'Invalid or missing x-ingest-token'
-        });
-      }
+      // Authentication is handled by parent route middleware
       try {
         const body = request.body as any;
         const docs = Array.isArray(body) ? body : [body];

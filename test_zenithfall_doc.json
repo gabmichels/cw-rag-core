@@ -1,0 +1,14 @@
+[{
+  "meta": {
+    "tenant": "zenithfall",
+    "docId": "test-doc-1",
+    "source": "manual",
+    "sha256": "a591a6d40bf420404a011733cfb7b190d62c65bf0bcda32b57b277d9ad9f146e",
+    "acl": ["public"],
+    "timestamp": "2025-09-21T21:13:00.000Z"
+  },
+  "blocks": [{
+    "type": "text",
+    "text": "Welcome to the zenithfall tenant test document."
+  }]
+}]

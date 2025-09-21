@@ -60,14 +60,7 @@ export async function uploadRoute(fastify, options) {
             },
         },
         handler: async (request, reply) => {
-            // Authentication check
-            const ingestToken = request.headers['x-ingest-token'];
-            if (!ingestToken || ingestToken !== options.ingestToken) {
-                return reply.status(401).send({
-                    error: 'Unauthorized',
-                    message: 'Invalid or missing x-ingest-token'
-                });
-            }
+            // Authentication is handled by parent route middleware
             try {
                 // Parse multipart data
                 const data = await request.file();

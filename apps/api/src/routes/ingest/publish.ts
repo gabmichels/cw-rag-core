@@ -136,7 +136,6 @@ interface PublishRouteOptions {
   qdrantClient: QdrantClient;
   collectionName: string;
   auditLogger: AuditLogger;
-  ingestToken: string;
 }
 
 export async function publishRoute(fastify: FastifyInstance, options: PublishRouteOptions) {
@@ -148,16 +147,7 @@ export async function publishRoute(fastify: FastifyInstance, options: PublishRou
       },
     },
     handler: async (request: FastifyRequest, reply: FastifyReply) => {
-      // Authentication check
-      const ingestToken = (request.headers as any)['x-ingest-token'];
-
-      if (!ingestToken || ingestToken !== options.ingestToken) {
-        return reply.status(401).send({
-          error: 'Unauthorized',
-          message: 'Invalid or missing x-ingest-token'
-        });
-      }
-
+      // Authentication is handled by parent route middleware
       try {
         const body = request.body as any;
         const docs = Array.isArray(body) ? body : [body];

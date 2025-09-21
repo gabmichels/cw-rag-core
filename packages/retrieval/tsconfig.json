@@ -10,9 +10,10 @@
     "tsBuildInfoFile": "dist/.tsbuildinfo",
     "baseUrl": ".",
     "paths": {
-      "@cw-rag-core/shared": ["../shared/dist"]
-    }
+      "@cw-rag-core/shared": ["../shared/src"]
+    },
+   "types": ["jest", "node"]
   },
-  "include": ["src/**/*.ts", "../shared/dist/**/*.d.ts"],
+  "include": ["src/**/*.ts", "../shared/src/**/*.d.ts"],
   "exclude": ["node_modules", "dist"]
 }

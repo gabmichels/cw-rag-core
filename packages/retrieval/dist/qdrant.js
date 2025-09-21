@@ -1,8 +1,5 @@
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.QdrantClientStub = void 0;
 // Stub implementation for QdrantClient
-class QdrantClientStub {
+export class QdrantClientStub {
     async upsertVectors(collectionName, vectors) {
         console.log(`Stub: Upserting ${vectors.length} vectors into collection ${collectionName}`);
         // Simulate async operation
@@ -20,4 +17,3 @@ class QdrantClientStub {
         }));
     }
 }
-exports.QdrantClientStub = QdrantClientStub;

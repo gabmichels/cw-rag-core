@@ -3,12 +3,12 @@
   "version": "1.0.0",
   "type": "module",
   "description": "Fastify API application with Qdrant integration",
-  "main": "dist/server.js",
+  "main": "src/server.js",
   "scripts": {
     "build": "tsc",
     "predev": "npm run build",
-    "dev": "npm run build -- --watch && node --enable-source-maps dist/server.js",
-    "start": "node --enable-source-maps dist/server.js",
+    "dev": "npm run build -- --watch && node --enable-source-maps src/server.js",
+    "start": "node --enable-source-maps src/server.js",
     "test": "NODE_OPTIONS=\"--experimental-vm-modules\" jest --config=jest.config.cjs --passWithNoTests"
   },
   "keywords": [],
@@ -27,15 +27,15 @@
     "zod": "^3.22.4",
     "crypto": "^1.0.1",
     "marked": "^9.1.2",
-    "turndown": "^7.1.2"
+    "turndown": "^7.1.2",
+    "dotenv": "^16.3.1",
+    "pino-pretty": "^10.2.3"
   },
   "devDependencies": {
     "@types/node": "^20.8.10",
     "@types/pino": "^7.0.5",
     "@types/marked": "^6.0.0",
     "@types/turndown": "^5.0.4",
-    "dotenv": "^16.3.1",
-    "pino-pretty": "^10.2.3",
     "typescript": "^5.2.2",
     "eslint": "^8.57.0",
     "@typescript-eslint/parser": "^6.21.0",

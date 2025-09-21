@@ -1,0 +1,9 @@
+{
+  "query": "test",
+  "userContext": {
+    "id": "testuser",
+    "groupIds": ["public"],
+    "tenantId": "zenithfall"
+  },
+  "k": 3
+}

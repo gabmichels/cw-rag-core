@@ -53,7 +53,6 @@ const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 
 interface UploadRouteOptions {
   auditLogger: AuditLogger;
-  ingestToken: string;
   previewHandler: (docs: NormalizedDoc[], request: FastifyRequest) => Promise<any>;
   publishHandler: (docs: NormalizedDoc[], request: FastifyRequest) => Promise<any>;
 }
@@ -75,16 +74,7 @@ export async function uploadRoute(fastify: FastifyInstance, options: UploadRoute
       },
     },
     handler: async (request: FastifyRequest, reply: FastifyReply) => {
-      // Authentication check
-      const ingestToken = (request.headers as any)['x-ingest-token'];
-
-      if (!ingestToken || ingestToken !== options.ingestToken) {
-        return reply.status(401).send({
-          error: 'Unauthorized',
-          message: 'Invalid or missing x-ingest-token'
-        });
-      }
-
+      // Authentication is handled by parent route middleware
       try {
         // Parse multipart data
         const data = await (request as any).file();

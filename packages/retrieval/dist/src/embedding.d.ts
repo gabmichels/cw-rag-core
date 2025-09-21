@@ -3,8 +3,10 @@ export interface EmbeddingService {
     embed(text: string): Promise<number[]>;
     embedDocument(document: Document): Promise<number[]>;
 }
-export declare class EmbeddingServiceStub implements EmbeddingService {
+export declare class BgeSmallEnV15EmbeddingService implements EmbeddingService {
+    private fallbackService;
+    private callEmbeddingService;
+    private getFallbackService;
     embed(text: string): Promise<number[]>;
     embedDocument(document: Document): Promise<number[]>;
 }
-//# sourceMappingURL=embedding.d.ts.map

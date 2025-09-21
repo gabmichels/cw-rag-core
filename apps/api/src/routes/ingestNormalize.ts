@@ -1,11 +1,13 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { FromSchema } from 'json-schema-to-ts';
 import { ingestDocument, QdrantClient } from '../services/qdrant.js';
+import { BgeSmallEnV15EmbeddingService, EmbeddingService } from '@cw-rag-core/retrieval';
 import { IngestDocumentRequest, IngestDocumentResponse, Document, IngestDocumentRequestSchema } from '@cw-rag-core/shared';
 
 interface IngestNormalizeOptions {
   qdrantClient: QdrantClient;
   collectionName: string;
+  embeddingService: EmbeddingService;
 }
 
 type IngestNormalizeRequest = FastifyRequest<{
@@ -45,7 +47,7 @@ export async function ingestNormalizeRoute(fastify: FastifyInstance, options: In
 
       for (const doc of documents) {
         try {
-          const id = await ingestDocument(options.qdrantClient, options.collectionName, doc as Document);
+          const id = await ingestDocument(options.qdrantClient, options.embeddingService, options.collectionName, doc as Document);
           documentIds.push(id);
         } catch (error) {
           fastify.log.error((error as Error).message, `Failed to ingest document: ${doc.metadata?.url || 'unknown'}`);
