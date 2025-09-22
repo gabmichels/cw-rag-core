@@ -1,16 +1,9 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  reactStrictMode: true,
-  transpilePackages: ['@cw-rag-core/shared'],
-  output: 'standalone', // Required for Docker deployment
-  async rewrites() {
-    return [
-      {
-        source: '/api/:path*',
-        destination: `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000'}/:path*`,
-      },
-    ];
-  },
+  output: 'standalone',
+  // ensure workspace packages get transpiled by Next/SWC
+  transpilePackages: ['@cw-rag-core/shared', '@cw-rag-core/retrieval', '@cw-rag-core/ingestion-sdk'],
+  // optional: quiet noisy warnings
+  typescript: { ignoreBuildErrors: false },
 };
-
 export default nextConfig;
