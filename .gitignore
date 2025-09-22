@@ -25,3 +25,14 @@ out/
 *.swp
 .DS_Store
 .vscode/
+
+# Backup files
+*.bak
+docker-compose.yml.bak
+
+# API coverage reports
+apps/api/coverage/
+packages/evals/dist/
+packages/ingestion-sdk/dist/
+packages/retrieval/dist/
+packages/shared/dist/

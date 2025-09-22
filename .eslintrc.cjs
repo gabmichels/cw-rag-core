@@ -21,5 +21,17 @@ module.exports = {
     node: true,
     es2021: true
   },
-  ignorePatterns: ["node_modules/", "dist/", "*.js", "*.d.ts", "jest.config.ts", ".*js", "apps/web/tailwind.config.ts"]
+  ignorePatterns: [
+    "node_modules/",
+    "dist/",
+    "*.js",
+    "*.d.ts",
+    "jest.config.ts",
+    ".*js",
+    "apps/web/tailwind.config.ts",
+    "apps/web/.next/",
+    "apps/*/coverage/",
+    "**/build/",
+    "**/dist/"
+  ]
 };

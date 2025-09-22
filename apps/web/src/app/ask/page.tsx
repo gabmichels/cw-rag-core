@@ -16,6 +16,7 @@ interface AskPageState {
   loading: boolean;
   error: string | null;
   showRawChunks: boolean;
+  selectedCitationId?: string;
 }
 
 export default function AskPage() {
@@ -25,6 +26,7 @@ export default function AskPage() {
     loading: false,
     error: null,
     showRawChunks: false,
+    selectedCitationId: undefined,
   });
 
   const handleSearch = async (query: string) => {
@@ -72,6 +74,10 @@ export default function AskPage() {
         loading: false,
       }));
     }
+  };
+
+  const handleCitationClick = (citationId: string) => {
+    setState(prev => ({ ...prev, selectedCitationId: citationId }));
   };
 
   const isIDontKnow = state.response?.guardrailDecision?.isAnswerable === false;
@@ -125,6 +131,8 @@ export default function AskPage() {
               answer={state.response.answer}
               citations={state.response.citations}
               queryId={state.response.queryId}
+              guardrailDecision={state.response.guardrailDecision}
+              onCitationClick={handleCitationClick}
             />
           )}
 
@@ -133,6 +141,7 @@ export default function AskPage() {
             <CitationsList
               citations={state.response.citations}
               retrievedDocuments={state.response.retrievedDocuments}
+              selectedCitationId={state.selectedCitationId}
             />
           )}
 

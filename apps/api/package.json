@@ -9,7 +9,7 @@
     "start": "node dist/server.js",
     "dev": "tsx watch src/server.ts",
     "test": "cross-env NODE_OPTIONS=\"--experimental-vm-modules\" jest --config=jest.config.cjs --passWithNoTests",
-    "lint": "eslint . --ext .ts"
+    "lint": "eslint ."
   },
   "keywords": [],
   "author": "",

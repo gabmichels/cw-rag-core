@@ -21,6 +21,23 @@ import {
   calculateLanguageRelevance
 } from '@cw-rag-core/shared';
 
+// Timeout configuration interfaces
+export interface TimeoutConfig {
+  vectorSearch: number;
+  keywordSearch: number;
+  reranker: number;
+  embedding: number;
+  overall: number;
+}
+
+export const DEFAULT_TIMEOUTS: TimeoutConfig = {
+  vectorSearch: parseInt(process.env.VECTOR_SEARCH_TIMEOUT_MS || '5000'),
+  keywordSearch: parseInt(process.env.KEYWORD_SEARCH_TIMEOUT_MS || '3000'),
+  reranker: parseInt(process.env.RERANKER_TIMEOUT_MS || '10000'),
+  embedding: parseInt(process.env.EMBEDDING_TIMEOUT_MS || '5000'),
+  overall: parseInt(process.env.OVERALL_TIMEOUT_MS || '45000')
+};
+
 export interface VectorSearchService {
   search(
     collectionName: string,
@@ -55,6 +72,7 @@ export interface HybridSearchService {
 
 export class HybridSearchServiceImpl implements HybridSearchService {
   private tenantConfigs = new Map<string, TenantSearchConfig>();
+  private timeoutConfigs = new Map<string, TimeoutConfig>();
 
   constructor(
     private vectorSearchService: VectorSearchService,
@@ -65,6 +83,55 @@ export class HybridSearchServiceImpl implements HybridSearchService {
   ) {
     // Set default configurations
     this.initializeDefaultConfigs();
+  }
+
+  /**
+   * Execute operation with timeout and optional fallback
+   */
+  private async executeWithTimeout<T>(
+    operation: () => Promise<T>,
+    timeoutMs: number,
+    operationName: string,
+    fallback?: () => Promise<T>
+  ): Promise<{ result: T; timedOut: boolean }> {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      const result = await Promise.race([
+        operation(),
+        new Promise<never>((_, reject) => {
+          controller.signal.addEventListener('abort', () => {
+            reject(new Error(`${operationName} timeout after ${timeoutMs}ms`));
+          });
+        })
+      ]);
+
+      clearTimeout(timeoutId);
+      return { result, timedOut: false };
+    } catch (error) {
+      clearTimeout(timeoutId);
+
+      if ((error as Error).message.includes('timeout') && fallback) {
+        console.warn(`${operationName} timed out, using fallback`);
+        try {
+          const fallbackResult = await fallback();
+          return { result: fallbackResult, timedOut: true };
+        } catch (fallbackError) {
+          throw new Error(`${operationName} failed and fallback failed: ${(fallbackError as Error).message}`);
+        }
+      }
+
+      throw error;
+    }
+  }
+
+  /**
+   * Get timeout configuration for tenant
+   */
+  private getTimeoutConfig(tenantId?: string): TimeoutConfig {
+    const config = this.timeoutConfigs.get(tenantId || 'default');
+    return config || DEFAULT_TIMEOUTS;
   }
 
   async search(
@@ -116,28 +183,68 @@ export class HybridSearchServiceImpl implements HybridSearchService {
     let keywordResults: any[] = [];
 
     try {
-      // Perform vector search
+      const timeouts = this.getTimeoutConfig(request.tenantId);
+
+      // Perform vector search with timeout
       const vectorStartTime = performance.now();
-      const queryVector = await this.embeddingService.embed(request.query);
-      vectorResults = await this.vectorSearchService.search(collectionName, {
-        queryVector,
-        limit: request.limit,
-        filter: rbacFilter
-      });
+      const embeddingResult = await this.executeWithTimeout(
+        () => this.embeddingService.embed(request.query),
+        timeouts.embedding,
+        'Embedding generation'
+      );
+      const queryVector = embeddingResult.result;
+
+      const vectorSearchResult = await this.executeWithTimeout(
+        () => this.vectorSearchService.search(collectionName, {
+          queryVector,
+          limit: request.limit,
+          filter: rbacFilter
+        }),
+        timeouts.vectorSearch,
+        'Vector search',
+        // Fallback: return empty results if vector search fails
+        () => Promise.resolve([])
+      );
+
+      vectorResults = vectorSearchResult.result;
       metrics.vectorSearchDuration = performance.now() - vectorStartTime;
       metrics.vectorResultCount = vectorResults.length;
 
-      // Perform keyword search if enabled
+      if (vectorSearchResult.timedOut) {
+        console.warn('StructuredLog:VectorSearchTimeout', {
+          timeoutMs: timeouts.vectorSearch,
+          fallbackUsed: true,
+          tenantId: request.tenantId
+        });
+      }
+
+      // Perform keyword search if enabled with timeout
       if (keywordSearchEnabled) {
         const keywordStartTime = performance.now();
-        keywordResults = await this.keywordSearchService.search(
-          collectionName,
-          request.query,
-          request.limit,
-          rbacFilter
+        const keywordSearchResult = await this.executeWithTimeout(
+          () => this.keywordSearchService.search(
+            collectionName,
+            request.query,
+            request.limit,
+            rbacFilter
+          ),
+          timeouts.keywordSearch,
+          'Keyword search',
+          // Fallback: return empty results if keyword search fails
+          () => Promise.resolve([])
         );
+
+        keywordResults = keywordSearchResult.result;
         metrics.keywordSearchDuration = performance.now() - keywordStartTime;
         metrics.keywordResultCount = keywordResults.length;
+
+        if (keywordSearchResult.timedOut) {
+          console.warn('StructuredLog:KeywordSearchTimeout', {
+            timeoutMs: timeouts.keywordSearch,
+            fallbackUsed: true,
+            tenantId: request.tenantId
+          });
+        }
       }
 
       // Perform RRF fusion
@@ -157,66 +264,72 @@ export class HybridSearchServiceImpl implements HybridSearchService {
       metrics.fusionDuration = performance.now() - fusionStartTime;
       metrics.finalResultCount = fusedResults.length;
 
-      // Apply reranking if enabled
+      // Apply reranking if enabled with timeout and fallback
       let finalResults = fusedResults;
       if (tenantConfig.rerankerEnabled && this.rerankerService) {
         const rerankerStartTime = performance.now();
 
-        try {
-          // Take top RERANKER_TOPN_IN for reranking (default 20)
-          const topNIn = RERANKER_CONFIG.TOPN_IN;
-          const resultsForReranking = fusedResults.slice(0, topNIn);
+        const rerankerResult = await this.executeWithTimeout(
+          async () => {
+            // Take top RERANKER_TOPN_IN for reranking (default 20)
+            const topNIn = RERANKER_CONFIG.TOPN_IN;
+            const resultsForReranking = fusedResults.slice(0, topNIn);
 
-          // Convert to reranker documents
-          const rerankerDocs: RerankerDocument[] = resultsForReranking.map(result => ({
-            id: result.id,
-            content: result.content || '',
-            payload: result.payload,
-            originalScore: result.fusionScore
-          }));
+            // Convert to reranker documents
+            const rerankerDocs: RerankerDocument[] = resultsForReranking.map(result => ({
+              id: result.id,
+              content: result.content || '',
+              payload: result.payload,
+              originalScore: result.fusionScore
+            }));
 
-          const rerankerRequest: RerankerRequest = {
-            query: request.query,
-            documents: rerankerDocs,
-            topK: RERANKER_CONFIG.TOPN_OUT // Default 8
-          };
-
-          const rerankedResults = await this.rerankerService.rerank(rerankerRequest);
-
-          // Convert reranked results back to HybridSearchResult format
-          finalResults = rerankedResults.map(rerankedResult => {
-            const originalResult = fusedResults.find(r => r.id === rerankedResult.id);
-            return {
-              ...originalResult!,
-              score: rerankedResult.rerankerScore,
-              fusionScore: rerankedResult.rerankerScore,
-              // Preserve original scores for debugging
-              vectorScore: originalResult?.vectorScore,
-              keywordScore: originalResult?.keywordScore
+            const rerankerRequest: RerankerRequest = {
+              query: request.query,
+              documents: rerankerDocs,
+              topK: RERANKER_CONFIG.TOPN_OUT // Default 8
             };
+
+            const rerankedResults = await this.rerankerService!.rerank(rerankerRequest);
+
+            // Convert reranked results back to HybridSearchResult format
+            return rerankedResults.map(rerankedResult => {
+              const originalResult = fusedResults.find(r => r.id === rerankedResult.id);
+              return {
+                ...originalResult!,
+                score: rerankedResult.rerankerScore,
+                fusionScore: rerankedResult.rerankerScore,
+                // Preserve original scores for debugging
+                vectorScore: originalResult?.vectorScore,
+                keywordScore: originalResult?.keywordScore
+              };
+            });
+          },
+          timeouts.reranker,
+          'Reranker',
+          // Fallback: return fusion results if reranking fails
+          () => Promise.resolve(fusedResults)
+        );
+
+        finalResults = rerankerResult.result;
+        metrics.rerankerDuration = performance.now() - rerankerStartTime;
+        metrics.rerankingEnabled = !rerankerResult.timedOut;
+        metrics.documentsReranked = rerankerResult.timedOut ? 0 : Math.min(fusedResults.length, RERANKER_CONFIG.TOPN_IN);
+
+        if (rerankerResult.timedOut) {
+          console.warn('StructuredLog:RerankerTimeout', {
+            timeoutMs: timeouts.reranker,
+            fallbackUsed: true,
+            fusionResultsUsed: fusedResults.length,
+            tenantId: request.tenantId
           });
-
-          metrics.rerankerDuration = performance.now() - rerankerStartTime;
-          metrics.rerankingEnabled = true;
-          metrics.documentsReranked = rerankerDocs.length;
-
+        } else {
           console.log('StructuredLog:RerankerSuccess', {
-            inputCount: rerankerDocs.length,
-            outputCount: rerankedResults.length,
+            inputCount: Math.min(fusedResults.length, RERANKER_CONFIG.TOPN_IN),
+            outputCount: finalResults.length,
             rerankerDuration: metrics.rerankerDuration,
-            topNIn,
+            topNIn: RERANKER_CONFIG.TOPN_IN,
             topNOut: RERANKER_CONFIG.TOPN_OUT
           });
-
-        } catch (error) {
-          console.warn('StructuredLog:RerankerFailed', {
-            error: (error as Error).message,
-            fallbackToFusion: true,
-            timeout: RERANKER_CONFIG.TIMEOUT_MS
-          });
-          metrics.rerankerDuration = performance.now() - rerankerStartTime;
-          metrics.rerankingEnabled = false;
-          // Continue with fusion results (fail open)
         }
       }
 
@@ -264,6 +377,21 @@ export class HybridSearchServiceImpl implements HybridSearchService {
     };
 
     this.tenantConfigs.set('default', defaultConfig);
+    this.timeoutConfigs.set('default', DEFAULT_TIMEOUTS);
+  }
+
+  /**
+   * Update timeout configuration for a tenant
+   */
+  updateTenantTimeouts(tenantId: string, timeouts: TimeoutConfig): void {
+    this.timeoutConfigs.set(tenantId, timeouts);
+  }
+
+  /**
+   * Get timeout configuration for a tenant
+   */
+  getTenantTimeouts(tenantId: string): TimeoutConfig {
+    return this.timeoutConfigs.get(tenantId) || DEFAULT_TIMEOUTS;
   }
 
   private getDefaultConfig(): TenantSearchConfig {

@@ -13,7 +13,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { execSync } = require('child_process');
+// const { execSync } = require('child_process'); // Unused for now
 
 class WorkflowValidator {
   constructor(options = {}) {
@@ -159,7 +159,7 @@ class WorkflowValidator {
           markdownFiles.push(fullPath);
         }
       }
-    } catch (error) {
+    } catch {
       // Ignore errors for now
     }
 
@@ -248,7 +248,7 @@ class WorkflowValidator {
         } catch (error) {
           this.warnings.push(`Could not test API connectivity: ${error.message}`);
         }
-      } catch (error) {
+      } catch {
         this.errors.push(`Invalid API URL format: ${apiUrl}`);
       }
     }

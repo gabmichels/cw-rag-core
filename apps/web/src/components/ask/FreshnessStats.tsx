@@ -1,9 +1,44 @@
 "use client";
 
-import { FreshnessStats as FreshnessStatsType } from '@cw-rag-core/shared';
+import type { FreshnessStats } from '@cw-rag-core/shared';
 
 interface FreshnessStatsProps {
-  stats: FreshnessStatsType;
+  stats: FreshnessStats;
+}
+
+function StatCard({
+  title,
+  count,
+  percentage,
+  color,
+  bgColor
+}: {
+  title: string;
+  count: number;
+  percentage: number;
+  color: string;
+  bgColor: string;
+}) {
+  return (
+    <div className={`${bgColor} rounded-lg p-4 border`}>
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className={`text-sm font-medium ${color}`}>{title}</h3>
+          <div className="mt-1">
+            <span className={`text-2xl font-bold ${color}`}>{count}</span>
+            <span className="text-sm text-gray-600 ml-2">
+              ({percentage.toFixed(1)}%)
+            </span>
+          </div>
+        </div>
+        <div className={`text-2xl opacity-60`}>
+          {title === 'Fresh' && '🟢'}
+          {title === 'Recent' && '🟡'}
+          {title === 'Stale' && '🔴'}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 export default function FreshnessStats({ stats }: FreshnessStatsProps) {
@@ -11,177 +46,100 @@ export default function FreshnessStats({ stats }: FreshnessStatsProps) {
     return null;
   }
 
-  const getPercentageColor = (percentage: number, type: 'fresh' | 'recent' | 'stale') => {
-    if (type === 'fresh') {
-      return percentage > 50 ? 'text-green-700' : percentage > 25 ? 'text-green-600' : 'text-green-500';
-    }
-    if (type === 'recent') {
-      return percentage > 50 ? 'text-yellow-700' : percentage > 25 ? 'text-yellow-600' : 'text-yellow-500';
-    }
-    // stale
-    return percentage > 50 ? 'text-red-700' : percentage > 25 ? 'text-red-600' : 'text-red-500';
-  };
-
-  const formatPercentage = (percentage: number) => {
-    return percentage.toFixed(1) + '%';
-  };
-
-  const formatAverageAge = (averageAge: number) => {
-    if (averageAge < 1) return 'Less than 1 day';
-    if (averageAge === 1) return '1 day';
-    if (averageAge < 7) return `${Math.round(averageAge)} days`;
-    if (averageAge < 30) return `${Math.round(averageAge / 7)} weeks`;
-    if (averageAge < 365) return `${Math.round(averageAge / 30)} months`;
-    return `${Math.round(averageAge / 365)} years`;
-  };
-
   return (
     <div className="bg-white rounded-lg shadow-sm border border-gray-200">
-      {/* Header */}
-      <div className="p-4 border-b border-gray-200 bg-gray-50">
-        <div className="flex items-center space-x-2">
-          <span>📊</span>
-          <h3 className="text-lg font-semibold text-gray-900">Document Freshness</h3>
-          <span className="text-sm text-gray-500">
-            ({stats.totalDocuments} documents analyzed)
-          </span>
-        </div>
+      <div className="p-4 border-b border-gray-100">
+        <h2 className="text-lg font-semibold text-gray-900">Source Freshness</h2>
+        <p className="text-sm text-gray-600 mt-1">
+          Document age distribution from {stats.totalDocuments} retrieved sources
+        </p>
       </div>
 
-      {/* Stats Grid */}
       <div className="p-4">
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          {/* Fresh Documents */}
-          <div className="bg-green-50 rounded-lg p-4 border border-green-200">
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="text-2xl font-bold text-green-700">
-                  {stats.freshCount}
-                </div>
-                <div className="text-sm text-green-600 font-medium">Fresh 🟢</div>
-              </div>
-              <div className={`text-lg font-semibold ${getPercentageColor(stats.freshPercentage, 'fresh')}`}>
-                {formatPercentage(stats.freshPercentage)}
-              </div>
-            </div>
-            <div className="mt-2 text-xs text-green-600">
-              Recently updated content
-            </div>
-          </div>
-
-          {/* Recent Documents */}
-          <div className="bg-yellow-50 rounded-lg p-4 border border-yellow-200">
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="text-2xl font-bold text-yellow-700">
-                  {stats.recentCount}
-                </div>
-                <div className="text-sm text-yellow-600 font-medium">Recent 🟡</div>
-              </div>
-              <div className={`text-lg font-semibold ${getPercentageColor(stats.recentPercentage, 'recent')}`}>
-                {formatPercentage(stats.recentPercentage)}
-              </div>
-            </div>
-            <div className="mt-2 text-xs text-yellow-600">
-              Moderately current content
-            </div>
-          </div>
-
-          {/* Stale Documents */}
-          <div className="bg-red-50 rounded-lg p-4 border border-red-200">
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="text-2xl font-bold text-red-700">
-                  {stats.staleCount}
-                </div>
-                <div className="text-sm text-red-600 font-medium">Stale 🔴</div>
-              </div>
-              <div className={`text-lg font-semibold ${getPercentageColor(stats.stalePercentage, 'stale')}`}>
-                {formatPercentage(stats.stalePercentage)}
-              </div>
-            </div>
-            <div className="mt-2 text-xs text-red-600">
-              Potentially outdated content
-            </div>
-          </div>
-
-          {/* Average Age */}
-          <div className="bg-blue-50 rounded-lg p-4 border border-blue-200">
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="text-lg font-bold text-blue-700">
-                  {formatAverageAge(stats.averageAge)}
-                </div>
-                <div className="text-sm text-blue-600 font-medium">Average Age</div>
-              </div>
-              <div className="text-2xl">
-                📅
-              </div>
-            </div>
-            <div className="mt-2 text-xs text-blue-600">
-              Across all sources
-            </div>
-          </div>
+        {/* Stats Grid */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+          <StatCard
+            title="Fresh"
+            count={stats.freshCount}
+            percentage={stats.freshPercentage}
+            color="text-green-700"
+            bgColor="bg-green-50 border-green-200"
+          />
+          <StatCard
+            title="Recent"
+            count={stats.recentCount}
+            percentage={stats.recentPercentage}
+            color="text-yellow-700"
+            bgColor="bg-yellow-50 border-yellow-200"
+          />
+          <StatCard
+            title="Stale"
+            count={stats.staleCount}
+            percentage={stats.stalePercentage}
+            color="text-red-700"
+            bgColor="bg-red-50 border-red-200"
+          />
         </div>
 
         {/* Visual Progress Bar */}
-        <div className="mt-6">
-          <div className="flex items-center justify-between text-sm text-gray-600 mb-2">
+        <div className="mb-4">
+          <div className="flex text-xs text-gray-600 mb-2">
             <span>Freshness Distribution</span>
-            <span>{stats.totalDocuments} total documents</span>
           </div>
-
           <div className="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
-            <div className="h-full flex">
-              {/* Fresh segment */}
+            {stats.freshPercentage > 0 && (
               <div
-                className="bg-green-500 h-full"
+                className="bg-green-500 h-full float-left"
                 style={{ width: `${stats.freshPercentage}%` }}
-                title={`Fresh: ${formatPercentage(stats.freshPercentage)} (${stats.freshCount} docs)`}
+                title={`Fresh: ${stats.freshCount} documents (${stats.freshPercentage.toFixed(1)}%)`}
               />
-              {/* Recent segment */}
+            )}
+            {stats.recentPercentage > 0 && (
               <div
-                className="bg-yellow-500 h-full"
+                className="bg-yellow-500 h-full float-left"
                 style={{ width: `${stats.recentPercentage}%` }}
-                title={`Recent: ${formatPercentage(stats.recentPercentage)} (${stats.recentCount} docs)`}
+                title={`Recent: ${stats.recentCount} documents (${stats.recentPercentage.toFixed(1)}%)`}
               />
-              {/* Stale segment */}
+            )}
+            {stats.stalePercentage > 0 && (
               <div
-                className="bg-red-500 h-full"
+                className="bg-red-500 h-full float-left"
                 style={{ width: `${stats.stalePercentage}%` }}
-                title={`Stale: ${formatPercentage(stats.stalePercentage)} (${stats.staleCount} docs)`}
+                title={`Stale: ${stats.staleCount} documents (${stats.stalePercentage.toFixed(1)}%)`}
               />
-            </div>
-          </div>
-
-          <div className="flex justify-between text-xs text-gray-500 mt-1">
-            <span>0%</span>
-            <span>50%</span>
-            <span>100%</span>
+            )}
           </div>
         </div>
 
-        {/* Quality Indicator */}
-        <div className="mt-4 p-3 bg-gray-50 rounded-lg">
-          <div className="flex items-center space-x-2">
-            <span className="text-sm font-medium text-gray-700">Content Quality:</span>
-            {stats.freshPercentage + stats.recentPercentage >= 70 ? (
-              <span className="px-2 py-1 bg-green-100 text-green-800 text-xs font-medium rounded-full">
-                ✅ High Quality
-              </span>
-            ) : stats.freshPercentage + stats.recentPercentage >= 40 ? (
-              <span className="px-2 py-1 bg-yellow-100 text-yellow-800 text-xs font-medium rounded-full">
-                ⚠️ Moderate Quality
-              </span>
-            ) : (
-              <span className="px-2 py-1 bg-red-100 text-red-800 text-xs font-medium rounded-full">
-                ❌ Consider Updating
-              </span>
-            )}
+        {/* Average Age */}
+        <div className="text-sm text-gray-600">
+          <span className="font-medium">Average document age:</span>
+          <span className="ml-2">
+            {stats.averageAge < 1
+              ? 'Less than 1 day'
+              : stats.averageAge === 1
+                ? '1 day'
+                : `${Math.round(stats.averageAge)} days`
+            }
+          </span>
+        </div>
+
+        {/* Legend */}
+        <div className="mt-4 pt-4 border-t border-gray-100">
+          <div className="flex flex-wrap gap-4 text-xs text-gray-600">
+            <div className="flex items-center space-x-1">
+              <span>🟢</span>
+              <span>Fresh: ≤7 days</span>
+            </div>
+            <div className="flex items-center space-x-1">
+              <span>🟡</span>
+              <span>Recent: ≤30 days</span>
+            </div>
+            <div className="flex items-center space-x-1">
+              <span>🔴</span>
+              <span>Stale: {'>'}30 days</span>
+            </div>
           </div>
-          <p className="text-xs text-gray-600 mt-1">
-            Based on the proportion of fresh and recent content in your sources
-          </p>
         </div>
       </div>
     </div>

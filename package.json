@@ -7,7 +7,8 @@
     "build": "echo \"Run build script in a specific app/package\"",
     "lint": "eslint . --ext .ts",
     "test": "echo \"No root tests, run tests in specific apps/packages\"",
-    "typecheck": "tsc --build --dry"
+    "typecheck": "tsc --build --dry",
+    "eval:fast": "cd packages/evals && npm run build && npm run eval:gold"
   },
   "keywords": [],
   "author": "",

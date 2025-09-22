@@ -27,6 +27,8 @@ import { createAnswerSynthesisService } from '../services/answer-synthesis.js';
 import { createCitationService } from '../services/citation.js';
 import { createAuditLogger } from '../utils/audit.js';
 import { QdrantClient } from '../services/qdrant.js';
+import { timeoutManager, DEFAULT_TIMEOUTS } from '../config/timeouts.js';
+import { createAskRateLimitMiddleware } from '../middleware/rate-limit.js';
 
 interface AskRouteOptions {
   qdrantClient: QdrantClient;
@@ -142,7 +144,11 @@ export async function askRoute(fastify: FastifyInstance, options: AskRouteOption
   // Create citation service
   const citationService = createCitationService(true);
 
+  // Apply rate limiting middleware to /ask endpoint
+  const rateLimitMiddleware = createAskRateLimitMiddleware(fastify);
+
   fastify.post('/ask', {
+    preHandler: rateLimitMiddleware,
     schema: {
       body: {
         type: 'object',
@@ -370,18 +376,26 @@ export async function askRoute(fastify: FastifyInstance, options: AskRouteOption
       } = request.body;
 
       const queryId = `qid-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      const qHash = Buffer.from(query).toString('base64').slice(0, 16); // Hash query for audit
+
+      // Get timeout configuration
+      const timeouts = timeoutManager.getTimeoutConfig(userContext.tenantId);
 
       // Validate user authorization first
       if (!validateUserAuthorization(userContext)) {
-        auditLogger.logError(
-          '/ask',
-          userContext.tenantId || 'default',
-          queryId,
-          'authorization',
-          'User authorization validation failed',
-          (request as any).ip,
-          (request as any).headers?.['user-agent']
-        );
+        // Enhanced audit logging with required fields
+        auditLogger.logEntry({
+          ts: new Date().toISOString(),
+          route: '/ask',
+          tenant: userContext.tenantId || 'default',
+          docId: qHash,
+          source: 'api_request',
+          action: 'block',
+          findingsSummary: [{ type: 'authorization_failed', count: 1 }],
+          status: 'blocked',
+          ip: (request as any).ip,
+          userAgent: (request as any).headers?.['user-agent']
+        });
 
         return reply.status(403).send({
           error: 'Unauthorized',
@@ -395,55 +409,75 @@ export async function askRoute(fastify: FastifyInstance, options: AskRouteOption
       let guardrailConfig: Record<string, any> = {};
 
       try {
-        // Prepare hybrid search request with enhanced configuration
-        const hybridSearchRequest: HybridSearchRequest = {
-          query,
-          limit: k || 10,
-          vectorWeight: hybridSearch?.vectorWeight ?? 0.7,
-          keywordWeight: hybridSearch?.keywordWeight ?? 0.3,
-          rrfK: hybridSearch?.rrfK ?? 60,
-          enableKeywordSearch: hybridSearch?.enableKeywordSearch ?? true,
-          filter,
-          tenantId: userContext.tenantId
-        };
+        // Apply overall timeout to the entire request
+        const overallTimeoutPromise = new Promise<never>((_, reject) => {
+          setTimeout(() => {
+            reject(new Error(`Overall request timeout after ${timeouts.overall}ms`));
+          }, timeouts.overall);
+        });
 
-        if (includeDebugInfo) {
-          hybridSearchConfig = { ...hybridSearchRequest };
-          debugSteps.push('Prepared hybrid search configuration');
-        }
-
-        // Configure reranker if specified in request
-        if (reranker?.enabled !== undefined) {
-          const tenantConfig = await hybridSearchService.getTenantConfig(
-            userContext.tenantId || 'default'
-          );
-          tenantConfig.rerankerEnabled = reranker.enabled;
-
-          if (reranker.enabled && reranker.model) {
-            tenantConfig.rerankerConfig = {
-              model: reranker.model,
-              topK: reranker.topK || 8,
-              scoreThreshold: 0.0
-            };
-          }
-
-          await hybridSearchService.updateTenantConfig(tenantConfig);
+        const processRequest = async () => {
+          // Prepare hybrid search request with enhanced configuration
+          const hybridSearchRequest: HybridSearchRequest = {
+            query,
+            limit: k || 10,
+            vectorWeight: hybridSearch?.vectorWeight ?? 0.7,
+            keywordWeight: hybridSearch?.keywordWeight ?? 0.3,
+            rrfK: hybridSearch?.rrfK ?? 60,
+            enableKeywordSearch: hybridSearch?.enableKeywordSearch ?? true,
+            filter,
+            tenantId: userContext.tenantId
+          };
 
           if (includeDebugInfo) {
-            rerankerConfig = { ...tenantConfig.rerankerConfig };
-            debugSteps.push('Updated reranker configuration');
+            hybridSearchConfig = { ...hybridSearchRequest };
+            debugSteps.push('Prepared hybrid search configuration');
           }
-        }
 
-        // Perform guarded retrieval (includes hybrid search + guardrails)
-        const retrievalStartTime = performance.now();
-        const retrievalResult = await guardedRetrievalService.retrieveWithGuardrail(
-          options.collectionName,
-          hybridSearchRequest,
-          userContext,
-          '/ask'
-        );
-        const retrievalDuration = performance.now() - retrievalStartTime;
+          // Configure reranker if specified in request
+          if (reranker?.enabled !== undefined) {
+            const tenantConfig = await hybridSearchService.getTenantConfig(
+              userContext.tenantId || 'default'
+            );
+            tenantConfig.rerankerEnabled = reranker.enabled;
+
+            if (reranker.enabled && reranker.model) {
+              tenantConfig.rerankerConfig = {
+                model: reranker.model,
+                topK: reranker.topK || 8,
+                scoreThreshold: 0.0
+              };
+            }
+
+            await hybridSearchService.updateTenantConfig(tenantConfig);
+
+            if (includeDebugInfo) {
+              rerankerConfig = { ...tenantConfig.rerankerConfig };
+              debugSteps.push('Updated reranker configuration');
+            }
+          }
+
+          // Perform guarded retrieval (includes hybrid search + guardrails) with timeout
+          const retrievalStartTime = performance.now();
+          const retrievalResult = await timeoutManager.executeWithTimeout(
+            () => guardedRetrievalService.retrieveWithGuardrail(
+              options.collectionName,
+              hybridSearchRequest,
+              userContext,
+              '/ask'
+            ),
+            timeouts.overall - 5000, // Leave 5s buffer for synthesis
+            'Retrieval pipeline'
+          );
+          const retrievalDuration = performance.now() - retrievalStartTime;
+
+          return { retrievalResult, retrievalDuration };
+        };
+
+        const { retrievalResult, retrievalDuration } = await Promise.race([
+          processRequest(),
+          overallTimeoutPromise
+        ]);
 
         if (includeDebugInfo) {
           debugSteps.push('Completed guarded retrieval');
@@ -453,13 +487,13 @@ export async function askRoute(fastify: FastifyInstance, options: AskRouteOption
           };
         }
 
-        // Log guardrail decision
+        // Enhanced audit logging with required fields
         auditLogger.logEntry({
           ts: new Date().toISOString(),
           route: '/ask',
           tenant: userContext.tenantId || 'default',
-          docId: queryId,
-          source: 'guardrail',
+          docId: qHash, // Use query hash instead of queryId for security
+          source: 'retrieval_pipeline',
           action: retrievalResult.isAnswerable ? 'publish' : 'block',
           findingsSummary: [{
             type: 'answerability_check',
@@ -472,6 +506,22 @@ export async function askRoute(fastify: FastifyInstance, options: AskRouteOption
 
         // Handle "I don't know" case
         if (!retrievalResult.isAnswerable) {
+          const totalLatency = performance.now() - startTime;
+
+          // Enhanced audit log for IDK responses with required fields
+          fastify.log.info({
+            audit: true,
+            tenant: userContext.tenantId || 'default',
+            qHash,
+            k: k || 10,
+            rrfUsed: hybridSearch?.rrfK ?? 60,
+            rerankerUsed: retrievalResult.metrics.rerankingEnabled,
+            idk: true,
+            latencyMs: Math.round(totalLatency),
+            route: '/ask',
+            timestamp: new Date().toISOString()
+          }, 'Ask request completed - IDK response');
+
           const idkResponse: AskResponse = {
             answer: retrievalResult.idkResponse?.message ||
                    "I don't have enough confidence in the available information to provide a reliable answer to your question.",
@@ -493,7 +543,7 @@ export async function askRoute(fastify: FastifyInstance, options: AskRouteOption
             },
             ...(includeMetrics && {
               metrics: {
-                totalDuration: performance.now() - startTime,
+                totalDuration: totalLatency,
                 guardrailDuration: retrievalResult.metrics.guardrailDuration,
                 vectorSearchDuration: retrievalResult.metrics.vectorSearchDuration,
                 keywordSearchDuration: retrievalResult.metrics.keywordSearchDuration,
@@ -653,16 +703,21 @@ export async function askRoute(fastify: FastifyInstance, options: AskRouteOption
           }
         }
 
-        // Non-streaming synthesis (fallback)
+        // Non-streaming synthesis with timeout
         const synthesisStartTime = performance.now();
-        const synthesisResponse = await answerSynthesisService.synthesizeAnswer({
-          query,
-          documents: retrievalResult.results || [],
-          userContext,
-          maxContextLength: synthesis?.maxContextLength || 8000,
-          includeCitations: synthesis?.includeCitations ?? true,
-          answerFormat: synthesis?.answerFormat || 'markdown'
-        });
+        const synthesisResult = await timeoutManager.executeWithTimeout(
+          () => answerSynthesisService.synthesizeAnswer({
+            query,
+            documents: retrievalResult.results || [],
+            userContext,
+            maxContextLength: synthesis?.maxContextLength || 8000,
+            includeCitations: synthesis?.includeCitations ?? true,
+            answerFormat: synthesis?.answerFormat || 'markdown'
+          }),
+          timeouts.llm,
+          'LLM synthesis'
+        );
+        const synthesisResponse = synthesisResult;
         const synthesisTime = performance.now() - synthesisStartTime;
 
         if (includeDebugInfo) {
@@ -725,6 +780,22 @@ export async function askRoute(fastify: FastifyInstance, options: AskRouteOption
           authors: citation.authors
         }));
 
+        const requestDuration = performance.now() - startTime;
+
+        // Enhanced audit log for successful responses with required fields
+        fastify.log.info({
+          audit: true,
+          tenant: userContext.tenantId || 'default',
+          qHash,
+          k: k || 10,
+          rrfUsed: hybridSearch?.rrfK ?? 60,
+          rerankerUsed: retrievalResult.metrics.rerankingEnabled,
+          idk: false,
+          latencyMs: Math.round(requestDuration),
+          route: '/ask',
+          timestamp: new Date().toISOString()
+        }, 'Ask request completed - Success');
+
         const response: AskResponse = {
           answer: synthesisResponse.answer,
           retrievedDocuments,
@@ -745,7 +816,7 @@ export async function askRoute(fastify: FastifyInstance, options: AskRouteOption
           citations: responseCitations,
           ...(includeMetrics && {
             metrics: {
-              totalDuration: totalTime,
+              totalDuration: requestDuration,
               vectorSearchDuration: retrievalResult.metrics.vectorSearchDuration,
               keywordSearchDuration: retrievalResult.metrics.keywordSearchDuration,
               fusionDuration: retrievalResult.metrics.fusionDuration,
@@ -779,30 +850,45 @@ export async function askRoute(fastify: FastifyInstance, options: AskRouteOption
         return reply.send(response);
 
       } catch (error) {
+        const totalLatency = performance.now() - startTime;
+
+        // Enhanced audit log for errors with required fields
+        fastify.log.error({
+          audit: true,
+          tenant: userContext.tenantId || 'default',
+          qHash,
+          k: k || 10,
+          rrfUsed: hybridSearch?.rrfK ?? 60,
+          rerankerUsed: false, // Assume false on error
+          idk: false,
+          latencyMs: Math.round(totalLatency),
+          route: '/ask',
+          error: (error as Error).message,
+          timestamp: new Date().toISOString()
+        }, 'Ask request failed');
+
         // Log error using audit logger
         auditLogger.logError(
           '/ask',
           userContext.tenantId || 'default',
-          queryId,
+          qHash, // Use query hash for consistency
           'pipeline',
           (error as Error).message,
           (request as any).ip,
           (request as any).headers?.['user-agent']
         );
 
-        fastify.log.error({
-          queryId,
-          error: (error as Error).message,
-          stack: (error as Error).stack,
-          query: query.substring(0, 100) // Log first 100 chars of query for debugging
-        }, 'Ask pipeline error');
-
         // Check if it's a timeout error
         if ((error as Error).message.includes('timeout') || (error as Error).message.includes('Request timeout')) {
           return reply.status(408).send({
             error: 'Request Timeout',
             message: 'The request took too long to process. Please try again with a simpler query.',
-            queryId
+            queryId,
+            timeoutStage: (error as Error).message.includes('Overall') ? 'overall' :
+                         (error as Error).message.includes('Vector') ? 'vector_search' :
+                         (error as Error).message.includes('Keyword') ? 'keyword_search' :
+                         (error as Error).message.includes('Reranker') ? 'reranker' :
+                         (error as Error).message.includes('LLM') ? 'llm' : 'unknown'
           });
         }
 

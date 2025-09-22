@@ -2,7 +2,7 @@
 
 import { useState, useRef, useCallback } from 'react';
 import { UploadFile, PreviewResponse, PublishResponse, UploadFormData, PIIPolicy } from '../../types';
-import { handleApiResponse, APIError, validateFileType, generateDocId, formatFileSize } from '../../utils/api';
+import { validateFileType, formatFileSize } from '../../utils/api';
 
 const ALLOWED_FILE_TYPES = ['pdf', 'docx', 'md', 'html', 'txt'];
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB

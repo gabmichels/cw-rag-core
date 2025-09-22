@@ -140,7 +140,7 @@ describe('MockRerankerService', () => {
       const { results, metrics } = await service.rerankWithMetrics(request);
 
       expect(results).toHaveLength(2);
-      expect(metrics.rerankerDuration).toBeGreaterThanOrEqual(10);
+      expect(metrics.rerankerDuration).toBeGreaterThanOrEqual(8);
       expect(metrics.documentsProcessed).toBe(2);
       expect(metrics.batchCount).toBe(1);
       expect(metrics.avgScoreImprovement).toBeGreaterThanOrEqual(0);

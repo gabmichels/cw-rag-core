@@ -11,7 +11,10 @@ export interface VectorSearchParams {
   filter?: Record<string, any>; // Metadata filter
 }
 
-export interface VectorSearchResult extends Vector {}
+export type VectorSearchResult = Vector & {
+  // Additional search result metadata can be added here in the future
+  searchMetadata?: Record<string, unknown>;
+}
 
 export interface VectorDBClient {
   upsertVectors(collectionName: string, vectors: Vector[]): Promise<void>;

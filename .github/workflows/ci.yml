@@ -56,3 +56,123 @@ jobs:
 
     - name: Run Tests
       run: pnpm -r test
+
+  # Evaluation gates - Run subset evaluation to validate quality
+  evaluation-gates:
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20.x'
+        cache: 'pnpm'
+
+    - name: Setup pnpm
+      uses: pnpm/action-setup@v3
+      with:
+        version: 8
+
+    - name: Install dependencies
+      run: pnpm install --frozen-lockfile
+
+    - name: Build packages
+      run: pnpm -r build
+
+    - name: Start evaluation services
+      run: |
+        # Start qdrant and redis for evaluation
+        docker-compose -f docker-compose.eval.yml up -d qdrant redis
+
+        # Wait for services
+        timeout 60 bash -c 'until curl -f http://localhost:6333/ >/dev/null 2>&1; do sleep 2; done'
+        timeout 30 bash -c 'until docker-compose -f docker-compose.eval.yml exec -T redis redis-cli ping >/dev/null 2>&1; do sleep 1; done'
+
+    - name: Start API service
+      run: |
+        cd apps/api
+        export NODE_ENV=test
+        export PORT=3000
+        export QDRANT_URL=http://localhost:6333
+        export INGEST_TOKEN=ci-eval-token-${{ github.run_id }}
+
+        # Start API in background
+        npm start &
+        API_PID=$!
+        echo $API_PID > api.pid
+
+        # Wait for API to be ready
+        timeout 90 bash -c 'until curl -f http://localhost:3000/healthz >/dev/null 2>&1; do sleep 3; done'
+
+    - name: Run evaluation subset (CI Gates)
+      id: evaluation
+      run: |
+        cd packages/evals
+
+        # Create subset datasets for fast CI validation
+        mkdir -p data-subset
+        head -n 5 data/gold.jsonl > data-subset/gold.jsonl
+        head -n 5 data/ood.jsonl > data-subset/ood.jsonl
+        head -n 3 data/inject.jsonl > data-subset/inject.jsonl
+        head -n 3 data/rbac.jsonl > data-subset/rbac.jsonl
+
+        # Backup original data and use subset
+        mv data data-full
+        mv data-subset data
+
+        # Run subset evaluation with strict thresholds
+        npm run eval -- run \
+          --dataset all \
+          --api-url http://localhost:3000 \
+          --output ./ci-eval-results \
+          --verbose \
+          --timeout 30000 \
+          --retries 2 || echo "EVAL_FAILED=true" >> $GITHUB_OUTPUT
+
+    - name: Upload CI evaluation results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: ci-evaluation-results-${{ github.run_id }}
+        path: packages/evals/ci-eval-results/
+        retention-days: 7
+
+    - name: Validate CI thresholds
+      if: always()
+      run: |
+        cd packages/evals/ci-eval-results
+
+        if [[ ! -f ci-summary.json ]]; then
+          echo "❌ CI evaluation failed - no results generated"
+          exit 1
+        fi
+
+        # Check CI summary status
+        status=$(jq -r '.status' ci-summary.json)
+        critical_failures=$(jq -r '.criticalFailures' ci-summary.json)
+
+        echo "📊 CI Evaluation Status: $status"
+        echo "🚨 Critical Failures: $critical_failures"
+
+        if [[ "$status" == "FAILED" || "$critical_failures" -gt 0 ]]; then
+          echo "❌ CI EVALUATION FAILED: Critical thresholds not met"
+          jq -r '.status, .criticalFailures, .warnings' ci-summary.json
+          exit 1
+        else
+          echo "✅ CI EVALUATION PASSED: All critical thresholds met"
+        fi
+
+    - name: Cleanup services
+      if: always()
+      run: |
+        # Stop API
+        if [[ -f apps/api/api.pid ]]; then
+          kill $(cat apps/api/api.pid) || true
+        fi
+
+        # Stop Docker services
+        docker-compose -f docker-compose.eval.yml down --volumes || true

@@ -18,7 +18,11 @@
     "eval:ood": "npm run cli -- --dataset ood",
     "eval:inject": "npm run cli -- --dataset inject",
     "eval:rbac": "npm run cli -- --dataset rbac",
-    "eval:all": "npm run cli -- --dataset all"
+    "eval:all": "npm run cli -- --dataset all",
+    "validate:ci": "node scripts/validate-ci-thresholds.cjs",
+    "eval:ci": "npm run eval:all && npm run validate:ci",
+    "test:gates": "node scripts/test-ci-gates.cjs",
+    "sample:reports": "node scripts/generate-sample-reports.cjs"
   },
   "dependencies": {
     "@cw-rag-core/shared": "file:../shared",

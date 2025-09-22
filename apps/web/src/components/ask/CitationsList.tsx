@@ -1,44 +1,21 @@
 "use client";
 
-import { useState } from 'react';
-import { RetrievedDocument } from '@cw-rag-core/shared';
-
-interface Citation {
-  id: string;
-  number: number;
-  source: string;
-  freshness?: {
-    category: 'Fresh' | 'Recent' | 'Stale';
-    badge: string;
-    ageInDays: number;
-    humanReadable: string;
-    timestamp: string;
-  };
-}
+import { useEffect, useRef } from 'react';
+import { AskResponse, RetrievedDocument } from '@cw-rag-core/shared';
+import { calculateFreshnessInfoSafe } from '@cw-rag-core/shared';
 
 interface CitationsListProps {
-  citations: Citation[];
+  citations: AskResponse['citations'];
   retrievedDocuments: RetrievedDocument[];
+  selectedCitationId?: string;
 }
 
-export default function CitationsList({ citations, retrievedDocuments }: CitationsListProps) {
-  const [expandedCitations, setExpandedCitations] = useState<Set<string>>(new Set());
+function FreshnessBadge({ freshness }: { freshness?: ReturnType<typeof calculateFreshnessInfoSafe> }) {
+  if (!freshness) {
+    return null;
+  }
 
-  const toggleCitation = (citationId: string) => {
-    const newExpanded = new Set(expandedCitations);
-    if (newExpanded.has(citationId)) {
-      newExpanded.delete(citationId);
-    } else {
-      newExpanded.add(citationId);
-    }
-    setExpandedCitations(newExpanded);
-  };
-
-  const getDocumentForCitation = (citation: Citation) => {
-    return retrievedDocuments.find(doc => doc.document.id === citation.id);
-  };
-
-  const getFreshnessBadgeStyle = (category: 'Fresh' | 'Recent' | 'Stale') => {
+  const getBadgeStyle = (category: string) => {
     switch (category) {
       case 'Fresh':
         return 'bg-green-100 text-green-800 border-green-200';
@@ -51,131 +28,167 @@ export default function CitationsList({ citations, retrievedDocuments }: Citatio
     }
   };
 
+  return (
+    <span className={`inline-flex items-center px-2 py-1 text-xs font-medium rounded-full border ${getBadgeStyle(freshness.category)}`}>
+      {freshness.badge}
+      <span className="ml-1">({freshness.humanReadable})</span>
+    </span>
+  );
+}
+
+function CitationCard({
+  citation,
+  document,
+  isSelected
+}: {
+  citation: NonNullable<AskResponse['citations']>[0];
+  document?: RetrievedDocument;
+  isSelected: boolean;
+}) {
+  const cardRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (isSelected && cardRef.current) {
+      cardRef.current.scrollIntoView({
+        behavior: 'smooth',
+        block: 'center',
+        inline: 'nearest'
+      });
+    }
+  }, [isSelected]);
+
+  const freshness = citation.freshness || (
+    document?.document.metadata.modifiedAt
+      ? calculateFreshnessInfoSafe(document.document.metadata.modifiedAt, document.document.metadata.tenantId)
+      : null
+  );
+
+  return (
+    <div
+      ref={cardRef}
+      id={`citation-${citation.id}`}
+      className={`border rounded-lg p-4 transition-all duration-200 ${
+        isSelected
+          ? 'border-blue-500 bg-blue-50 shadow-md'
+          : 'border-gray-200 bg-white hover:border-gray-300'
+      }`}
+    >
+      {/* Citation header */}
+      <div className="flex items-start justify-between mb-3">
+        <div className="flex items-center space-x-2">
+          <span className="inline-flex items-center justify-center w-6 h-6 bg-blue-600 text-white text-xs font-bold rounded-full">
+            {citation.number}
+          </span>
+          <h3 className="font-medium text-gray-900 truncate">{citation.source}</h3>
+        </div>
+        <FreshnessBadge freshness={freshness} />
+      </div>
+
+      {/* Citation metadata */}
+      <div className="space-y-2 text-sm text-gray-600">
+        {citation.docId && (
+          <div className="flex items-center space-x-2">
+            <span className="font-medium">Document ID:</span>
+            <span className="font-mono text-xs bg-gray-100 px-2 py-1 rounded">
+              {citation.docId}
+            </span>
+          </div>
+        )}
+
+        {citation.version && (
+          <div className="flex items-center space-x-2">
+            <span className="font-medium">Version:</span>
+            <span className="font-mono text-xs bg-gray-100 px-2 py-1 rounded">
+              {citation.version}
+            </span>
+          </div>
+        )}
+
+        {citation.authors && citation.authors.length > 0 && (
+          <div className="flex items-center space-x-2">
+            <span className="font-medium">Authors:</span>
+            <span>{citation.authors.join(', ')}</span>
+          </div>
+        )}
+
+        {citation.url && (
+          <div className="flex items-center space-x-2">
+            <span className="font-medium">URL:</span>
+            <a
+              href={citation.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-blue-600 hover:text-blue-800 underline truncate"
+            >
+              {citation.url}
+            </a>
+          </div>
+        )}
+
+        {citation.filepath && (
+          <div className="flex items-center space-x-2">
+            <span className="font-medium">File:</span>
+            <span className="font-mono text-xs bg-gray-100 px-2 py-1 rounded truncate">
+              {citation.filepath}
+            </span>
+          </div>
+        )}
+      </div>
+
+      {/* Document content snippet if available */}
+      {document?.document.content && (
+        <div className="mt-4 pt-3 border-t border-gray-100">
+          <div className="text-sm text-gray-700 bg-gray-50 p-3 rounded border-l-4 border-blue-400">
+            <div className="font-medium text-gray-800 mb-1">Content excerpt:</div>
+            <div className="line-clamp-3">
+              {document.document.content.substring(0, 300)}
+              {document.document.content.length > 300 && '...'}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Retrieval score if available */}
+      {document?.score && (
+        <div className="mt-2 text-xs text-gray-500">
+          Relevance score: {(document.score * 100).toFixed(1)}%
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default function CitationsList({
+  citations,
+  retrievedDocuments,
+  selectedCitationId
+}: CitationsListProps & { selectedCitationId?: string }) {
   if (!citations || citations.length === 0) {
     return null;
   }
 
   return (
     <div className="bg-white rounded-lg shadow-sm border border-gray-200">
-      {/* Header */}
-      <div className="p-4 border-b border-gray-200 bg-gray-50">
-        <h3 className="text-lg font-semibold text-gray-900 flex items-center space-x-2">
-          <span>📚</span>
-          <span>Citations ({citations.length})</span>
-        </h3>
+      <div className="p-4 border-b border-gray-100">
+        <h2 className="text-lg font-semibold text-gray-900">Sources</h2>
         <p className="text-sm text-gray-600 mt-1">
-          Sources used to generate this answer
+          Click on citation numbers in the answer above to highlight sources below
         </p>
       </div>
 
-      {/* Citations List */}
-      <div className="divide-y divide-gray-200">
+      <div className="p-4 space-y-4">
         {citations.map((citation) => {
-          const document = getDocumentForCitation(citation);
-          const isExpanded = expandedCitations.has(citation.id);
+          const document = retrievedDocuments.find(doc =>
+            doc.document.id === citation.docId
+          );
 
           return (
-            <div key={citation.id} id={`citation-${citation.number}`} className="p-4">
-              {/* Citation Header */}
-              <div className="flex items-start justify-between">
-                <div className="flex-1">
-                  <div className="flex items-center space-x-3">
-                    {/* Citation Number */}
-                    <div className="flex-shrink-0 w-8 h-8 bg-blue-100 text-blue-800 rounded-full flex items-center justify-center text-sm font-semibold">
-                      {citation.number}
-                    </div>
-
-                    {/* Source Info */}
-                    <div className="flex-1">
-                      <h4 className="text-sm font-medium text-gray-900 line-clamp-2">
-                        {citation.source}
-                      </h4>
-
-                      {/* Freshness Badge */}
-                      {citation.freshness && (
-                        <div className="mt-1 flex items-center space-x-2">
-                          <span
-                            className={`
-                              inline-flex items-center px-2 py-1 text-xs font-medium rounded-full border
-                              ${getFreshnessBadgeStyle(citation.freshness.category)}
-                            `}
-                          >
-                            {citation.freshness.badge}
-                          </span>
-                          <span className="text-xs text-gray-500">
-                            {citation.freshness.humanReadable}
-                          </span>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Expand/Collapse Button */}
-                <button
-                  onClick={() => toggleCitation(citation.id)}
-                  className="ml-4 px-3 py-1.5 text-xs font-medium text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-md transition-colors duration-200"
-                >
-                  {isExpanded ? '🔼 Less' : '🔽 More'}
-                </button>
-              </div>
-
-              {/* Expanded Content */}
-              {isExpanded && document && (
-                <div className="mt-4 pl-11 space-y-3">
-                  {/* Document Metadata */}
-                  <div className="bg-gray-50 rounded-lg p-3 space-y-2">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
-                      <div>
-                        <span className="font-medium text-gray-700">Document ID:</span>
-                        <span className="ml-1 text-gray-600 font-mono">{document.document.id}</span>
-                      </div>
-                      <div>
-                        <span className="font-medium text-gray-700">Score:</span>
-                        <span className="ml-1 text-gray-600">{document.score.toFixed(4)}</span>
-                      </div>
-                      {Boolean(document.document.metadata?.type) && (
-                        <div>
-                          <span className="font-medium text-gray-700">Type:</span>
-                          <span className="ml-1 text-gray-600">{document.document.metadata.type as string}</span>
-                        </div>
-                      )}
-                      {Boolean(document.document.metadata?.wordCount) && (
-                        <div>
-                          <span className="font-medium text-gray-700">Word Count:</span>
-                          <span className="ml-1 text-gray-600">{document.document.metadata.wordCount as string}</span>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Document Content Preview */}
-                  <div className="bg-blue-50 rounded-lg p-3">
-                    <h5 className="text-xs font-medium text-gray-700 mb-2">Content Preview:</h5>
-                    <p className="text-sm text-gray-800 line-clamp-4 leading-relaxed">
-                      {document.document.content.substring(0, 500)}
-                      {document.document.content.length > 500 && '...'}
-                    </p>
-                  </div>
-
-                  {/* Source Link */}
-                  {Boolean(document.document.metadata?.source) && (
-                    <div>
-                      <a
-                        href={document.document.metadata.source as string}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center space-x-1 text-sm text-blue-600 hover:text-blue-800 underline"
-                      >
-                        <span>🔗</span>
-                        <span>View Original Source</span>
-                        <span>↗</span>
-                      </a>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
+            <CitationCard
+              key={citation.id}
+              citation={citation}
+              document={document}
+              isSelected={selectedCitationId === citation.id}
+            />
           );
         })}
       </div>

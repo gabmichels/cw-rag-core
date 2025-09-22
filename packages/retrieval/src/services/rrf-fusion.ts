@@ -68,8 +68,8 @@ export class ReciprocalRankFusionService implements RrfFusionService {
         searchType = 'keyword_only';
       }
 
-      // Get document content and payload (prefer vector result, fallback to keyword result)
-      const sourceResult = vectorEntry?.result || keywordEntry?.result;
+      // Get document content and payload (prefer keyword result over vector result)
+      const sourceResult = keywordEntry?.result || vectorEntry?.result;
       if (!sourceResult) continue;
 
       fusedResults.push({

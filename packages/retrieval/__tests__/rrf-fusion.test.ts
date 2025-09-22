@@ -137,10 +137,12 @@ describe('RRF Fusion Services', () => {
 
     it('should respect weight configurations', () => {
       const vectorResults: VectorSearchResult[] = [
-        { id: 'doc1', vector: [], score: 1.0, payload: { content: 'content' } }
+        { id: 'doc1', vector: [], score: 1.0, payload: { content: 'content' } },
+        { id: 'doc2', vector: [], score: 0.8, payload: { content: 'content2' } }
       ];
       const keywordResults = [
-        { id: 'doc1', score: 1.0, payload: { content: 'content' }, content: 'content' }
+        { id: 'doc2', score: 1.0, payload: { content: 'content2' }, content: 'content2' },
+        { id: 'doc1', score: 0.8, payload: { content: 'content' }, content: 'content' }
       ];
 
       const vectorHeavyConfig: RrfConfig = { k: 60, vectorWeight: 0.9, keywordWeight: 0.1 };
@@ -149,8 +151,12 @@ describe('RRF Fusion Services', () => {
       const vectorHeavyResults = rrfService.fuseResults(vectorResults, keywordResults, vectorHeavyConfig);
       const keywordHeavyResults = rrfService.fuseResults(vectorResults, keywordResults, keywordHeavyConfig);
 
+      // Find doc1 in both results to compare fusion scores
+      const doc1VectorHeavy = vectorHeavyResults.find(r => r.id === 'doc1')!;
+      const doc1KeywordHeavy = keywordHeavyResults.find(r => r.id === 'doc1')!;
+
       // Both should have same structure but different weight distributions
-      expect(vectorHeavyResults[0].fusionScore).not.toEqual(keywordHeavyResults[0].fusionScore);
+      expect(doc1VectorHeavy.fusionScore).not.toEqual(doc1KeywordHeavy.fusionScore);
     });
   });
 

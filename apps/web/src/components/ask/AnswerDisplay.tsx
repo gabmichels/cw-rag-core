@@ -1,145 +1,171 @@
 "use client";
 
 import { useState } from 'react';
-
-interface Citation {
-  id: string;
-  number: number;
-  source: string;
-  freshness?: {
-    category: 'Fresh' | 'Recent' | 'Stale';
-    badge: string;
-    ageInDays: number;
-    humanReadable: string;
-    timestamp: string;
-  };
-}
+import { AskResponse } from '@cw-rag-core/shared';
 
 interface AnswerDisplayProps {
   answer: string;
-  citations?: Citation[];
+  citations?: AskResponse['citations'];
   queryId: string;
+  guardrailDecision?: AskResponse['guardrailDecision'];
+  onCitationClick?: (citationId: string) => void;
 }
 
-export default function AnswerDisplay({ answer, citations, queryId }: AnswerDisplayProps) {
-  const [copied, setCopied] = useState(false);
+function getConfidenceLevel(confidence: number): { level: string; color: string; bgColor: string } {
+  if (confidence >= 0.8) {
+    return { level: 'High', color: 'text-green-700', bgColor: 'bg-green-100' };
+  } else if (confidence >= 0.5) {
+    return { level: 'Medium', color: 'text-yellow-700', bgColor: 'bg-yellow-100' };
+  } else {
+    return { level: 'Low', color: 'text-red-700', bgColor: 'bg-red-100' };
+  }
+}
 
-  const handleCopyToClipboard = async () => {
-    try {
-      await navigator.clipboard.writeText(answer);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch (error) {
-      console.error('Failed to copy to clipboard:', error);
+function CitationChip({ citation, onClick }: {
+  citation: NonNullable<AskResponse['citations']>[0];
+  onClick?: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className="inline-flex items-center px-2 py-1 text-xs font-medium bg-blue-100 text-blue-800 rounded-full hover:bg-blue-200 transition-colors cursor-pointer"
+      title={`Click to view source: ${citation.source}`}
+    >
+      <span className="mr-1">[{citation.number}]</span>
+      <span className="truncate max-w-[120px]">{citation.source}</span>
+      {citation.version && (
+        <span className="ml-1 text-blue-600">v{citation.version}</span>
+      )}
+    </button>
+  );
+}
+
+export default function AnswerDisplay({
+  answer,
+  citations,
+  queryId,
+  guardrailDecision,
+  onCitationClick
+}: AnswerDisplayProps) {
+  const [, setSelectedCitation] = useState<string | null>(null);
+
+  // Parse citations from the answer text to replace [1], [2], etc. with clickable chips
+  const renderAnswerWithCitations = (text: string) => {
+    if (!citations || citations.length === 0) {
+      return <div className="whitespace-pre-wrap">{text}</div>;
     }
-  };
 
-  // Simple markdown renderer for basic formatting
-  const renderFormattedText = (text: string) => {
-    // Replace citation patterns like [^1] with styled links
-    const citationPattern = /\[\^(\d+)\]/g;
-    const parts = text.split(citationPattern);
+    const citationRegex = /\[(\d+)\]/g;
+    const parts = [];
+    let lastIndex = 0;
+    let match;
 
-    const elements = [];
-    for (let i = 0; i < parts.length; i++) {
-      if (i % 2 === 0) {
-        // Regular text - apply basic markdown formatting
-        let formatted = parts[i];
-
-        // Bold text
-        formatted = formatted.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-        formatted = formatted.replace(/__(.*?)__/g, '<strong>$1</strong>');
-
-        // Italic text
-        formatted = formatted.replace(/\*(.*?)\*/g, '<em>$1</em>');
-        formatted = formatted.replace(/_(.*?)_/g, '<em>$1</em>');
-
-        // Code spans
-        formatted = formatted.replace(/`(.*?)`/g, '<code class="bg-gray-100 px-1 py-0.5 rounded text-sm font-mono">$1</code>');
-
-        // Line breaks
-        formatted = formatted.replace(/\n\n/g, '</p><p>');
-        formatted = formatted.replace(/\n/g, '<br/>');
-
-        elements.push(
-          <span key={i} dangerouslySetInnerHTML={{ __html: formatted }} />
-        );
-      } else {
-        // Citation number
-        const citationNumber = parseInt(parts[i]);
-        const citation = citations?.find(c => c.number === citationNumber);
-
-        elements.push(
-          <a
-            key={i}
-            href={`#citation-${citationNumber}`}
-            className="inline-flex items-center px-1.5 py-0.5 text-xs font-medium bg-blue-100 text-blue-800 rounded-md hover:bg-blue-200 transition-colors duration-200 no-underline"
-            title={citation ? `Source: ${citation.source}` : `Citation ${citationNumber}`}
-          >
-            {citationNumber}
-          </a>
+    while ((match = citationRegex.exec(text)) !== null) {
+      // Add text before citation
+      if (match.index > lastIndex) {
+        parts.push(
+          <span key={`text-${lastIndex}`}>
+            {text.slice(lastIndex, match.index)}
+          </span>
         );
       }
+
+      // Add citation chip
+      const citationNumber = parseInt(match[1]);
+      const citation = citations.find(c => c.number === citationNumber);
+
+      if (citation) {
+        parts.push(
+          <CitationChip
+            key={`citation-${citation.id}`}
+            citation={citation}
+            onClick={() => {
+              setSelectedCitation(citation.id);
+              onCitationClick?.(citation.id);
+            }}
+          />
+        );
+      } else {
+        // Fallback for missing citation
+        parts.push(
+          <span key={`missing-${citationNumber}`} className="text-red-500">
+            [{citationNumber}]
+          </span>
+        );
+      }
+
+      lastIndex = citationRegex.lastIndex;
     }
 
-    return elements;
+    // Add remaining text
+    if (lastIndex < text.length) {
+      parts.push(
+        <span key={`text-${lastIndex}`}>
+          {text.slice(lastIndex)}
+        </span>
+      );
+    }
+
+    return <div className="whitespace-pre-wrap leading-relaxed">{parts}</div>;
   };
+
+  const confidence = guardrailDecision?.confidence ?? 0;
+  const confidenceInfo = getConfidenceLevel(confidence);
 
   return (
     <div className="bg-white rounded-lg shadow-sm border border-gray-200">
-      {/* Header */}
-      <div className="flex items-center justify-between p-4 border-b border-gray-200 bg-gray-50">
-        <div className="flex items-center space-x-2">
-          <span className="text-green-600">✅</span>
-          <h2 className="text-lg font-semibold text-gray-900">Answer</h2>
-          <span className="text-xs text-gray-500 bg-gray-200 px-2 py-1 rounded">
-            ID: {queryId.substring(0, 8)}...
-          </span>
-        </div>
-
-        <button
-          onClick={handleCopyToClipboard}
-          className={`
-            px-3 py-1.5 rounded-md text-sm font-medium transition-all duration-200
-            flex items-center space-x-1.5
-            ${copied
-              ? 'bg-green-100 text-green-700 border border-green-200'
-              : 'bg-gray-100 text-gray-700 hover:bg-gray-200 border border-gray-300'
-            }
-          `}
-          title="Copy answer to clipboard"
-        >
-          {copied ? (
-            <>
-              <span>✅</span>
-              <span>Copied!</span>
-            </>
-          ) : (
-            <>
-              <span>📋</span>
-              <span>Copy</span>
-            </>
-          )}
-        </button>
+      {/* Header with confidence indicator */}
+      <div className="flex items-center justify-between p-4 border-b border-gray-100">
+        <h2 className="text-lg font-semibold text-gray-900">Answer</h2>
+        {guardrailDecision && (
+          <div className="flex items-center space-x-2">
+            <span className="text-sm text-gray-600">Confidence:</span>
+            <span className={`px-2 py-1 text-xs font-medium rounded-full ${confidenceInfo.bgColor} ${confidenceInfo.color}`}>
+              {confidenceInfo.level}
+            </span>
+            <span className="text-xs text-gray-500">
+              ({Math.round(confidence * 100)}%)
+            </span>
+          </div>
+        )}
       </div>
 
-      {/* Answer Content */}
+      {/* Answer content */}
       <div className="p-6">
-        <div className="prose prose-gray max-w-none text-gray-800 leading-relaxed">
-          <p>{renderFormattedText(answer)}</p>
+        <div className="text-gray-800 text-base leading-relaxed">
+          {renderAnswerWithCitations(answer)}
         </div>
 
-        {/* Citation count */}
+        {/* Citations summary */}
         {citations && citations.length > 0 && (
-          <div className="mt-6 pt-4 border-t border-gray-200">
-            <div className="flex items-center space-x-2 text-sm text-gray-600">
-              <span>📚</span>
-              <span>
-                Based on {citations.length} source{citations.length !== 1 ? 's' : ''}
+          <div className="mt-6 pt-4 border-t border-gray-100">
+            <div className="flex items-center space-x-2 mb-3">
+              <span className="text-sm font-medium text-gray-700">Citations:</span>
+              <span className="text-xs text-gray-500">
+                {citations.length} source{citations.length !== 1 ? 's' : ''} referenced
               </span>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {citations.map((citation) => (
+                <CitationChip
+                  key={citation.id}
+                  citation={citation}
+                  onClick={() => {
+                    setSelectedCitation(citation.id);
+                    onCitationClick?.(citation.id);
+                  }}
+                />
+              ))}
             </div>
           </div>
         )}
+
+        {/* Query ID for debugging */}
+        <div className="mt-4 pt-4 border-t border-gray-50">
+          <div className="text-xs text-gray-400 font-mono">
+            Query ID: {queryId}
+          </div>
+        </div>
       </div>
     </div>
   );

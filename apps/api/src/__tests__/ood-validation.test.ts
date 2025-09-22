@@ -1,7 +1,12 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
 import { guardrailService } from '../services/guardrail.js';
 import { UserContext } from '@cw-rag-core/shared';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 interface OODTestCase {
   id: string;

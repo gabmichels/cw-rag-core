@@ -1,157 +1,142 @@
 "use client";
 
-interface GuardrailDecision {
-  isAnswerable: boolean;
-  confidence: number;
-  reasonCode?: string;
-  suggestions?: string[];
-}
+import { AskResponse } from '@cw-rag-core/shared';
 
 interface IDontKnowCardProps {
-  guardrailDecision: GuardrailDecision;
+  guardrailDecision: NonNullable<AskResponse['guardrailDecision']>;
   query: string;
 }
 
 export default function IDontKnowCard({ guardrailDecision, query }: IDontKnowCardProps) {
-  const getReasonMessage = (reasonCode?: string) => {
-    switch (reasonCode) {
-      case 'LOW_CONFIDENCE':
-        return 'The system has low confidence in providing an accurate answer based on the available documents.';
+  const confidence = guardrailDecision.confidence || 0;
+  const reasonCode = guardrailDecision.reasonCode;
+  const suggestions = guardrailDecision.suggestions || [];
+
+  const getReasonMessage = (code?: string) => {
+    switch (code) {
       case 'NO_RELEVANT_DOCS':
-        return 'No relevant documents were found in the knowledge base for this query.';
-      case 'INSUFFICIENT_CONTEXT':
-        return 'The available documents do not contain sufficient context to answer this question.';
-      case 'OUT_OF_SCOPE':
-        return 'This question appears to be outside the scope of the available knowledge base.';
-      case 'AMBIGUOUS_QUERY':
-        return 'The question is too ambiguous to provide a specific answer.';
+        return 'No relevant documents found in the knowledge base.';
+      case 'LOW_CONFIDENCE':
+        return 'The available information is not sufficient to provide a confident answer.';
+      case 'POOR_RETRIEVAL_SCORES':
+        return 'The retrieved documents do not contain relevant information for this query.';
+      case 'CONTEXT_INSUFFICIENT':
+        return 'The context provided is insufficient to generate a reliable answer.';
       default:
-        return 'The system cannot provide a reliable answer for this query.';
+        return 'Unable to provide a reliable answer based on the available information.';
     }
-  };
-
-  const getConfidenceColor = (confidence: number) => {
-    if (confidence < 0.3) return 'bg-red-100 text-red-800 border-red-200';
-    if (confidence < 0.6) return 'bg-yellow-100 text-yellow-800 border-yellow-200';
-    return 'bg-orange-100 text-orange-800 border-orange-200';
-  };
-
-  const getSuggestionTips = () => {
-    return [
-      'Try rephrasing your question with more specific terms',
-      'Break down complex questions into simpler parts',
-      'Check if your question relates to the available documents',
-      'Use different keywords or synonyms',
-      'Be more specific about what you\'re looking for',
-    ];
   };
 
   return (
     <div className="bg-white rounded-lg shadow-sm border border-gray-200">
       {/* Header */}
-      <div className="p-4 border-b border-gray-200 bg-orange-50">
+      <div className="flex items-center p-4 border-b border-gray-100">
         <div className="flex items-center space-x-3">
-          <div className="flex-shrink-0 w-12 h-12 bg-orange-100 rounded-full flex items-center justify-center">
-            <span className="text-2xl">🤷</span>
+          <div className="flex-shrink-0">
+            <div className="w-10 h-10 bg-orange-100 rounded-full flex items-center justify-center">
+              <span className="text-orange-600 text-xl">🤔</span>
+            </div>
           </div>
           <div>
-            <h2 className="text-lg font-semibold text-gray-900">I Don't Know</h2>
+            <h2 className="text-lg font-semibold text-gray-900">I don't know</h2>
             <p className="text-sm text-gray-600">
-              Unable to provide a confident answer for this query
+              Confidence: {Math.round(confidence * 100)}% (below threshold)
             </p>
           </div>
         </div>
       </div>
 
       {/* Content */}
-      <div className="p-6 space-y-4">
-        {/* Query Display */}
-        <div className="bg-gray-50 rounded-lg p-4">
-          <h3 className="text-sm font-medium text-gray-700 mb-2">Your Question:</h3>
-          <p className="text-gray-900 italic">"{query}"</p>
+      <div className="p-6">
+        {/* Your question */}
+        <div className="mb-4">
+          <h3 className="text-sm font-medium text-gray-700 mb-2">Your question:</h3>
+          <div className="bg-gray-50 p-3 rounded border-l-4 border-blue-400">
+            <p className="text-gray-800 italic">"{query}"</p>
+          </div>
         </div>
 
         {/* Reason */}
-        <div>
-          <h3 className="text-sm font-medium text-gray-700 mb-2">Reason:</h3>
-          <p className="text-gray-800 leading-relaxed">
-            {getReasonMessage(guardrailDecision.reasonCode)}
-          </p>
+        <div className="mb-4">
+          <h3 className="text-sm font-medium text-gray-700 mb-2">Why I can't answer:</h3>
+          <div className="bg-orange-50 p-3 rounded border-l-4 border-orange-400">
+            <p className="text-gray-700">{getReasonMessage(reasonCode)}</p>
+          </div>
         </div>
 
-        {/* Confidence Score */}
-        <div className="flex items-center justify-between">
-          <span className="text-sm font-medium text-gray-700">Confidence Score:</span>
-          <span
-            className={`
-              px-3 py-1 text-sm font-medium rounded-full border
-              ${getConfidenceColor(guardrailDecision.confidence)}
-            `}
-          >
-            {Math.round(guardrailDecision.confidence * 100)}%
-          </span>
-        </div>
-
-        {/* Custom Suggestions from Guardrail */}
-        {guardrailDecision.suggestions && guardrailDecision.suggestions.length > 0 && (
-          <div>
+        {/* Suggestions */}
+        {suggestions.length > 0 && (
+          <div className="mb-4">
             <h3 className="text-sm font-medium text-gray-700 mb-2">Suggestions:</h3>
-            <ul className="space-y-2">
-              {guardrailDecision.suggestions.map((suggestion, index) => (
-                <li key={index} className="flex items-start space-x-2">
-                  <span className="flex-shrink-0 w-4 h-4 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center text-xs font-bold mt-0.5">
-                    {index + 1}
-                  </span>
-                  <span className="text-gray-800">{suggestion}</span>
+            <ul className="bg-blue-50 p-3 rounded border-l-4 border-blue-400 space-y-1">
+              {suggestions.map((suggestion, index) => (
+                <li key={index} className="text-gray-700 flex items-start">
+                  <span className="text-blue-600 mr-2">•</span>
+                  <span>{suggestion}</span>
                 </li>
               ))}
             </ul>
           </div>
         )}
 
-        {/* General Tips */}
-        <div className="border-t border-gray-200 pt-4">
-          <h3 className="text-sm font-medium text-gray-700 mb-3">💡 Tips for Better Results:</h3>
-          <ul className="space-y-2">
-            {getSuggestionTips().map((tip, index) => (
-              <li key={index} className="flex items-start space-x-2">
-                <span className="flex-shrink-0 text-gray-400 mt-1">•</span>
-                <span className="text-sm text-gray-600">{tip}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
+        {/* Algorithm details */}
+        {guardrailDecision.algorithmScores && (
+          <div className="mt-6 pt-4 border-t border-gray-100">
+            <details className="group">
+              <summary className="text-sm font-medium text-gray-700 cursor-pointer hover:text-gray-900">
+                <span className="group-open:hidden">Show technical details ↓</span>
+                <span className="hidden group-open:inline">Hide technical details ↑</span>
+              </summary>
+              <div className="mt-3 text-xs text-gray-600 space-y-2">
+                <div className="grid grid-cols-2 gap-4 bg-gray-50 p-3 rounded">
+                  <div>
+                    <span className="font-medium">Statistical Score:</span>
+                    <span className="ml-2">{guardrailDecision.algorithmScores.statistical.toFixed(3)}</span>
+                  </div>
+                  <div>
+                    <span className="font-medium">Threshold Score:</span>
+                    <span className="ml-2">{guardrailDecision.algorithmScores.threshold.toFixed(3)}</span>
+                  </div>
+                  <div>
+                    <span className="font-medium">ML Features:</span>
+                    <span className="ml-2">{guardrailDecision.algorithmScores.mlFeatures.toFixed(3)}</span>
+                  </div>
+                  {guardrailDecision.algorithmScores.rerankerConfidence && (
+                    <div>
+                      <span className="font-medium">Reranker Confidence:</span>
+                      <span className="ml-2">{guardrailDecision.algorithmScores.rerankerConfidence.toFixed(3)}</span>
+                    </div>
+                  )}
+                </div>
 
-        {/* Action Buttons */}
-        <div className="flex flex-col sm:flex-row gap-3 pt-4 border-t border-gray-200">
-          <button
-            onClick={() => window.location.reload()}
-            className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors duration-200 font-medium text-sm"
-          >
-            🔄 Try Again
-          </button>
-          <button
-            onClick={() => {
-              const mailto = `mailto:support@example.com?subject=Question Not Answered&body=Query: ${encodeURIComponent(query)}%0A%0AReason: ${encodeURIComponent(getReasonMessage(guardrailDecision.reasonCode))}`;
-              window.location.href = mailto;
-            }}
-            className="flex-1 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors duration-200 font-medium text-sm border border-gray-300"
-          >
-            📧 Contact Support
-          </button>
-        </div>
-
-        {/* Debug Info */}
-        <details className="mt-4">
-          <summary className="cursor-pointer text-xs text-gray-500 hover:text-gray-700">
-            🔧 Debug Information
-          </summary>
-          <div className="mt-2 p-3 bg-gray-50 rounded text-xs font-mono">
-            <div>Reason Code: {guardrailDecision.reasonCode || 'UNKNOWN'}</div>
-            <div>Confidence: {guardrailDecision.confidence.toFixed(4)}</div>
-            <div>Answerable: {guardrailDecision.isAnswerable.toString()}</div>
+                {guardrailDecision.scoreStats && (
+                  <div className="bg-gray-50 p-3 rounded">
+                    <div className="font-medium mb-2">Score Statistics:</div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>Mean: {guardrailDecision.scoreStats.mean.toFixed(3)}</div>
+                      <div>Max: {guardrailDecision.scoreStats.max.toFixed(3)}</div>
+                      <div>Min: {guardrailDecision.scoreStats.min.toFixed(3)}</div>
+                      <div>Std Dev: {guardrailDecision.scoreStats.stdDev.toFixed(3)}</div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </details>
           </div>
-        </details>
+        )}
+
+        {/* Help text */}
+        <div className="mt-6 pt-4 border-t border-gray-100">
+          <div className="bg-blue-50 p-4 rounded-lg">
+            <h4 className="text-sm font-medium text-blue-900 mb-2">💡 Tips for better results:</h4>
+            <ul className="text-sm text-blue-800 space-y-1">
+              <li>• Try rephrasing your question with different keywords</li>
+              <li>• Be more specific about what you're looking for</li>
+              <li>• Check if the information exists in your knowledge base</li>
+              <li>• Consider breaking complex questions into simpler parts</li>
+            </ul>
+          </div>
+        </div>
       </div>
     </div>
   );

@@ -7,7 +7,7 @@
 
 import { promises as fs } from 'fs';
 import path from 'path';
-import { EvaluationAPIClient, createTestUserContext, createAskRequest } from '../dist/api-client.js';
+import { createTestUserContext, createAskRequest } from '../dist/api-client.js';
 import { EvaluationRunner } from '../dist/runner.js';
 import { MetricsCalculator } from '../dist/metrics.js';
 import { ReportGenerator } from '../dist/reporting.js';
