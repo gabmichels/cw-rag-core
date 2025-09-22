@@ -6,12 +6,9 @@
     "declaration": true,
     "emitDeclarationOnly": false,
     "composite": true,
-    "baseUrl": ".",
-    "paths": {
-      "@cw-rag-core/shared": ["../shared/src"]
-    }
+    "tsBuildInfoFile": "dist/.tsbuildinfo"
   },
-  "references": [{ "path": "../shared" }],
+  "references": [{ "path": "../shared/tsconfig.build.json" }],
   "include": ["src/**/*.ts"],
-  "exclude": ["**/__tests__/**", "**/*.test.ts"]
+  "exclude": ["**/*.test.ts", "**/__tests__/**", "src/**/__tests__/**"]
 }

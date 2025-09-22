@@ -17,18 +17,20 @@ RUN pnpm fetch --prefer-offline
 
 # Bring source, install
 COPY . .
-RUN pnpm -w install --no-frozen-lockfile
 
 # ---- build: build workspace libs then API (build tsconfig excludes tests) ----
 FROM deps AS build
-RUN pnpm -w install --no-frozen-lockfile
+RUN pnpm -r install --no-frozen-lockfile
+
+# Ensure TS is available once
+RUN pnpm -w add -D typescript @types/node@20
+
+# Build linked packages together using their *build* configs
+RUN pnpm -w exec tsc -b \
+  packages/shared/tsconfig.build.json \
+  packages/retrieval/tsconfig.build.json
+
 # Ensure TypeScript is available for all packages
-RUN pnpm --filter "@cw-rag-core/shared" add -D typescript
-RUN pnpm --filter "@cw-rag-core/retrieval" add -D typescript
-RUN pnpm --filter "@cw-rag-core/ingestion-sdk" add -D typescript
-RUN pnpm --filter "@cw-rag-core/api" add -D typescript
-RUN pnpm --filter "@cw-rag-core/shared" run build
-RUN pnpm --filter "@cw-rag-core/retrieval" run build
 RUN pnpm --filter "@cw-rag-core/ingestion-sdk" run build
 RUN pnpm --filter "@cw-rag-core/api" run build
 

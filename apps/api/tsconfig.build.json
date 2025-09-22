@@ -1,15 +1,23 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
+    "baseUrl": ".",                           // local to apps/api
+    "paths": {
+      "@cw-rag-core/shared": ["../../packages/shared/dist/index.d.ts"],
+      "@cw-rag-core/retrieval": ["../../packages/retrieval/dist/index.d.ts"],
+      "@cw-rag-core/ingestion-sdk": ["../../packages/ingestion-sdk/dist/index.d.ts"]
+    },
+    "rootDir": "src",
     "outDir": "dist",
-    "declaration": false,
-    "emitDeclarationOnly": false
+    "declaration": true,
+    "emitDeclarationOnly": false,
+    "composite": true,
+    "tsBuildInfoFile": "dist/.tsbuildinfo"
   },
   "references": [
-    { "path": "../../packages/shared" },
-    { "path": "../../packages/retrieval" },
-    { "path": "../../packages/ingestion-sdk" }
+    { "path": "../../packages/shared/tsconfig.build.json" },
+    { "path": "../../packages/retrieval/tsconfig.build.json" }
   ],
   "include": ["src/**/*.ts"],
-  "exclude": ["src/__tests__/**", "**/*.test.ts"]
+  "exclude": ["**/*.test.ts", "**/__tests__/**", "src/**/__tests__/**"]
 }

@@ -10,6 +10,14 @@
     "allowSyntheticDefaultImports": true,
     "resolveJsonModule": true,
     "isolatedModules": true,
-    "downlevelIteration": true
+    "downlevelIteration": true,
+
+    "types": ["node"],
+    "baseUrl": ".",
+    "paths": {
+      "@cw-rag-core/shared": ["packages/shared/src/index.ts"],
+      "@cw-rag-core/retrieval": ["packages/retrieval/src/index.ts"],
+      "@cw-rag-core/ingestion-sdk": ["packages/ingestion-sdk/src/index.ts"]
+    }
   }
 }
