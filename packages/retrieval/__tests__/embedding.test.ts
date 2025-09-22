@@ -24,7 +24,7 @@ describe('BgeSmallEnV15EmbeddingService', () => {
 
   it('should return a 384-length array for embedding', async () => {
     const mockEmbedding = Array.from({ length: EMBEDDING_DIMENSIONS }).map(() => Math.random());
-    mockedAxios.post.mockResolvedValueOnce({ data: { embeddings: [mockEmbedding] } });
+    mockedAxios.post.mockResolvedValueOnce({ data: [mockEmbedding] });
 
     const result = await service.embed(mockText);
 
@@ -39,7 +39,7 @@ describe('BgeSmallEnV15EmbeddingService', () => {
     const norm = Math.sqrt(rawEmbedding.reduce((sum, val) => sum + val * val, 0));
     const expectedNormalized = rawEmbedding.map(v => v / norm);
 
-    mockedAxios.post.mockResolvedValueOnce({ data: { embeddings: [rawEmbedding] } });
+    mockedAxios.post.mockResolvedValueOnce({ data: [rawEmbedding] });
 
     const result = await service.embed(mockText);
 
@@ -56,7 +56,7 @@ describe('BgeSmallEnV15EmbeddingService', () => {
       .mockRejectedValueOnce(new Error('Network error')) // First failure
       .mockRejectedValueOnce(new Error('Service unavailable')) // Second failure
       .mockResolvedValueOnce({
-        data: { embeddings: [Array.from({ length: EMBEDDING_DIMENSIONS }).map(() => Math.random())] },
+        data: [Array.from({ length: EMBEDDING_DIMENSIONS }).map(() => Math.random())],
       }); // Success on third attempt
 
     const result = await service.embed(mockText);
@@ -83,7 +83,7 @@ describe('BgeSmallEnV15EmbeddingService', () => {
 
   it('should throw an error if embedding service returns unexpected dimensions', async () => {
     const mockEmbedding = Array.from({ length: 100 }).map(() => Math.random()); // Incorrect dimension
-    mockedAxios.post.mockResolvedValueOnce({ data: { embeddings: [mockEmbedding] } });
+    mockedAxios.post.mockResolvedValueOnce({ data: [mockEmbedding] });
 
     await expect(service.embed(mockText)).rejects.toThrow('Expected 384 dimensions, but got 100');
   });
@@ -95,13 +95,13 @@ describe('BgeSmallEnV15EmbeddingService', () => {
       metadata: { tenantId: "test", docId: "doc1", acl: ["public"], lang: "en", url: "http://example.com" }
     };
     const mockEmbedding = Array.from({ length: EMBEDDING_DIMENSIONS }).map(() => Math.random());
-    mockedAxios.post.mockResolvedValueOnce({ data: { embeddings: [mockEmbedding] } });
+    mockedAxios.post.mockResolvedValueOnce({ data: [mockEmbedding] });
 
     const result = await service.embedDocument(mockDocument);
 
     expect(mockedAxios.post).toHaveBeenCalledWith(
       expect.any(String),
-      { texts: [mockDocument.content] },
+      { inputs: [mockDocument.content] },
       expect.any(Object)
     );
     expect(result).toHaveLength(EMBEDDING_DIMENSIONS);

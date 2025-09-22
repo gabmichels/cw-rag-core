@@ -17,5 +17,6 @@ module.exports = {
   },
   moduleNameMapper: {
     '^(\\.{1,2}/.*)\\.js$': '$1',
+    '@xenova/transformers': '<rootDir>/__mocks__/@xenova/transformers.js'
   }
 };

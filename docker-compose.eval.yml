@@ -41,6 +41,29 @@ services:
     networks:
       - eval-network
 
+  # BGE Small EN v1.5 Embedding Service (384 dimensions with L2 normalization)
+  embeddings:
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.8
+    container_name: eval-embeddings
+    ports:
+      - "8080:80"
+    environment:
+      - MODEL_ID=BAAI/bge-small-en-v1.5
+      - REVISION=main
+      - MAX_CONCURRENT_REQUESTS=512
+      - MAX_BATCH_TOKENS=16384
+      - VECTOR_DIM=384
+    volumes:
+      - embeddings_cache:/data
+    networks:
+      - eval-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:80/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+
   # API service
   api:
     build:
@@ -58,10 +81,14 @@ services:
       # Evaluation specific settings
       LOG_LEVEL: info
       API_TIMEOUT: 30000
+      EMBEDDINGS_URL: http://embeddings:80/embed
+      VECTOR_DIM: 384
     depends_on:
       qdrant:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      embeddings:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/healthz"]
@@ -196,3 +223,5 @@ volumes:
     name: eval-prometheus-data
   grafana_data:
     name: eval-grafana-data
+  embeddings_cache:
+    name: eval-embeddings-cache
