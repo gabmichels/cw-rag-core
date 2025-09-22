@@ -1,3 +1,4 @@
+import { RERANKER_CONFIG } from '../types/reranker.js';
 import { buildQdrantRBACFilter, validateUserAuthorization, hasDocumentAccess, calculateLanguageRelevance } from '@cw-rag-core/shared';
 export class HybridSearchServiceImpl {
     vectorSearchService;
@@ -81,8 +82,9 @@ export class HybridSearchServiceImpl {
             if (tenantConfig.rerankerEnabled && this.rerankerService) {
                 const rerankerStartTime = performance.now();
                 try {
-                    // Take top 20 for reranking (or all if less than 20)
-                    const resultsForReranking = fusedResults.slice(0, 20);
+                    // Take top RERANKER_TOPN_IN for reranking (default 20)
+                    const topNIn = RERANKER_CONFIG.TOPN_IN;
+                    const resultsForReranking = fusedResults.slice(0, topNIn);
                     // Convert to reranker documents
                     const rerankerDocs = resultsForReranking.map(result => ({
                         id: result.id,
@@ -93,7 +95,7 @@ export class HybridSearchServiceImpl {
                     const rerankerRequest = {
                         query: request.query,
                         documents: rerankerDocs,
-                        topK: 8 // Return top 8 after reranking
+                        topK: RERANKER_CONFIG.TOPN_OUT // Default 8
                     };
                     const rerankedResults = await this.rerankerService.rerank(rerankerRequest);
                     // Convert reranked results back to HybridSearchResult format
@@ -111,15 +113,23 @@ export class HybridSearchServiceImpl {
                     metrics.rerankerDuration = performance.now() - rerankerStartTime;
                     metrics.rerankingEnabled = true;
                     metrics.documentsReranked = rerankerDocs.length;
+                    console.log('StructuredLog:RerankerSuccess', {
+                        inputCount: rerankerDocs.length,
+                        outputCount: rerankedResults.length,
+                        rerankerDuration: metrics.rerankerDuration,
+                        topNIn,
+                        topNOut: RERANKER_CONFIG.TOPN_OUT
+                    });
                 }
                 catch (error) {
                     console.warn('StructuredLog:RerankerFailed', {
                         error: error.message,
-                        fallbackToFusion: true
+                        fallbackToFusion: true,
+                        timeout: RERANKER_CONFIG.TIMEOUT_MS
                     });
                     metrics.rerankerDuration = performance.now() - rerankerStartTime;
                     metrics.rerankingEnabled = false;
-                    // Continue with fusion results
+                    // Continue with fusion results (fail open)
                 }
             }
             // Apply final limit and enhanced RBAC post-filtering with language relevance
@@ -157,7 +167,7 @@ export class HybridSearchServiceImpl {
             defaultVectorWeight: 0.7,
             defaultKeywordWeight: 0.3,
             defaultRrfK: 60,
-            rerankerEnabled: false
+            rerankerEnabled: RERANKER_CONFIG.ENABLED
         };
         this.tenantConfigs.set('default', defaultConfig);
     }
@@ -168,7 +178,7 @@ export class HybridSearchServiceImpl {
             defaultVectorWeight: 0.7,
             defaultKeywordWeight: 0.3,
             defaultRrfK: 60,
-            rerankerEnabled: false
+            rerankerEnabled: RERANKER_CONFIG.ENABLED
         };
     }
     // Legacy compatibility method

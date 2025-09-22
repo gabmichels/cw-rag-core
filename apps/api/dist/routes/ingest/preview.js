@@ -87,9 +87,112 @@ const PreviewResponseSchema = z.object({
 export async function previewRoute(fastify, options) {
     fastify.post('/preview', {
         schema: {
-            body: PreviewRequestSchema,
+            body: {
+                anyOf: [
+                    {
+                        type: 'object',
+                        properties: {
+                            meta: {
+                                type: 'object',
+                                properties: {
+                                    tenant: { type: 'string', minLength: 1 },
+                                    docId: { type: 'string', minLength: 1 },
+                                    source: { type: 'string', minLength: 1 },
+                                    path: { type: 'string' },
+                                    title: { type: 'string' },
+                                    lang: { type: 'string', pattern: '^[a-z]{2}$' },
+                                    version: { type: 'string' },
+                                    sha256: { type: 'string', pattern: '^[a-f0-9]{64}$' },
+                                    acl: { type: 'array', items: { type: 'string', minLength: 1 } },
+                                    authors: { type: 'array', items: { type: 'string' } },
+                                    tags: { type: 'array', items: { type: 'string' } },
+                                    timestamp: { type: 'string', format: 'date-time' },
+                                    modifiedAt: { type: 'string', format: 'date-time' },
+                                    deleted: { type: 'boolean' },
+                                },
+                                required: ['tenant', 'docId', 'source', 'sha256', 'acl', 'timestamp'],
+                            },
+                            blocks: {
+                                type: 'array',
+                                items: {
+                                    type: 'object',
+                                    properties: {
+                                        type: { type: 'string', enum: ['text', 'table', 'code', 'image-ref'] },
+                                        text: { type: 'string' },
+                                        html: { type: 'string' },
+                                    },
+                                    required: ['type'],
+                                },
+                            },
+                        },
+                        required: ['meta', 'blocks'],
+                    },
+                    {
+                        type: 'array',
+                        items: {
+                            type: 'object',
+                            properties: {
+                                meta: {
+                                    type: 'object',
+                                    properties: {
+                                        tenant: { type: 'string', minLength: 1 },
+                                        docId: { type: 'string', minLength: 1 },
+                                        source: { type: 'string', minLength: 1 },
+                                        path: { type: 'string' },
+                                        title: { type: 'string' },
+                                        lang: { type: 'string', pattern: '^[a-z]{2}$' },
+                                        version: { type: 'string' },
+                                        sha256: { type: 'string', pattern: '^[a-f0-9]{64}$' },
+                                        acl: { type: 'array', items: { type: 'string', minLength: 1 } },
+                                        authors: { type: 'array', items: { type: 'string' } },
+                                        tags: { type: 'array', items: { type: 'string' } },
+                                        timestamp: { type: 'string', format: 'date-time' },
+                                        modifiedAt: { type: 'string', format: 'date-time' },
+                                        deleted: { type: 'boolean' },
+                                    },
+                                    required: ['tenant', 'docId', 'source', 'sha256', 'acl', 'timestamp'],
+                                },
+                                blocks: {
+                                    type: 'array',
+                                    items: {
+                                        type: 'object',
+                                        properties: {
+                                            type: { type: 'string', enum: ['text', 'table', 'code', 'image-ref'] },
+                                            text: { type: 'string' },
+                                            html: { type: 'string' },
+                                        },
+                                        required: ['type'],
+                                    },
+                                },
+                            },
+                            required: ['meta', 'blocks'],
+                        },
+                    },
+                ],
+            },
             response: {
-                200: PreviewResponseSchema,
+                200: {
+                    type: 'object',
+                    properties: {
+                        wouldPublish: { type: 'boolean' },
+                        findings: {
+                            type: 'array',
+                            items: {
+                                type: 'object',
+                                properties: {
+                                    type: { type: 'string' },
+                                    count: { type: 'number' },
+                                },
+                                required: ['type', 'count'],
+                            },
+                        },
+                        bytes: { type: 'number' },
+                        blocksCount: { type: 'number' },
+                        processedDocs: { type: 'number' },
+                        errors: { type: 'array', items: { type: 'string' } },
+                    },
+                    required: ['wouldPublish', 'findings', 'bytes', 'blocksCount', 'processedDocs'],
+                },
             },
         },
         handler: async (request, reply) => {
@@ -145,7 +248,7 @@ export async function previewRoute(fastify, options) {
                     catch (docError) {
                         const errorMsg = `Error processing document ${doc.meta?.docId || 'unknown'}: ${docError.message}`;
                         errors.push(errorMsg);
-                        fastify.log.error(errorMsg, docError);
+                        fastify.log.error({ error: docError }, errorMsg);
                     }
                 }
                 const response = {
@@ -159,7 +262,7 @@ export async function previewRoute(fastify, options) {
                 return reply.send(response);
             }
             catch (error) {
-                fastify.log.error('Error in preview endpoint', error);
+                fastify.log.error({ error }, 'Error in preview endpoint');
                 return reply.status(500).send({
                     error: 'Internal Server Error',
                     message: 'Failed to process preview request'

@@ -27,7 +27,7 @@ export interface AnswerabilityGuardrailService {
 export declare class AnswerabilityGuardrailServiceImpl implements AnswerabilityGuardrailService {
     private tenantConfigs;
     constructor();
-    evaluateAnswerability(query: string, results: HybridSearchResult[], userContext: UserContext, metrics?: SearchPerformanceMetrics): Promise<GuardrailDecision>;
+    evaluateAnswerability(query: string, results: HybridSearchResult[], userContext: UserContext, _metrics?: SearchPerformanceMetrics): Promise<GuardrailDecision>;
     calculateAnswerabilityScore(results: HybridSearchResult[], rerankerResults?: RerankerResult[]): AnswerabilityScore;
     getTenantConfig(tenantId: string): Promise<TenantGuardrailConfig>;
     updateTenantConfig(config: TenantGuardrailConfig): Promise<void>;

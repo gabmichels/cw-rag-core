@@ -1,9 +1,37 @@
 import { ingestDocument } from '../services/qdrant.js';
-import { IngestDocumentRequestSchema } from '@cw-rag-core/shared';
 export async function ingestNormalizeRoute(fastify, options) {
     fastify.post('/ingest/normalize', {
         schema: {
-            body: IngestDocumentRequestSchema,
+            body: {
+                type: 'object',
+                properties: {
+                    documents: {
+                        type: 'array',
+                        items: {
+                            type: 'object',
+                            properties: {
+                                content: { type: 'string' },
+                                metadata: {
+                                    type: 'object',
+                                    properties: {
+                                        tenantId: { type: 'string', format: 'uuid' },
+                                        docId: { type: 'string' },
+                                        version: { type: 'string' },
+                                        url: { type: 'string', format: 'uri' },
+                                        filepath: { type: 'string' },
+                                        authors: { type: 'array', items: { type: 'string' } },
+                                        keywords: { type: 'array', items: { type: 'string' } },
+                                        acl: { type: 'array', items: { type: 'string' } },
+                                    },
+                                    required: ['tenantId', 'docId', 'acl'],
+                                },
+                            },
+                            required: ['content', 'metadata'],
+                        },
+                    },
+                },
+                required: ['documents'],
+            },
             response: {
                 200: {
                     type: 'object',
@@ -36,7 +64,7 @@ export async function ingestNormalizeRoute(fastify, options) {
                     documentIds.push(id);
                 }
                 catch (error) {
-                    fastify.log.error(error.message, `Failed to ingest document: ${doc.metadata?.url || 'unknown'}`);
+                    fastify.log.error({ error }, `Failed to ingest document: ${doc.metadata?.url || 'unknown'}`);
                     failedDocuments.push({ document: doc, error: error.message });
                 }
             }

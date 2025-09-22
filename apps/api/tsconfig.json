@@ -10,9 +10,7 @@
     "tsBuildInfoFile": "dist/.tsbuildinfo",
     "baseUrl": ".",
     "paths": {
-      "@cw-rag-core/shared": ["../../packages/shared/src"],
-      "@cw-rag-core/retrieval": ["../../packages/retrieval/src"],
-       "fastify": ["./src/types/stubs/fastify.d.ts"],
+      "fastify": ["./src/types/stubs/fastify.d.ts"],
       "@fastify/cors": ["./src/types/stubs/@fastify/cors.d.ts"],
       "pino": ["./src/types/stubs/pino.d.ts"],
       "crypto": ["./src/types/stubs/crypto.d.ts"],

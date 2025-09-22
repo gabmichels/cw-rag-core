@@ -3,14 +3,14 @@ import { BaseRerankerService } from './reranker.js';
 import { RERANKER_MODELS } from '../types/reranker.js';
 /**
  * HTTP-based reranker service client
- * Similar to the embedding service pattern for remote reranker endpoints
+ * API format: POST {query, candidates: [{id,text}]} → {scores: number[]}
  */
 export class HttpRerankerService extends BaseRerankerService {
     serviceUrl;
     retryDelayMs;
     constructor(config, serviceUrl) {
         super(config);
-        this.serviceUrl = serviceUrl || process.env.RERANKER_SERVICE_URL || 'http://reranker:80/rerank';
+        this.serviceUrl = serviceUrl || process.env.RERANKER_ENDPOINT || 'http://reranker:8080/rerank';
         this.retryDelayMs = 100;
     }
     async rerank(request) {
@@ -19,7 +19,7 @@ export class HttpRerankerService extends BaseRerankerService {
         }
         try {
             // Process in batches if document count exceeds batch size
-            const batchSize = this.config.batchSize || 20;
+            const batchSize = this.config.batchSize || 16;
             if (request.documents.length <= batchSize) {
                 return await this.processSingleBatch(request);
             }
@@ -39,44 +39,50 @@ export class HttpRerankerService extends BaseRerankerService {
         }
     }
     async processSingleBatch(request) {
+        // Prepare candidates with token capping
+        const candidates = request.documents.map(doc => ({
+            id: doc.id,
+            text: this.capTokens(doc.content, 512) // Cap to ~512 tokens
+        }));
         const httpRequest = {
-            query: request.query,
-            documents: request.documents.map(doc => ({
-                id: doc.id,
-                content: doc.content,
-                metadata: doc.payload
-            })),
-            model: request.model || this.config.model.name,
-            top_k: request.topK || this.config.topK
+            query: this.capTokens(request.query, 300), // Cap query to ~300 tokens
+            candidates
         };
         const response = await this.withRetry(async () => {
             return await axios.post(this.serviceUrl, httpRequest, {
-                timeout: this.config.timeoutMs || 5000,
+                timeout: this.config.timeoutMs || 500, // Default 500ms timeout
                 headers: {
                     'Content-Type': 'application/json'
                 }
             });
         });
-        if (!response.data || !response.data.results || !Array.isArray(response.data.results)) {
-            throw new Error('Invalid response from reranker service');
+        if (!response.data || !Array.isArray(response.data.scores)) {
+            throw new Error('Invalid response from reranker service - expected {scores: number[]}');
+        }
+        const scores = response.data.scores;
+        if (scores.length !== request.documents.length) {
+            throw new Error(`Score count mismatch: expected ${request.documents.length}, got ${scores.length}`);
         }
         // Convert response to RerankerResult format
-        const results = response.data.results.map((result, index) => {
-            const originalDoc = request.documents.find(doc => doc.id === result.id);
-            return {
-                id: result.id,
-                score: result.score,
-                content: result.content,
-                payload: result.metadata || originalDoc?.payload,
-                originalScore: originalDoc?.originalScore,
-                rerankerScore: result.score,
-                rank: index + 1
-            };
-        });
+        const results = request.documents.map((doc, index) => ({
+            id: doc.id,
+            score: scores[index],
+            content: doc.content,
+            payload: doc.payload,
+            originalScore: doc.originalScore,
+            rerankerScore: scores[index],
+            rank: 0 // Will be set after sorting
+        }));
+        // Sort by reranker score descending
+        results.sort((a, b) => b.rerankerScore - a.rerankerScore);
         // Apply local filtering if needed
         let filtered = this.applyScoreThreshold(results);
         filtered = this.applyTopK(filtered);
-        return filtered;
+        // Update ranks
+        return filtered.map((result, index) => ({
+            ...result,
+            rank: index + 1
+        }));
     }
     async processMultipleBatches(request, batchSize) {
         const batches = this.createBatches(request.documents, batchSize);
@@ -100,19 +106,45 @@ export class HttpRerankerService extends BaseRerankerService {
             rank: index + 1
         }));
     }
+    /**
+     * Cap text to approximately specified number of tokens
+     * Simple approximation: ~4 characters per token for English text
+     */
+    capTokens(text, maxTokens) {
+        const approximateTokens = text.length / 4;
+        if (approximateTokens <= maxTokens) {
+            return text;
+        }
+        const maxChars = maxTokens * 4;
+        return text.substring(0, maxChars);
+    }
     async isHealthy() {
         try {
-            const response = await axios.get(`${this.serviceUrl}/health`, {
+            // Try a simple health check - some services might have /health endpoint
+            const response = await axios.get(`${this.serviceUrl.replace('/rerank', '/health')}`, {
                 timeout: 3000
             });
             return response.status === 200;
         }
         catch (error) {
-            console.warn('StructuredLog:RerankerHealthCheckFailed', {
-                serviceUrl: this.serviceUrl,
-                error: error.message
-            });
-            return false;
+            // If no health endpoint, try a minimal rerank request
+            try {
+                const testResponse = await axios.post(this.serviceUrl, {
+                    query: 'test',
+                    candidates: [{ id: 'test', text: 'test' }]
+                }, {
+                    timeout: 3000
+                });
+                return testResponse.status === 200 && Array.isArray(testResponse.data?.scores);
+            }
+            catch (testError) {
+                console.warn('StructuredLog:RerankerHealthCheckFailed', {
+                    serviceUrl: this.serviceUrl,
+                    error: error.message,
+                    testError: testError.message
+                });
+                return false;
+            }
         }
     }
     getSupportedModels() {

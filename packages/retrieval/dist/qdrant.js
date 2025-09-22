@@ -5,7 +5,7 @@ export class QdrantClientStub {
         // Simulate async operation
         await new Promise(resolve => setTimeout(resolve, 100));
     }
-    async searchVectors(collectionName, queryVector, limit, filter) {
+    async searchVectors(collectionName, queryVector, limit, _filter) {
         console.log(`Stub: Searching collection ${collectionName} with query vector (first 5 elements): [${queryVector.slice(0, 5).join(', ')}...]`);
         // Simulate async operation and return mock results
         await new Promise(resolve => setTimeout(resolve, 100));

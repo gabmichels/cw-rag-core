@@ -1,6 +1,7 @@
+import { QdrantClient } from '@qdrant/js-client-rest';
 import * as crypto from 'crypto';
 import { DOCUMENT_VECTOR_DIMENSION, buildQdrantRBACFilter, validateUserAuthorization } from '@cw-rag-core/shared';
-export { QdrantClient } from '@qdrant/js-client-rest'; // Explicitly export QdrantClient
+export { QdrantClient };
 export const QDRANT_COLLECTION_NAME = 'docs_v1';
 export async function bootstrapQdrant(qdrantClient, logger, maxRetries = 5, retryDelay = 5000) {
     for (let i = 0; i < maxRetries; i++) {
@@ -37,6 +38,17 @@ export async function bootstrapQdrant(qdrantClient, logger, maxRetries = 5, retr
                     field_schema: 'keyword',
                     wait: true
                 });
+                // Temporal metadata indexes for freshness calculations
+                await qdrantClient.createPayloadIndex(QDRANT_COLLECTION_NAME, {
+                    field_name: 'createdAt',
+                    field_schema: 'keyword',
+                    wait: true
+                });
+                await qdrantClient.createPayloadIndex(QDRANT_COLLECTION_NAME, {
+                    field_name: 'modifiedAt',
+                    field_schema: 'keyword',
+                    wait: true
+                });
                 // Create full-text index for content field to enable BM25-style keyword search
                 logger.info(`Creating full-text index for content field in '${QDRANT_COLLECTION_NAME}'...`);
                 await qdrantClient.createPayloadIndex(QDRANT_COLLECTION_NAME, {
@@ -48,6 +60,11 @@ export async function bootstrapQdrant(qdrantClient, logger, maxRetries = 5, retr
                 logger.info(`Creating additional performance indexes for '${QDRANT_COLLECTION_NAME}'...`);
                 await qdrantClient.createPayloadIndex(QDRANT_COLLECTION_NAME, {
                     field_name: 'url',
+                    field_schema: 'keyword',
+                    wait: true
+                });
+                await qdrantClient.createPayloadIndex(QDRANT_COLLECTION_NAME, {
+                    field_name: 'version',
                     field_schema: 'keyword',
                     wait: true
                 });
@@ -74,15 +91,25 @@ export async function bootstrapQdrant(qdrantClient, logger, maxRetries = 5, retr
 export async function ingestDocument(qdrantClient, embeddingService, collectionName, document) {
     const docId = crypto.createHash('sha256').update(document.content).digest('hex');
     const vector = await embeddingService.embed(document.content);
+    // Ensure temporal metadata is captured
+    const now = new Date().toISOString();
+    const createdAt = document.metadata.createdAt || now;
+    const modifiedAt = document.metadata.modifiedAt || now;
     const point = {
         id: docId,
         vector: vector,
         payload: {
-            tenant: document.metadata.tenant,
+            tenant: document.metadata.tenantId,
             docId: docId,
             acl: document.metadata.acl,
             lang: document.metadata.lang,
             url: document.metadata.url,
+            filepath: document.metadata.filepath,
+            version: document.metadata.version,
+            authors: document.metadata.authors,
+            keywords: document.metadata.keywords,
+            createdAt: createdAt,
+            modifiedAt: modifiedAt,
             content: document.content,
         },
     };

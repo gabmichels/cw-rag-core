@@ -12,10 +12,10 @@ export class AuditLogger {
      */
     logEntry(entry) {
         // Use structured logging with specific audit level
-        this.logger.info(`Ingestion audit: ${entry.action} ${entry.docId} for tenant ${entry.tenant}`, {
+        this.logger.info({
             audit: true,
             ...entry
-        });
+        }, `Ingestion audit: ${entry.action} ${entry.docId} for tenant ${entry.tenant}`);
     }
     /**
      * Log a successful publish operation

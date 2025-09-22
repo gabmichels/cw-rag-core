@@ -3,11 +3,13 @@ import {
   RerankerRequest,
   RerankerResult,
   RerankerConfig,
-  RERANKER_MODELS
+  RERANKER_MODELS,
+  RERANKER_CONFIG
 } from '../types/reranker.js';
 
 /**
  * Node.js-based reranker service using @xenova/transformers for cross-encoder models
+ * LocalRerankerService implementation with token capping and timeout handling
  */
 export class SentenceTransformersRerankerService extends BaseRerankerService {
   private pipeline: any = null;
@@ -15,6 +17,10 @@ export class SentenceTransformersRerankerService extends BaseRerankerService {
 
   constructor(config: RerankerConfig) {
     super(config);
+    // Update config with environment variables if not provided
+    this.config.batchSize = this.config.batchSize || RERANKER_CONFIG.BATCH_SIZE;
+    this.config.timeoutMs = this.config.timeoutMs || RERANKER_CONFIG.TIMEOUT_MS;
+    this.config.topK = this.config.topK || RERANKER_CONFIG.TOPN_OUT;
   }
 
   async rerank(request: RerankerRequest): Promise<RerankerResult[]> {
@@ -24,41 +30,54 @@ export class SentenceTransformersRerankerService extends BaseRerankerService {
 
     await this.initializePipeline();
 
+    const timeoutMs = this.config.timeoutMs || 500;
+
     try {
-      // Process in batches for better performance
-      const batchSize = this.config.batchSize || 20;
-      const batches = this.createBatches(request.documents, batchSize);
+      // Apply timeout to the entire rerank operation
+      const rerankerPromise = this.performReranking(request);
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error('Reranker timeout')), timeoutMs);
+      });
 
-      const allResults: RerankerResult[] = [];
-
-      for (const batch of batches) {
-        const batchResults = await this.processBatch(request.query, batch);
-        allResults.push(...batchResults);
-      }
-
-      // Sort by reranker score descending
-      allResults.sort((a, b) => b.rerankerScore - a.rerankerScore);
-
-      // Apply score threshold and top-K filtering
-      let filtered = this.applyScoreThreshold(allResults);
-      filtered = this.applyTopK(filtered);
-
-      // Update ranks
-      return filtered.map((result, index) => ({
-        ...result,
-        rank: index + 1
-      }));
+      return await Promise.race([rerankerPromise, timeoutPromise]);
 
     } catch (error) {
       console.error('StructuredLog:RerankerFailure', {
         error: (error as Error).message,
         model: this.config.model.name,
-        documentCount: request.documents.length
+        documentCount: request.documents.length,
+        timeoutMs
       });
 
-      // Fallback to pass-through
+      // Fallback to pass-through with original fusion scores
       return this.passThrough(request);
     }
+  }
+
+  private async performReranking(request: RerankerRequest): Promise<RerankerResult[]> {
+    // Process in batches for better performance
+    const batchSize = this.config.batchSize || 16;
+    const batches = this.createBatches(request.documents, batchSize);
+
+    const allResults: RerankerResult[] = [];
+
+    for (const batch of batches) {
+      const batchResults = await this.processBatch(request.query, batch);
+      allResults.push(...batchResults);
+    }
+
+    // Sort by reranker score descending
+    allResults.sort((a, b) => b.rerankerScore - a.rerankerScore);
+
+    // Apply score threshold and top-K filtering
+    let filtered = this.applyScoreThreshold(allResults);
+    filtered = this.applyTopK(filtered);
+
+    // Update ranks
+    return filtered.map((result, index) => ({
+      ...result,
+      rank: index + 1
+    }));
   }
 
   private async initializePipeline(): Promise<void> {
@@ -107,7 +126,7 @@ export class SentenceTransformersRerankerService extends BaseRerankerService {
 
     for (const doc of documents) {
       try {
-        // Prepare input for cross-encoder
+        // Prepare input for cross-encoder with token capping
         const input = this.prepareInput(query, doc.content);
 
         // Get relevance score
@@ -149,19 +168,37 @@ export class SentenceTransformersRerankerService extends BaseRerankerService {
   }
 
   private prepareInput(query: string, document: string): string {
-    // For cross-encoder models, combine query and document
-    // Truncate if needed based on model's max sequence length
-    const maxLength = this.config.model.maxSequenceLength || 512;
-    const combined = `${query} [SEP] ${document}`;
+    // Cap tokens: query ~300 tokens, document ~512 tokens
+    const cappedQuery = this.capTokens(query, 300);
+    const cappedDocument = this.capTokens(document, 512);
 
-    if (combined.length > maxLength) {
-      // Simple truncation strategy - could be improved
-      const availableDocLength = maxLength - query.length - 7; // 7 for ' [SEP] '
-      const truncatedDoc = document.substring(0, availableDocLength);
-      return `${query} [SEP] ${truncatedDoc}`;
+    // For cross-encoder models, combine query and document
+    const combined = `${cappedQuery} [SEP] ${cappedDocument}`;
+
+    // Final length check based on model's max sequence length
+    const maxLength = this.config.model.maxSequenceLength || 512;
+    if (combined.length > maxLength * 4) { // Approximate token to char conversion
+      // If still too long, prioritize query and truncate document further
+      const availableDocLength = (maxLength * 4) - cappedQuery.length - 7; // 7 for ' [SEP] '
+      const finalDoc = cappedDocument.substring(0, Math.max(0, availableDocLength));
+      return `${cappedQuery} [SEP] ${finalDoc}`;
     }
 
     return combined;
+  }
+
+  /**
+   * Cap text to approximately specified number of tokens
+   * Simple approximation: ~4 characters per token for English text
+   */
+  private capTokens(text: string, maxTokens: number): string {
+    const approximateTokens = text.length / 4;
+    if (approximateTokens <= maxTokens) {
+      return text;
+    }
+
+    const maxChars = maxTokens * 4;
+    return text.substring(0, maxChars);
   }
 
   private extractRelevanceScore(output: any): number {

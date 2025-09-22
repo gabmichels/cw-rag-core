@@ -1,10 +1,10 @@
-import { QdrantClient, CollectionInfo, PointStruct, ScoredPoint, SearchParams } from '@qdrant/js-client-rest';
+import { QdrantClient } from '@qdrant/js-client-rest';
 import * as crypto from 'crypto';
 import {
   EmbeddingService,
   BgeSmallEnV15EmbeddingService
 } from '@cw-rag-core/retrieval';
-import { FastifyBaseLogger } from 'pino';
+import type { FastifyBaseLogger } from 'fastify';
 import {
   Document,
   RetrievalRequest,
@@ -14,7 +14,7 @@ import {
   validateUserAuthorization,
   getUserACLEntries
 } from '@cw-rag-core/shared';
-export { QdrantClient } from '@qdrant/js-client-rest'; // Explicitly export QdrantClient
+export { QdrantClient };
 
 export const QDRANT_COLLECTION_NAME = 'docs_v1';
 
@@ -131,7 +131,7 @@ export async function ingestDocument(
   const createdAt = document.metadata.createdAt || now;
   const modifiedAt = document.metadata.modifiedAt || now;
 
-  const point: PointStruct = {
+  const point = {
     id: docId,
     vector: vector,
     payload: {
@@ -168,7 +168,7 @@ export async function searchDocuments(
   request: RetrievalRequest,
   userContext: UserContext,
   vector?: number[]
-): Promise<PointStruct[]> {
+): Promise<any[]> {
   // Validate user authorization first
   if (!validateUserAuthorization(userContext)) {
     throw new Error('User authorization validation failed');
@@ -204,7 +204,7 @@ export async function searchDocumentsLegacy(
   request: RetrievalRequest,
   userTenants: string[],
   userAcl: string[],
-): Promise<PointStruct[]> {
+): Promise<any[]> {
   // Convert legacy parameters to UserContext for internal use
   const userContext: UserContext = {
     id: userAcl[0] || '', // Assume first ACL entry is user ID
@@ -222,7 +222,7 @@ export async function keywordSearchDocuments(
   query: string,
   limit: number,
   userContext: UserContext
-): Promise<PointStruct[]> {
+): Promise<any[]> {
   // Validate user authorization first
   if (!validateUserAuthorization(userContext)) {
     throw new Error('User authorization validation failed');
@@ -273,7 +273,7 @@ export async function keywordSearchDocumentsLegacy(
   limit: number,
   userTenants: string[],
   userAcl: string[]
-): Promise<PointStruct[]> {
+): Promise<any[]> {
   // Convert legacy parameters to UserContext for internal use
   const userContext: UserContext = {
     id: userAcl[0] || '', // Assume first ACL entry is user ID
@@ -300,7 +300,7 @@ export async function securityTestSearch(
   userContext: UserContext,
   vector: number[],
   limit: number = 10
-): Promise<PointStruct[]> {
+): Promise<any[]> {
   // This function is specifically for security testing
   // If user fails authorization, return empty results
   if (!validateUserAuthorization(userContext)) {
@@ -343,7 +343,7 @@ export async function batchSearchDocuments(
   userContext: UserContext,
   vectors: number[][],
   limit: number = 5
-): Promise<PointStruct[][]> {
+): Promise<any[][]> {
   // Validate user authorization once for all searches
   if (!validateUserAuthorization(userContext)) {
     throw new Error('User authorization validation failed');
@@ -395,7 +395,7 @@ export async function optimizedSearchDocuments(
   vector: number[],
   limit: number = 5,
   exactSearch: boolean = false
-): Promise<PointStruct[]> {
+): Promise<any[]> {
   // Validate user authorization first
   if (!validateUserAuthorization(userContext)) {
     throw new Error('User authorization validation failed');

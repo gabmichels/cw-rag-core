@@ -87,7 +87,7 @@ export class SimpleGuardrailService {
                 ]
             };
         }
-        if (score.confidence < 0.3) {
+        if (score.confidence < 0.5) {
             return {
                 message: "I don't have enough confidence in the available information to provide a reliable answer to your question.",
                 reasonCode: 'LOW_CONFIDENCE',

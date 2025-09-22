@@ -59,7 +59,7 @@ export class MockRerankerService extends BaseRerankerService {
         const queryTerms = query.toLowerCase().split(/\s+/);
         const contentLower = content.toLowerCase();
         let matchCount = 0;
-        let totalTerms = queryTerms.length;
+        const totalTerms = queryTerms.length;
         for (const term of queryTerms) {
             if (contentLower.includes(term)) {
                 matchCount++;

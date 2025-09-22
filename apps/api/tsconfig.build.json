@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "declaration": false,
+    "emitDeclarationOnly": false
+  },
+  "references": [
+    { "path": "../../packages/shared" },
+    { "path": "../../packages/retrieval" },
+    { "path": "../../packages/ingestion-sdk" }
+  ],
+  "include": ["src/**/*.ts"],
+  "exclude": ["src/__tests__/**", "**/*.test.ts"]
+}

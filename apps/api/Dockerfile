@@ -1,46 +1,62 @@
-# Use a Node.js 20 environment as a base image
-FROM node:20-alpine
-
-# Install pnpm
-RUN corepack enable && corepack prepare pnpm@latest --activate
-
-# Set the working directory in the container
+# ---- base ----
+FROM node:20-bookworm-slim AS base
+ENV PNPM_HOME=/usr/local/share/pnpm
+ENV PATH="$PNPM_HOME:$PATH"
+RUN corepack enable
 WORKDIR /app
 
-# Copy root package files and workspace configuration
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.json ./
+# ---- deps: cache store & install workspaces ----
+FROM base AS deps
+# Copy only manifests for cache
+COPY pnpm-lock.yaml package.json pnpm-workspace.yaml ./
+COPY apps/api/package.json apps/api/
+COPY packages/shared/package.json packages/shared/
+COPY packages/retrieval/package.json packages/retrieval/
+COPY packages/ingestion-sdk/package.json packages/ingestion-sdk/
+RUN pnpm fetch --prefer-offline
 
-# Copy package.json files for all workspace packages
-COPY apps/api/package.json ./apps/api/
-COPY packages/shared/package.json ./packages/shared/
-COPY packages/retrieval/package.json ./packages/retrieval/
-COPY packages/ingestion-sdk/package.json ./packages/ingestion-sdk/
+# Bring source, install
+COPY . .
+RUN pnpm -w install --no-frozen-lockfile
 
-# Install dependencies for the entire monorepo (including dev dependencies for compilation)
-RUN pnpm install --frozen-lockfile
+# ---- build: build workspace libs then API (build tsconfig excludes tests) ----
+FROM deps AS build
+RUN pnpm -w install --no-frozen-lockfile
+# Ensure TypeScript is available for all packages
+RUN pnpm --filter "@cw-rag-core/shared" add -D typescript
+RUN pnpm --filter "@cw-rag-core/retrieval" add -D typescript
+RUN pnpm --filter "@cw-rag-core/ingestion-sdk" add -D typescript
+RUN pnpm --filter "@cw-rag-core/api" add -D typescript
+RUN pnpm --filter "@cw-rag-core/shared" run build
+RUN pnpm --filter "@cw-rag-core/retrieval" run build
+RUN pnpm --filter "@cw-rag-core/ingestion-sdk" run build
+RUN pnpm --filter "@cw-rag-core/api" run build
 
-# Copy the source directories
-COPY packages/shared/src ./packages/shared/src
-COPY packages/shared/package.json ./packages/shared/
-COPY packages/shared/tsconfig.json ./packages/shared/
-COPY packages/retrieval/src ./packages/retrieval/src
-COPY packages/retrieval/package.json ./packages/retrieval/
-COPY packages/retrieval/tsconfig.json ./packages/retrieval/
-COPY packages/ingestion-sdk/src ./packages/ingestion-sdk/src
-COPY packages/ingestion-sdk/package.json ./packages/ingestion-sdk/
-COPY packages/ingestion-sdk/tsconfig.json ./packages/ingestion-sdk/
-COPY apps/api/src ./apps/api/src
-COPY apps/api/package.json ./apps/api/
-COPY apps/api/tsconfig.json ./apps/api/
+# ---- runtime: prod files for API only ----
+FROM node:20-bookworm-slim AS runtime
+ENV NODE_ENV=production
+ENV PNPM_HOME=/usr/local/share/pnpm
+ENV PATH="$PNPM_HOME:$PATH"
+RUN corepack enable
 
-# Build TypeScript code
-RUN pnpm --filter "@cw-rag-core/shared" build
-RUN pnpm --filter "@cw-rag-core/retrieval" build
-RUN pnpm --filter "@cw-rag-core/ingestion-sdk" build
-RUN pnpm --filter "@cw-rag-core/api" build
+# 1) Staging workspace for deploy
+WORKDIR /opt/app
+COPY --from=deps /app ./
 
-# Expose the port the app runs on
+# 2) Ensure internal packages have their built outputs present pre-deploy
+COPY --from=build /app/packages/shared/dist packages/shared/dist
+COPY --from=build /app/packages/retrieval/dist packages/retrieval/dist
+COPY --from=build /app/packages/ingestion-sdk/dist packages/ingestion-sdk/dist
+COPY --from=build /app/apps/api/dist apps/api/dist
+
+# 3) Produce a pruned, production-only tree for the API
+RUN pnpm --filter "@cw-rag-core/api" deploy --prod --legacy /opt/deploy
+
+# 4) (Important) Ensure the deployed API has the compiled JS
+COPY --from=build /app/apps/api/dist /opt/deploy/apps/api/dist
+
+# 5) Launch
+WORKDIR /opt/deploy/apps/api
 EXPOSE 3000
-
-# Command to run the application
-CMD ["pnpm", "--filter", "@cw-rag-core/api", "start"]
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s CMD node -e "fetch('http://localhost:3000/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+CMD ["node","dist/server.js"]

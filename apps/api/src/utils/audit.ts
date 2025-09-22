@@ -68,11 +68,11 @@ export class AuditLogger {
   logEntry(entry: AuditLogEntry): void {
     // Use structured logging with specific audit level
     this.logger.info(
-      `Ingestion audit: ${entry.action} ${entry.docId} for tenant ${entry.tenant}`,
       {
         audit: true,
         ...entry
-      }
+      },
+      `Ingestion audit: ${entry.action} ${entry.docId} for tenant ${entry.tenant}`
     );
   }
 

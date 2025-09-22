@@ -23,7 +23,8 @@ export async function ingestRoutes(fastify: FastifyInstance, options: IngestRout
   });
 
   // Register specific rate limiting for /ingest/* routes (60 req/min as required)
-  await fastify.register(require('@fastify/rate-limit'), {
+  const rateLimitPlugin = await import('@fastify/rate-limit');
+  await fastify.register(rateLimitPlugin.default, {
     max: 60, // 60 requests per minute per IP for ingest endpoints
     timeWindow: '1 minute',
     keyGenerator: (request: FastifyRequest) => {
@@ -34,7 +35,7 @@ export async function ingestRoutes(fastify: FastifyInstance, options: IngestRout
     },
     errorResponseBuilder: (request: FastifyRequest, context: any) => {
       // Log rate limit exceeded for security monitoring
-      fastify.log.warn('Ingest rate limit exceeded', {
+      fastify.log.warn({
         event: 'rate_limit_exceeded',
         type: 'ingest',
         ip: (request as any).ip,
@@ -42,7 +43,7 @@ export async function ingestRoutes(fastify: FastifyInstance, options: IngestRout
         tenant: (request.headers as any)['x-tenant'],
         retryAfter: Math.round(context.ttl / 1000),
         timestamp: new Date().toISOString()
-      });
+      }, 'Ingest rate limit exceeded');
 
       return {
         error: 'Rate Limit Exceeded',
@@ -52,12 +53,12 @@ export async function ingestRoutes(fastify: FastifyInstance, options: IngestRout
       };
     },
     onExceeding: (request: FastifyRequest) => {
-      fastify.log.warn('Ingest rate limit threshold reached', {
+      fastify.log.warn({
         ip: (request as any).ip || 'unknown',
         endpoint: (request as any).url,
         tenant: (request.headers as any)['x-tenant'],
         timestamp: new Date().toISOString()
-      });
+      }, 'Ingest rate limit threshold reached');
     }
   });
 
@@ -135,12 +136,12 @@ export async function ingestRoutes(fastify: FastifyInstance, options: IngestRout
   // Add a general ingest info endpoint
   fastify.get('/ingest', async (request: FastifyRequest, reply: FastifyReply) => {
     // Log authenticated access to info endpoint using structured logging
-    fastify.log.info('Ingest API info endpoint accessed', {
+    fastify.log.info({
       event: 'ingest_info_access',
       ip: (request as any).ip || 'unknown',
       userAgent: (request.headers as any)['user-agent'] || 'unknown',
       timestamp: new Date().toISOString()
-    });
+    }, 'Ingest API info endpoint accessed');
 
     return reply.send({
       service: 'CW RAG Core Ingestion API',
@@ -181,7 +182,7 @@ export async function ingestRoutes(fastify: FastifyInstance, options: IngestRout
     });
   });
 
-  fastify.log.info('Ingest routes registered with enhanced security', {
+  fastify.log.info({
     features: [
       'Centralized authentication',
       '60 req/min rate limiting',
@@ -189,5 +190,5 @@ export async function ingestRoutes(fastify: FastifyInstance, options: IngestRout
       'Security monitoring'
     ],
     endpoints: ['/ingest', '/ingest/preview', '/ingest/publish', '/ingest/upload']
-  });
+  }, 'Ingest routes registered with enhanced security');
 }

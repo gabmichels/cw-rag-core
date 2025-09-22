@@ -1,0 +1,753 @@
+import Fastify, { FastifyInstance } from 'fastify';
+import { askRoute } from '../routes/ask.js';
+import { AskRequest, AskResponse, UserContext, RetrievedDocument } from '@cw-rag-core/shared';
+
+// Enhanced types for testing (matching our updated API)
+interface EnhancedAskRequest extends AskRequest {
+  hybridSearch?: {
+    vectorWeight?: number;
+    keywordWeight?: number;
+    rrfK?: number;
+    enableKeywordSearch?: boolean;
+  };
+  reranker?: {
+    enabled?: boolean;
+    model?: string;
+    topK?: number;
+  };
+  synthesis?: {
+    maxContextLength?: number;
+    includeCitations?: boolean;
+    answerFormat?: 'markdown' | 'plain';
+  };
+  includeMetrics?: boolean;
+  includeDebugInfo?: boolean;
+}
+
+interface EnhancedRetrievedDocument extends RetrievedDocument {
+  searchType?: 'hybrid' | 'vector_only' | 'keyword_only';
+  vectorScore?: number;
+  keywordScore?: number;
+  fusionScore?: number;
+  rerankerScore?: number;
+  rank?: number;
+}
+
+interface EnhancedAskResponse extends AskResponse {
+  metrics?: {
+    totalDuration: number;
+    vectorSearchDuration?: number;
+    keywordSearchDuration?: number;
+    fusionDuration?: number;
+    rerankerDuration?: number;
+    guardrailDuration?: number;
+    synthesisTime?: number;
+    vectorResultCount?: number;
+    keywordResultCount?: number;
+    finalResultCount?: number;
+    documentsReranked?: number;
+    rerankingEnabled?: boolean;
+  };
+  synthesisMetadata?: {
+    tokensUsed: number;
+    modelUsed: string;
+    contextTruncated: boolean;
+    confidence: number;
+    llmProvider?: string;
+  };
+  debug?: {
+    hybridSearchConfig?: Record<string, any>;
+    rerankerConfig?: Record<string, any>;
+    guardrailConfig?: Record<string, any>;
+    retrievalSteps?: string[];
+  };
+  guardrailDecision?: {
+    isAnswerable: boolean;
+    confidence: number;
+    reasonCode?: string;
+    suggestions?: string[];
+    scoreStats?: {
+      mean: number;
+      max: number;
+      min: number;
+      stdDev: number;
+      count: number;
+    };
+    algorithmScores?: {
+      statistical: number;
+      threshold: number;
+      mlFeatures: number;
+      rerankerConfidence?: number;
+    };
+  };
+  retrievedDocuments: EnhancedRetrievedDocument[];
+}
+
+// Mock services
+const mockQdrantClient = {
+  search: jest.fn(),
+  scroll: jest.fn(),
+  discover: jest.fn()
+};
+
+const mockEmbeddingService = {
+  embed: jest.fn()
+};
+
+const mockRetrievalResults = [
+  {
+    id: 'doc1',
+    score: 0.95,
+    fusionScore: 0.95,
+    vectorScore: 0.9,
+    keywordScore: 0.8,
+    searchType: 'hybrid' as const,
+    payload: {
+      tenant: 'test-tenant',
+      docId: 'doc1',
+      acl: ['user1', 'group1'],
+      content: 'This is test document content about machine learning algorithms.',
+      url: 'https://example.com/doc1',
+      modifiedAt: new Date().toISOString(),
+      createdAt: new Date().toISOString()
+    },
+    content: 'This is test document content about machine learning algorithms.'
+  },
+  {
+    id: 'doc2',
+    score: 0.85,
+    fusionScore: 0.85,
+    vectorScore: 0.8,
+    keywordScore: 0.9,
+    searchType: 'hybrid' as const,
+    payload: {
+      tenant: 'test-tenant',
+      docId: 'doc2',
+      acl: ['user1', 'group2'],
+      content: 'Additional information about neural networks and deep learning.',
+      filepath: '/docs/neural-networks.md',
+      modifiedAt: new Date().toISOString(),
+      createdAt: new Date().toISOString()
+    },
+    content: 'Additional information about neural networks and deep learning.'
+  }
+];
+
+// Mock the retrieval services
+jest.mock('@cw-rag-core/retrieval', () => ({
+  createHybridSearchService: jest.fn(() => ({
+    search: jest.fn().mockResolvedValue({
+      results: mockRetrievalResults,
+      metrics: {
+        vectorSearchDuration: 50,
+        keywordSearchDuration: 30,
+        fusionDuration: 10,
+        rerankerDuration: 40,
+        totalDuration: 130,
+        vectorResultCount: 2,
+        keywordResultCount: 2,
+        finalResultCount: 2,
+        rerankingEnabled: true,
+        documentsReranked: 2
+      }
+    }),
+    getTenantConfig: jest.fn().mockResolvedValue({
+      tenantId: 'test-tenant',
+      keywordSearchEnabled: true,
+      defaultVectorWeight: 0.7,
+      defaultKeywordWeight: 0.3,
+      defaultRrfK: 60,
+      rerankerEnabled: true
+    }),
+    updateTenantConfig: jest.fn().mockResolvedValue(undefined)
+  })),
+  createGuardedRetrievalService: jest.fn(() => ({
+    retrieveWithGuardrail: jest.fn().mockResolvedValue({
+      isAnswerable: true,
+      results: mockRetrievalResults,
+      guardrailDecision: {
+        isAnswerable: true,
+        score: {
+          confidence: 0.85,
+          scoreStats: {
+            mean: 0.9,
+            max: 0.95,
+            min: 0.85,
+            stdDev: 0.05,
+            count: 2,
+            percentiles: { p25: 0.87, p50: 0.9, p75: 0.92, p90: 0.95 }
+          },
+          algorithmScores: {
+            statistical: 0.8,
+            threshold: 0.9,
+            mlFeatures: 0.85,
+            rerankerConfidence: 0.87
+          },
+          isAnswerable: true,
+          reasoning: 'High confidence scores with good document quality',
+          computationTime: 25
+        },
+        threshold: {
+          type: 'moderate' as const,
+          minConfidence: 0.6,
+          minTopScore: 0.5,
+          minMeanScore: 0.3,
+          maxStdDev: 0.4,
+          minResultCount: 2
+        },
+        auditTrail: {
+          timestamp: new Date().toISOString(),
+          query: 'test query',
+          tenantId: 'test-tenant',
+          userContext: '{"id":"user1","tenantId":"test-tenant","groupIds":["group1"]}',
+          retrievalResultsCount: 2,
+          scoreStatsSummary: 'mean=0.9',
+          decisionRationale: 'ANSWERABLE',
+          performanceMetrics: {
+            scoringDuration: 25,
+            totalDuration: 25
+          }
+        }
+      },
+      metrics: {
+        vectorSearchDuration: 50,
+        keywordSearchDuration: 30,
+        fusionDuration: 10,
+        rerankerDuration: 40,
+        guardrailDuration: 25,
+        totalDuration: 155,
+        vectorResultCount: 2,
+        keywordResultCount: 2,
+        finalResultCount: 2,
+        rerankingEnabled: true,
+        documentsReranked: 2
+      }
+    }),
+    getTenantGuardrailConfig: jest.fn().mockResolvedValue({
+      tenantId: 'test-tenant',
+      enabled: true,
+      threshold: {
+        type: 'moderate' as const,
+        minConfidence: 0.6,
+        minTopScore: 0.5,
+        minMeanScore: 0.3,
+        maxStdDev: 0.4,
+        minResultCount: 2
+      },
+      bypassEnabled: false,
+      algorithmWeights: {
+        statistical: 0.4,
+        threshold: 0.3,
+        mlFeatures: 0.2,
+        rerankerConfidence: 0.1
+      }
+    })
+  })),
+  QdrantKeywordSearchService: jest.fn(() => ({
+    search: jest.fn().mockResolvedValue([])
+  })),
+  ReciprocalRankFusionService: jest.fn(() => ({
+    fuseResults: jest.fn().mockReturnValue(mockRetrievalResults)
+  })),
+  HttpRerankerService: jest.fn(() => ({
+    rerank: jest.fn().mockResolvedValue(mockRetrievalResults.map((r, i) => ({
+      ...r,
+      rerankerScore: r.score,
+      rank: i + 1
+    }))),
+    isHealthy: jest.fn().mockResolvedValue(true)
+  })),
+  SentenceTransformersRerankerService: jest.fn(() => ({
+    rerank: jest.fn().mockResolvedValue(mockRetrievalResults.map((r, i) => ({
+      ...r,
+      rerankerScore: r.score,
+      rank: i + 1
+    }))),
+    isHealthy: jest.fn().mockResolvedValue(true)
+  })),
+  DEFAULT_RERANKER_CONFIG: {
+    enabled: true,
+    model: { name: 'BAAI/bge-reranker-large', type: 'cross-encoder' },
+    scoreThreshold: 0.0,
+    topK: 8,
+    timeoutMs: 5000,
+    retryAttempts: 3,
+    batchSize: 20
+  },
+  RERANKER_MODELS: {
+    BGE_RERANKER_LARGE: { name: 'BAAI/bge-reranker-large', type: 'cross-encoder' },
+    BGE_RERANKER_BASE: { name: 'BAAI/bge-reranker-base', type: 'cross-encoder' }
+  }
+}));
+
+// Mock answer synthesis service
+jest.mock('../services/answer-synthesis.js', () => ({
+  createAnswerSynthesisService: jest.fn(() => ({
+    synthesizeAnswer: jest.fn().mockResolvedValue({
+      answer: 'Machine learning algorithms are computational methods that enable systems to learn from data. [^1] Neural networks and deep learning are advanced techniques used in this field. [^2]',
+      citations: {
+        '1': {
+          id: 'doc1',
+          number: 1,
+          source: 'example.com/doc1',
+          docId: 'doc1',
+          url: 'https://example.com/doc1',
+          freshness: {
+            category: 'Fresh',
+            badge: '🟢 Fresh',
+            humanReadable: '2 days ago',
+            ageInDays: 2
+          }
+        },
+        '2': {
+          id: 'doc2',
+          number: 2,
+          source: 'neural-networks.md',
+          docId: 'doc2',
+          filepath: '/docs/neural-networks.md',
+          freshness: {
+            category: 'Recent',
+            badge: '🟡 Recent',
+            humanReadable: '1 week ago',
+            ageInDays: 7
+          }
+        }
+      },
+      tokensUsed: 150,
+      synthesisTime: 800,
+      confidence: 0.85,
+      modelUsed: 'gpt-4',
+      contextTruncated: false,
+      freshnessStats: {
+        totalDocuments: 2,
+        freshPercentage: 50,
+        recentPercentage: 50,
+        stalePercentage: 0,
+        avgAgeInDays: 4.5
+      }
+    }),
+    getQualityMetrics: jest.fn().mockReturnValue({
+      answerLength: 150,
+      citationCount: 2,
+      contextUtilization: 0.8,
+      responseLatency: 800,
+      llmProvider: 'openai',
+      model: 'gpt-4'
+    })
+  }))
+}));
+
+// Mock citation service
+jest.mock('../services/citation.js', () => ({
+  createCitationService: jest.fn(() => ({
+    extractCitations: jest.fn().mockReturnValue({
+      '1': {
+        id: 'doc1',
+        number: 1,
+        source: 'example.com/doc1',
+        docId: 'doc1',
+        url: 'https://example.com/doc1'
+      },
+      '2': {
+        id: 'doc2',
+        number: 2,
+        source: 'neural-networks.md',
+        docId: 'doc2',
+        filepath: '/docs/neural-networks.md'
+      }
+    }),
+    formatTextWithCitations: jest.fn((text: string) => text),
+    validateCitations: jest.fn().mockReturnValue(true),
+    generateBibliography: jest.fn().mockReturnValue('\n\n## Sources\n\n[^1]: example.com/doc1\n[^2]: neural-networks.md')
+  }))
+}));
+
+// Mock LLM client factory
+jest.mock('../services/llm-client.js', () => ({
+  createLLMClientFactory: jest.fn(() => ({
+    createClientForTenant: jest.fn().mockResolvedValue({
+      generateCompletion: jest.fn().mockResolvedValue({
+        text: 'Machine learning algorithms are computational methods that enable systems to learn from data.',
+        tokensUsed: 150,
+        model: 'gpt-4'
+      }),
+      getConfig: jest.fn().mockReturnValue({
+        provider: 'openai',
+        model: 'gpt-4'
+      })
+    })
+  }))
+}));
+
+// Mock audit logger
+jest.mock('../utils/audit.js', () => ({
+  createAuditLogger: jest.fn(() => ({
+    logEntry: jest.fn(),
+    logError: jest.fn()
+  }))
+}));
+
+describe('Ask Endpoint - /ask (Phase 2 Pipeline)', () => {
+  let app: FastifyInstance;
+
+  beforeEach(async () => {
+    app = Fastify();
+    await app.register(askRoute, {
+      qdrantClient: mockQdrantClient as any,
+      collectionName: 'test-collection',
+      embeddingService: mockEmbeddingService
+    });
+  });
+
+  afterEach(async () => {
+    await app.close();
+  });
+
+  const validUserContext: UserContext = {
+    id: 'user1',
+    groupIds: ['group1'],
+    tenantId: 'test-tenant'
+  };
+
+  const validAskRequest: EnhancedAskRequest = {
+    query: 'What are machine learning algorithms?',
+    userContext: validUserContext,
+    k: 5
+  };
+
+  describe('Basic Pipeline Functionality', () => {
+    test('should process a valid ask request with complete pipeline', async () => {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/ask',
+        payload: validAskRequest
+      });
+
+      expect(response.statusCode).toBe(200);
+      const data = response.json() as EnhancedAskResponse;
+
+      expect(data.answer).toBeDefined();
+      expect(data.retrievedDocuments).toHaveLength(2);
+      expect(data.queryId).toBeDefined();
+      expect(data.guardrailDecision?.isAnswerable).toBe(true);
+      expect(data.citations).toHaveLength(2);
+      expect(data.synthesisMetadata).toBeDefined();
+      expect(data.freshnessStats).toBeDefined();
+    });
+
+    test('should include performance metrics when requested', async () => {
+      const requestWithMetrics: EnhancedAskRequest = {
+        ...validAskRequest,
+        includeMetrics: true
+      };
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/ask',
+        payload: requestWithMetrics
+      });
+
+      expect(response.statusCode).toBe(200);
+      const data = response.json() as EnhancedAskResponse;
+
+      expect(data.metrics).toBeDefined();
+      expect(data.metrics?.totalDuration).toBeGreaterThan(0);
+      expect(data.metrics?.vectorSearchDuration).toBeDefined();
+      expect(data.metrics?.keywordSearchDuration).toBeDefined();
+      expect(data.metrics?.fusionDuration).toBeDefined();
+      expect(data.metrics?.rerankerDuration).toBeDefined();
+      expect(data.metrics?.guardrailDuration).toBeDefined();
+    });
+
+    test('should include debug information when requested', async () => {
+      const requestWithDebug: EnhancedAskRequest = {
+        ...validAskRequest,
+        includeDebugInfo: true
+      };
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/ask',
+        payload: requestWithDebug
+      });
+
+      expect(response.statusCode).toBe(200);
+      const data = response.json() as EnhancedAskResponse;
+
+      expect(data.debug).toBeDefined();
+      expect(data.debug?.hybridSearchConfig).toBeDefined();
+      expect(data.debug?.retrievalSteps).toBeInstanceOf(Array);
+    });
+  });
+
+  describe('Hybrid Search Configuration', () => {
+    test('should apply custom hybrid search weights', async () => {
+      const requestWithHybridConfig: EnhancedAskRequest = {
+        ...validAskRequest,
+        hybridSearch: {
+          vectorWeight: 0.8,
+          keywordWeight: 0.2,
+          rrfK: 50,
+          enableKeywordSearch: true
+        }
+      };
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/ask',
+        payload: requestWithHybridConfig
+      });
+
+      expect(response.statusCode).toBe(200);
+      const data = response.json() as EnhancedAskResponse;
+      expect(data.retrievedDocuments.length).toBeGreaterThan(0);
+    });
+
+    test('should handle vector-only search when keyword search is disabled', async () => {
+      const requestVectorOnly: EnhancedAskRequest = {
+        ...validAskRequest,
+        hybridSearch: {
+          enableKeywordSearch: false,
+          vectorWeight: 1.0,
+          keywordWeight: 0.0
+        }
+      };
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/ask',
+        payload: requestVectorOnly
+      });
+
+      expect(response.statusCode).toBe(200);
+      const data = response.json() as EnhancedAskResponse;
+      expect(data.retrievedDocuments.length).toBeGreaterThan(0);
+    });
+  });
+
+  describe('Reranker Configuration', () => {
+    test('should enable reranker when specified', async () => {
+      const requestWithReranker: EnhancedAskRequest = {
+        ...validAskRequest,
+        reranker: {
+          enabled: true,
+          model: 'BAAI/bge-reranker-large',
+          topK: 8
+        },
+        includeMetrics: true
+      };
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/ask',
+        payload: requestWithReranker
+      });
+
+      expect(response.statusCode).toBe(200);
+      const data = response.json() as EnhancedAskResponse;
+      expect(data.metrics?.rerankingEnabled).toBe(true);
+      expect(data.metrics?.documentsReranked).toBeGreaterThan(0);
+    });
+
+    test('should disable reranker when specified', async () => {
+      const requestNoReranker: EnhancedAskRequest = {
+        ...validAskRequest,
+        reranker: {
+          enabled: false
+        },
+        includeMetrics: true
+      };
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/ask',
+        payload: requestNoReranker
+      });
+
+      expect(response.statusCode).toBe(200);
+      // Response should still work even without reranking
+    });
+  });
+
+  describe('Answer Synthesis Configuration', () => {
+    test('should apply custom synthesis options', async () => {
+      const requestWithSynthesis: EnhancedAskRequest = {
+        ...validAskRequest,
+        synthesis: {
+          maxContextLength: 4000,
+          includeCitations: true,
+          answerFormat: 'markdown'
+        }
+      };
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/ask',
+        payload: requestWithSynthesis
+      });
+
+      expect(response.statusCode).toBe(200);
+      const data = response.json() as EnhancedAskResponse;
+      expect(data.answer).toBeDefined();
+      expect(data.citations).toBeDefined();
+      expect(data.synthesisMetadata?.contextTruncated).toBe(false);
+    });
+
+    test('should handle plain text format', async () => {
+      const requestPlainText: EnhancedAskRequest = {
+        ...validAskRequest,
+        synthesis: {
+          answerFormat: 'plain',
+          includeCitations: false
+        }
+      };
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/ask',
+        payload: requestPlainText
+      });
+
+      expect(response.statusCode).toBe(200);
+      const data = response.json() as EnhancedAskResponse;
+      expect(data.answer).toBeDefined();
+    });
+  });
+
+  describe('Enhanced Retrieval Metadata', () => {
+    test('should include search type and scores for each document', async () => {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/ask',
+        payload: validAskRequest
+      });
+
+      expect(response.statusCode).toBe(200);
+      const data = response.json() as EnhancedAskResponse;
+
+      data.retrievedDocuments.forEach(doc => {
+        expect(doc.searchType).toBeDefined();
+        expect(doc.score).toBeGreaterThan(0);
+        expect(doc.fusionScore).toBeDefined();
+      });
+    });
+
+    test('should include guardrail decision metadata', async () => {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/ask',
+        payload: validAskRequest
+      });
+
+      expect(response.statusCode).toBe(200);
+      const data = response.json() as EnhancedAskResponse;
+
+      expect(data.guardrailDecision?.isAnswerable).toBe(true);
+      expect(data.guardrailDecision?.confidence).toBeGreaterThan(0);
+      expect(data.guardrailDecision?.scoreStats).toBeDefined();
+      expect(data.guardrailDecision?.algorithmScores).toBeDefined();
+    });
+  });
+
+  describe('Error Handling', () => {
+    test('should return 403 for unauthorized users', async () => {
+      const invalidRequest: EnhancedAskRequest = {
+        ...validAskRequest,
+        userContext: {
+          id: '',
+          groupIds: [],
+          tenantId: ''
+        }
+      };
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/ask',
+        payload: invalidRequest
+      });
+
+      expect(response.statusCode).toBe(403);
+    });
+
+    test('should handle empty query gracefully', async () => {
+      const emptyQueryRequest: EnhancedAskRequest = {
+        ...validAskRequest,
+        query: ''
+      };
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/ask',
+        payload: emptyQueryRequest
+      });
+
+      expect(response.statusCode).toBe(400);
+    });
+
+    test('should include query ID in error responses', async () => {
+      const invalidRequest: EnhancedAskRequest = {
+        ...validAskRequest,
+        userContext: {
+          id: '',
+          groupIds: [],
+          tenantId: ''
+        }
+      };
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/ask',
+        payload: invalidRequest
+      });
+
+      const data = response.json();
+      expect(data.queryId).toBeUndefined(); // Should not have queryId for auth failures
+    });
+  });
+
+  describe('Performance Requirements', () => {
+    test('should complete within acceptable time limits', async () => {
+      const start = Date.now();
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/ask',
+        payload: {
+          ...validAskRequest,
+          includeMetrics: true
+        }
+      });
+
+      const duration = Date.now() - start;
+
+      expect(response.statusCode).toBe(200);
+      expect(duration).toBeLessThan(5000); // Should complete within 5 seconds
+
+      const data = response.json() as EnhancedAskResponse;
+      expect(data.metrics?.totalDuration).toBeLessThan(5000);
+    });
+  });
+
+  describe('Citation and Freshness', () => {
+    test('should include proper citations and freshness information', async () => {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/ask',
+        payload: validAskRequest
+      });
+
+      expect(response.statusCode).toBe(200);
+      const data = response.json() as EnhancedAskResponse;
+
+      expect(data.citations).toHaveLength(2);
+      expect(data.freshnessStats).toBeDefined();
+      expect(data.freshnessStats?.totalDocuments).toBe(2);
+
+      data.citations?.forEach(citation => {
+        expect(citation.id).toBeDefined();
+        expect(citation.number).toBeGreaterThan(0);
+        expect(citation.source).toBeDefined();
+      });
+    });
+  });
+});

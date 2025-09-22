@@ -2,7 +2,7 @@ import { HybridSearchResult } from '@cw-rag-core/retrieval';
 import { UserContext, FreshnessInfo, FreshnessStats } from '@cw-rag-core/shared';
 
 // LLM Provider types
-export type LLMProvider = 'openai' | 'anthropic' | 'azure-openai';
+export type LLMProvider = 'openai' | 'anthropic' | 'azure-openai' | 'vllm';
 
 export interface LLMConfig {
   provider: LLMProvider;
@@ -11,7 +11,9 @@ export interface LLMConfig {
   maxTokens?: number;
   apiKey?: string;
   apiVersion?: string; // For Azure OpenAI
-  baseURL?: string; // For Azure OpenAI
+  baseURL?: string; // For Azure OpenAI or vLLM
+  streaming?: boolean; // For streaming support
+  timeoutMs?: number; // Request timeout in milliseconds
 }
 
 export interface TenantLLMConfig {
@@ -52,6 +54,21 @@ export interface SynthesisRequest {
 export interface SynthesisResponse {
   answer: string;
   citations: CitationMap;
+  tokensUsed: number;
+  synthesisTime: number;
+  confidence: number;
+  modelUsed: string;
+  contextTruncated: boolean;
+  freshnessStats?: FreshnessStats;
+}
+
+// Streaming response types
+export interface StreamingSynthesisResponse {
+  type: 'chunk' | 'citations' | 'metadata' | 'error' | 'done';
+  data: string | CitationMap | SynthesisMetadata | Error | null;
+}
+
+export interface SynthesisMetadata {
   tokensUsed: number;
   synthesisTime: number;
   confidence: number;

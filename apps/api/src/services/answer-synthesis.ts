@@ -1,11 +1,12 @@
-import { HybridSearchResult } from '@cw-rag-core/retrieval';
-import { UserContext, calculateFreshnessStats, FreshnessStats } from '@cw-rag-core/shared';
+import { HybridSearchResult, AnswerabilityGuardrailService, createAnswerabilityGuardrailService } from '@cw-rag-core/retrieval';
+import { calculateFreshnessStats, FreshnessStats } from '@cw-rag-core/shared';
 import {
   SynthesisRequest,
   SynthesisResponse,
   AnswerSynthesisError,
   AnswerQualityMetrics,
-  CitationMap
+  CitationMap,
+  StreamingSynthesisResponse
 } from '../types/synthesis.js';
 import { CitationService, createCitationService } from './citation.js';
 import { LLMClientFactory, createLLMClientFactory } from './llm-client.js';
@@ -15,6 +16,13 @@ export interface AnswerSynthesisService {
    * Generate an answer with citations from retrieved documents
    */
   synthesizeAnswer(request: SynthesisRequest): Promise<SynthesisResponse>;
+
+  /**
+   * Generate streaming answer with citations from retrieved documents
+   */
+  synthesizeAnswerStreaming(
+    request: SynthesisRequest
+  ): AsyncGenerator<StreamingSynthesisResponse, void, unknown>;
 
   /**
    * Get quality metrics for the last synthesis
@@ -29,12 +37,15 @@ export interface AnswerSynthesisService {
 
 export class AnswerSynthesisServiceImpl implements AnswerSynthesisService {
   private lastQualityMetrics: AnswerQualityMetrics | null = null;
+  private guardrailService: AnswerabilityGuardrailService;
 
   constructor(
     private llmClientFactory: LLMClientFactory,
     protected citationService: CitationService,
     private maxContextLength: number = 8000
-  ) {}
+  ) {
+    this.guardrailService = createAnswerabilityGuardrailService();
+  }
 
   async synthesizeAnswer(request: SynthesisRequest): Promise<SynthesisResponse> {
     const startTime = performance.now();
@@ -43,8 +54,41 @@ export class AnswerSynthesisServiceImpl implements AnswerSynthesisService {
       // Validate request
       this.validateRequest(request);
 
-      // Extract citations from documents with freshness information
+      // Check answerability guardrail
+      const guardrailDecision = await this.guardrailService.evaluateAnswerability(
+        request.query,
+        request.documents,
+        request.userContext
+      );
+
       const tenantId = request.userContext.tenantId || 'default';
+      const answerabilityThreshold = parseFloat(process.env.ANSWERABILITY_THRESHOLD || '0.5');
+
+      // If not answerable according to guardrail, return IDK response
+      if (!guardrailDecision.isAnswerable || guardrailDecision.score.confidence < answerabilityThreshold) {
+        console.log(`Answerability guardrail triggered: confidence=${guardrailDecision.score.confidence}, threshold=${answerabilityThreshold}`);
+
+        const idkResponse = this.guardrailService.generateIdkResponse(
+          guardrailDecision.score,
+          await this.guardrailService.getTenantConfig(tenantId),
+          request.documents
+        );
+
+        const synthesisTime = performance.now() - startTime;
+
+        return {
+          answer: idkResponse.message,
+          citations: {},
+          tokensUsed: 0,
+          synthesisTime,
+          confidence: guardrailDecision.score.confidence,
+          modelUsed: 'guardrail',
+          contextTruncated: false,
+          freshnessStats: this.calculateFreshnessStats(request.documents, tenantId)
+        };
+      }
+
+      // Extract citations from documents with freshness information
       const citations = this.citationService.extractCitations(request.documents, tenantId);
 
       // Prepare context from documents
@@ -119,6 +163,202 @@ export class AnswerSynthesisServiceImpl implements AnswerSynthesisService {
           tenantId: request.userContext.tenantId
         }
       );
+    }
+  }
+
+  async *synthesizeAnswerStreaming(
+    request: SynthesisRequest
+  ): AsyncGenerator<StreamingSynthesisResponse, void, unknown> {
+    const startTime = performance.now();
+
+    try {
+      // Validate request
+      this.validateRequest(request);
+
+      // Check answerability guardrail
+      const guardrailDecision = await this.guardrailService.evaluateAnswerability(
+        request.query,
+        request.documents,
+        request.userContext
+      );
+
+      const tenantId = request.userContext.tenantId || 'default';
+      const answerabilityThreshold = parseFloat(process.env.ANSWERABILITY_THRESHOLD || '0.5');
+
+      // If not answerable according to guardrail, return IDK response
+      if (!guardrailDecision.isAnswerable || guardrailDecision.score.confidence < answerabilityThreshold) {
+        console.log(`Answerability guardrail triggered: confidence=${guardrailDecision.score.confidence}, threshold=${answerabilityThreshold}`);
+
+        const idkResponse = this.guardrailService.generateIdkResponse(
+          guardrailDecision.score,
+          await this.guardrailService.getTenantConfig(tenantId),
+          request.documents
+        );
+
+        const synthesisTime = performance.now() - startTime;
+
+        // Emit IDK response as a single chunk
+        yield {
+          type: 'chunk',
+          data: idkResponse.message
+        };
+
+        // Emit metadata
+        yield {
+          type: 'metadata',
+          data: {
+            tokensUsed: 0,
+            synthesisTime,
+            confidence: guardrailDecision.score.confidence,
+            modelUsed: 'guardrail',
+            contextTruncated: false,
+            freshnessStats: this.calculateFreshnessStats(request.documents, tenantId)
+          }
+        };
+
+        yield {
+          type: 'done',
+          data: null
+        };
+
+        return;
+      }
+
+      // Extract citations from documents with freshness information
+      const citations = this.citationService.extractCitations(request.documents, tenantId);
+
+      // Prepare context from documents
+      const contextResult = this.prepareContext(
+        request.documents,
+        citations,
+        request.maxContextLength || this.maxContextLength
+      );
+
+      // Get LLM client for tenant
+      const llmClient = await this.llmClientFactory.createClientForTenant(
+        request.userContext.tenantId || 'default'
+      );
+
+      // Check if streaming is supported
+      if (!llmClient.supportsStreaming()) {
+        // Fallback to non-streaming
+        const result = await this.synthesizeAnswer(request);
+        yield {
+          type: 'chunk',
+          data: result.answer
+        };
+        yield {
+          type: 'citations',
+          data: result.citations
+        };
+        yield {
+          type: 'metadata',
+          data: {
+            tokensUsed: result.tokensUsed,
+            synthesisTime: result.synthesisTime,
+            confidence: result.confidence,
+            modelUsed: result.modelUsed,
+            contextTruncated: result.contextTruncated,
+            freshnessStats: result.freshnessStats
+          }
+        };
+        yield {
+          type: 'done',
+          data: null
+        };
+        return;
+      }
+
+      let fullAnswer = '';
+      const totalTokens = 0;
+
+      // Generate streaming answer
+      for await (const chunk of llmClient.generateStreamingCompletion(
+        request.query,
+        contextResult.context,
+        1000
+      )) {
+        if (chunk.type === 'chunk' && typeof chunk.data === 'string') {
+          fullAnswer += chunk.data;
+          yield {
+            type: 'chunk',
+            data: chunk.data
+          };
+        } else if (chunk.type === 'error') {
+          yield chunk;
+          return;
+        } else if (chunk.type === 'done') {
+          break;
+        }
+      }
+
+      // Format answer with citations
+      const formattedAnswer = this.formatAnswerWithCitations(
+        fullAnswer,
+        citations,
+        request.answerFormat || 'markdown'
+      );
+
+      // Calculate freshness statistics
+      const freshnessStats = this.calculateFreshnessStats(request.documents, tenantId);
+
+      // Calculate confidence
+      const confidence = this.calculateConfidence(
+        request.documents,
+        contextResult.contextTruncated,
+        fullAnswer,
+        freshnessStats
+      );
+
+      const synthesisTime = performance.now() - startTime;
+
+      // Store quality metrics
+      this.lastQualityMetrics = {
+        answerLength: formattedAnswer.length,
+        citationCount: Object.keys(citations).length,
+        contextUtilization: contextResult.utilizationRatio,
+        responseLatency: synthesisTime,
+        llmProvider: llmClient.getConfig().provider,
+        model: llmClient.getConfig().model
+      };
+
+      // Emit citations
+      yield {
+        type: 'citations',
+        data: citations
+      };
+
+      // Emit metadata
+      yield {
+        type: 'metadata',
+        data: {
+          tokensUsed: totalTokens,
+          synthesisTime,
+          confidence,
+          modelUsed: llmClient.getConfig().model,
+          contextTruncated: contextResult.contextTruncated,
+          freshnessStats
+        }
+      };
+
+      yield {
+        type: 'done',
+        data: null
+      };
+
+    } catch (error) {
+      yield {
+        type: 'error',
+        data: new AnswerSynthesisError(
+          `Failed to synthesize answer: ${(error as Error).message}`,
+          'SYNTHESIS_FAILED',
+          {
+            query: request.query,
+            documentCount: request.documents.length,
+            tenantId: request.userContext.tenantId
+          }
+        )
+      };
     }
   }
 
@@ -340,6 +580,50 @@ export class EnhancedAnswerSynthesisService extends AnswerSynthesisServiceImpl {
     this.validateQuality(response);
 
     return response;
+  }
+
+  async *synthesizeAnswerStreaming(
+    request: SynthesisRequest
+  ): AsyncGenerator<StreamingSynthesisResponse, void, unknown> {
+    let response: any = null;
+    const chunks: string[] = [];
+
+    for await (const chunk of super.synthesizeAnswerStreaming(request)) {
+      // Collect chunks to build full response for quality validation
+      if (chunk.type === 'chunk' && typeof chunk.data === 'string') {
+        chunks.push(chunk.data);
+      } else if (chunk.type === 'metadata') {
+        response = chunk.data;
+      }
+
+      // Always yield the chunk
+      yield chunk;
+
+      // If this is the done signal, validate quality
+      if (chunk.type === 'done') {
+        if (response) {
+          const fullAnswer = chunks.join('');
+          const synthResponse: SynthesisResponse = {
+            answer: fullAnswer,
+            citations: {},
+            tokensUsed: response.tokensUsed || 0,
+            synthesisTime: response.synthesisTime || 0,
+            confidence: response.confidence || 0,
+            modelUsed: response.modelUsed || '',
+            contextTruncated: response.contextTruncated || false,
+            freshnessStats: response.freshnessStats
+          };
+
+          try {
+            this.validateQuality(synthResponse);
+          } catch (error) {
+            // Quality validation failed, but we've already streamed the response
+            console.warn('Quality validation failed for streamed response:', error);
+          }
+        }
+        break;
+      }
+    }
   }
 
   private validateQuality(response: SynthesisResponse): void {

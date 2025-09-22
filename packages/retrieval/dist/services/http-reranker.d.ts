@@ -2,7 +2,7 @@ import { BaseRerankerService } from './reranker.js';
 import { RerankerRequest, RerankerResult, RerankerConfig } from '../types/reranker.js';
 /**
  * HTTP-based reranker service client
- * Similar to the embedding service pattern for remote reranker endpoints
+ * API format: POST {query, candidates: [{id,text}]} → {scores: number[]}
  */
 export declare class HttpRerankerService extends BaseRerankerService {
     private serviceUrl;
@@ -11,6 +11,11 @@ export declare class HttpRerankerService extends BaseRerankerService {
     rerank(request: RerankerRequest): Promise<RerankerResult[]>;
     private processSingleBatch;
     private processMultipleBatches;
+    /**
+     * Cap text to approximately specified number of tokens
+     * Simple approximation: ~4 characters per token for English text
+     */
+    private capTokens;
     isHealthy(): Promise<boolean>;
     getSupportedModels(): string[];
     /**

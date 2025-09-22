@@ -25,7 +25,8 @@ const config = {
   collectCoverage: true,
   coverageDirectory: "coverage",
   coverageProvider: "v8",
-  clearMocks: true
+  clearMocks: true,
+  restoreMocks: true
 };
 
 module.exports = config;

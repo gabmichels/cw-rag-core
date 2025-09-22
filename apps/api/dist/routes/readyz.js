@@ -12,7 +12,7 @@ export async function readyzRoute(fastify, options) {
         }
         catch (error) {
             // Other errors mean Qdrant connectivity issues
-            fastify.log.error(error.message, 'Qdrant /readyz check failed');
+            fastify.log.error({ error }, 'Qdrant /readyz check failed');
             return reply.status(503).send({ status: 'not ready', qdrant: 'not connected', error: error.message });
         }
     });

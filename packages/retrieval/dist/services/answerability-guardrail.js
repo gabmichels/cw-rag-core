@@ -4,7 +4,7 @@ export class AnswerabilityGuardrailServiceImpl {
     constructor() {
         this.initializeDefaultConfigs();
     }
-    async evaluateAnswerability(query, results, userContext, metrics) {
+    async evaluateAnswerability(query, results, userContext, _metrics) {
         const startTime = performance.now();
         // Get tenant configuration
         const config = await this.getTenantConfig(userContext.tenantId || 'default');

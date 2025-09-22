@@ -10,7 +10,6 @@ export class GuardedRetrievalServiceImpl {
         this.auditLogger = logger ? createGuardrailAuditLogger(logger) : undefined;
     }
     async retrieveWithGuardrail(collectionName, request, userContext, route = '/ask') {
-        const startTime = performance.now();
         try {
             // Perform hybrid search
             const searchResult = await this.hybridSearchService.search(collectionName, request, userContext);

@@ -1,6 +1,5 @@
 export class ReciprocalRankFusionService {
     fuseResults(vectorResults, keywordResults, config) {
-        const startTime = performance.now();
         // Create maps for efficient lookups
         const vectorMap = new Map();
         const keywordMap = new Map();

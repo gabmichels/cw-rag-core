@@ -58,8 +58,9 @@ interface UploadRouteOptions {
 }
 
 export async function uploadRoute(fastify: FastifyInstance, options: UploadRouteOptions) {
-  // Register multipart support with require for now
-  await fastify.register(require('@fastify/multipart'), {
+  // Register multipart support with dynamic import
+  const multipartPlugin = await import('@fastify/multipart');
+  await fastify.register(multipartPlugin.default, {
     limits: {
       fileSize: MAX_FILE_SIZE,
       files: 10
@@ -70,7 +71,56 @@ export async function uploadRoute(fastify: FastifyInstance, options: UploadRoute
     schema: {
       consumes: ['multipart/form-data'],
       response: {
-        200: UploadResponseSchema,
+        200: {
+          type: 'object',
+          properties: {
+            processed: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  filename: { type: 'string' },
+                  url: { type: 'string' },
+                  docId: { type: 'string' },
+                  status: { type: 'string', enum: ['converted', 'previewed', 'published', 'error'] },
+                  message: { type: 'string' },
+                  preview: {
+                    type: 'object',
+                    properties: {
+                      wouldPublish: { type: 'boolean' },
+                      findings: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          properties: {
+                            type: { type: 'string' },
+                            count: { type: 'number' },
+                          },
+                          required: ['type', 'count'],
+                        },
+                      },
+                      bytes: { type: 'number' },
+                      blocksCount: { type: 'number' },
+                    },
+                    required: ['wouldPublish', 'findings', 'bytes', 'blocksCount'],
+                  },
+                },
+                required: ['docId', 'status'],
+              },
+            },
+            summary: {
+              type: 'object',
+              properties: {
+                total: { type: 'number' },
+                converted: { type: 'number' },
+                published: { type: 'number' },
+                errors: { type: 'number' },
+              },
+              required: ['total', 'converted', 'published', 'errors'],
+            },
+          },
+          required: ['processed', 'summary'],
+        },
       },
     },
     handler: async (request: FastifyRequest, reply: FastifyReply) => {
@@ -199,14 +249,14 @@ export async function uploadRoute(fastify: FastifyInstance, options: UploadRoute
               message: errorMsg
             });
             summary.errors++;
-            fastify.log.error(errorMsg, fileError);
+            fastify.log.error({ error: fileError }, errorMsg);
           }
         }
 
         return reply.send({ processed, summary });
 
       } catch (error) {
-        fastify.log.error('Error in upload endpoint', error);
+        fastify.log.error({ error }, 'Error in upload endpoint');
         return reply.status(500).send({
           error: 'Internal Server Error',
           message: 'Failed to process upload request'

@@ -69,7 +69,8 @@ export function generateFreshnessBadge(category) {
  * Format age in human-readable form
  */
 export function formatHumanReadableAge(ageInDays) {
-    if (ageInDays === 0) {
+    // Handle negative ages (future dates) and zero as "today"
+    if (ageInDays <= 0) {
         return 'today';
     }
     else if (ageInDays === 1) {

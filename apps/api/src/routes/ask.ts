@@ -1,23 +1,18 @@
-import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
-import { FromSchema } from 'json-schema-to-ts';
+import { FastifyInstance, FastifyReply } from 'fastify';
 import {
-  AskRequest,
   AskResponse,
   RetrievedDocument,
-  UserContext,
   AskRequestSchema,
   AskResponseSchema,
   validateUserAuthorization
 } from '@cw-rag-core/shared';
 import {
-  HybridSearchResult,
   HybridSearchRequest,
   HybridSearchService,
   createHybridSearchService,
   VectorSearchService,
   KeywordSearchService,
   RerankerService,
-  createAnswerabilityGuardrailService,
   GuardedRetrievalService,
   createGuardedRetrievalService,
   QdrantKeywordSearchService,
@@ -25,11 +20,11 @@ import {
   HttpRerankerService,
   SentenceTransformersRerankerService,
   DEFAULT_RERANKER_CONFIG,
-  RERANKER_MODELS
+  RERANKER_MODELS,
+  HybridSearchResult
 } from '@cw-rag-core/retrieval';
 import { createAnswerSynthesisService } from '../services/answer-synthesis.js';
 import { createCitationService } from '../services/citation.js';
-import { createLLMClientFactory } from '../services/llm-client.js';
 import { createAuditLogger } from '../utils/audit.js';
 import { QdrantClient } from '../services/qdrant.js';
 
@@ -39,7 +34,6 @@ interface AskRouteOptions {
   embeddingService: { embed(text: string): Promise<number[]> };
 }
 
-type AskRequestBody = FromSchema<typeof AskRequestSchema>;
 
 // Enhanced QdrantClient adapter that implements both vector and keyword search interfaces
 class EnhancedQdrantService implements VectorSearchService {
@@ -82,9 +76,6 @@ class EnhancedQdrantService implements VectorSearchService {
 export async function askRoute(fastify: FastifyInstance, options: AskRouteOptions) {
   const auditLogger = createAuditLogger(fastify.log);
 
-  // Initialize core services - will be created below with enhanced service
-  let vectorSearchService: VectorSearchService;
-
   // Create enhanced Qdrant service that supports both vector and keyword search
   const enhancedQdrantService = new EnhancedQdrantService(
     options.qdrantClient,
@@ -121,13 +112,13 @@ export async function askRoute(fastify: FastifyInstance, options: AskRouteOption
       // Return HTTP service with fallback
       return httpReranker;
     } catch (error) {
-      fastify.log.warn('Failed to initialize reranker service:', error);
+      fastify.log.warn({ error }, 'Failed to initialize reranker service');
       return undefined;
     }
   };
 
   // Use the enhanced service for vector search as well
-  vectorSearchService = enhancedQdrantService;
+  const vectorSearchService = enhancedQdrantService;
 
   // Create hybrid search service
   const hybridSearchService: HybridSearchService = createHybridSearchService(
@@ -153,9 +144,215 @@ export async function askRoute(fastify: FastifyInstance, options: AskRouteOption
 
   fastify.post('/ask', {
     schema: {
-      body: AskRequestSchema,
+      body: {
+        type: 'object',
+        properties: {
+          query: { type: 'string' },
+          userContext: {
+            type: 'object',
+            properties: {
+              id: { type: 'string' },
+              groupIds: { type: 'array', items: { type: 'string' } },
+              tenantId: { type: 'string', format: 'uuid' },
+            },
+            required: ['id', 'groupIds', 'tenantId'],
+          },
+          k: { type: 'integer', minimum: 1 },
+          filter: { type: 'object' },
+          hybridSearch: {
+            type: 'object',
+            properties: {
+              vectorWeight: { type: 'number', minimum: 0, maximum: 1 },
+              keywordWeight: { type: 'number', minimum: 0, maximum: 1 },
+              rrfK: { type: 'integer', minimum: 1 },
+              enableKeywordSearch: { type: 'boolean' },
+            },
+          },
+          reranker: {
+            type: 'object',
+            properties: {
+              enabled: { type: 'boolean' },
+              model: { type: 'string' },
+              topK: { type: 'integer', minimum: 1 },
+            },
+          },
+          synthesis: {
+            type: 'object',
+            properties: {
+              maxContextLength: { type: 'integer', minimum: 1 },
+              includeCitations: { type: 'boolean' },
+              answerFormat: { type: 'string', enum: ['markdown', 'plain'] },
+            },
+          },
+          includeMetrics: { type: 'boolean' },
+          includeDebugInfo: { type: 'boolean' },
+        },
+        required: ['query', 'userContext'],
+      },
       response: {
-        200: AskResponseSchema,
+        200: {
+          type: 'object',
+          properties: {
+            answer: { type: 'string' },
+            retrievedDocuments: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  document: {
+                    type: 'object',
+                    properties: {
+                      id: { type: 'string' },
+                      content: { type: 'string' },
+                      metadata: {
+                        type: 'object',
+                        properties: {
+                          tenantId: { type: 'string', format: 'uuid' },
+                          docId: { type: 'string' },
+                          version: { type: 'string' },
+                          url: { type: 'string', format: 'uri' },
+                          filepath: { type: 'string' },
+                          authors: { type: 'array', items: { type: 'string' } },
+                          keywords: { type: 'array', items: { type: 'string' } },
+                          acl: { type: 'array', items: { type: 'string' } },
+                        },
+                        required: ['tenantId', 'docId', 'acl'],
+                      },
+                    },
+                    required: ['id', 'content', 'metadata'],
+                  },
+                  score: { type: 'number' },
+                  freshness: {
+                    type: 'object',
+                    properties: {
+                      category: { type: 'string', enum: ['Fresh', 'Recent', 'Stale'] },
+                      badge: { type: 'string' },
+                      humanReadable: { type: 'string' },
+                      ageInDays: { type: 'number' },
+                    },
+                    required: ['category', 'badge', 'humanReadable', 'ageInDays'],
+                  },
+                  searchType: { type: 'string', enum: ['hybrid', 'vector_only', 'keyword_only'] },
+                  vectorScore: { type: 'number' },
+                  keywordScore: { type: 'number' },
+                  fusionScore: { type: 'number' },
+                  rerankerScore: { type: 'number' },
+                  rank: { type: 'integer', minimum: 1 },
+                },
+                required: ['document', 'score'],
+              },
+            },
+            queryId: { type: 'string' },
+            guardrailDecision: {
+              type: 'object',
+              properties: {
+                isAnswerable: { type: 'boolean' },
+                confidence: { type: 'number', minimum: 0, maximum: 1 },
+                reasonCode: { type: 'string' },
+                suggestions: { type: 'array', items: { type: 'string' } },
+                scoreStats: {
+                  type: 'object',
+                  properties: {
+                    mean: { type: 'number' },
+                    max: { type: 'number' },
+                    min: { type: 'number' },
+                    stdDev: { type: 'number' },
+                    count: { type: 'integer', minimum: 0 },
+                  },
+                  required: ['mean', 'max', 'min', 'stdDev', 'count'],
+                },
+                algorithmScores: {
+                  type: 'object',
+                  properties: {
+                    statistical: { type: 'number' },
+                    threshold: { type: 'number' },
+                    mlFeatures: { type: 'number' },
+                    rerankerConfidence: { type: 'number' },
+                  },
+                  required: ['statistical', 'threshold', 'mlFeatures'],
+                },
+              },
+              required: ['isAnswerable', 'confidence'],
+            },
+            freshnessStats: {
+              type: 'object',
+              properties: {
+                totalDocuments: { type: 'integer', minimum: 0 },
+                freshPercentage: { type: 'number', minimum: 0, maximum: 100 },
+                recentPercentage: { type: 'number', minimum: 0, maximum: 100 },
+                stalePercentage: { type: 'number', minimum: 0, maximum: 100 },
+                avgAgeInDays: { type: 'number', minimum: 0 },
+              },
+              required: ['totalDocuments', 'freshPercentage', 'recentPercentage', 'stalePercentage', 'avgAgeInDays'],
+            },
+            citations: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  id: { type: 'string' },
+                  number: { type: 'integer', minimum: 1 },
+                  source: { type: 'string' },
+                  freshness: {
+                    type: 'object',
+                    properties: {
+                      category: { type: 'string', enum: ['Fresh', 'Recent', 'Stale'] },
+                      badge: { type: 'string' },
+                      humanReadable: { type: 'string' },
+                      ageInDays: { type: 'number' },
+                    },
+                    required: ['category', 'badge', 'humanReadable', 'ageInDays'],
+                  },
+                  docId: { type: 'string' },
+                  version: { type: 'string' },
+                  url: { type: 'string', format: 'uri' },
+                  filepath: { type: 'string' },
+                  authors: { type: 'array', items: { type: 'string' } },
+                },
+                required: ['id', 'number', 'source'],
+              },
+            },
+            metrics: {
+              type: 'object',
+              properties: {
+                totalDuration: { type: 'number', minimum: 0 },
+                vectorSearchDuration: { type: 'number', minimum: 0 },
+                keywordSearchDuration: { type: 'number', minimum: 0 },
+                fusionDuration: { type: 'number', minimum: 0 },
+                rerankerDuration: { type: 'number', minimum: 0 },
+                guardrailDuration: { type: 'number', minimum: 0 },
+                synthesisTime: { type: 'number', minimum: 0 },
+                vectorResultCount: { type: 'integer', minimum: 0 },
+                keywordResultCount: { type: 'integer', minimum: 0 },
+                finalResultCount: { type: 'integer', minimum: 0 },
+                documentsReranked: { type: 'integer', minimum: 0 },
+                rerankingEnabled: { type: 'boolean' },
+              },
+              required: ['totalDuration'],
+            },
+            synthesisMetadata: {
+              type: 'object',
+              properties: {
+                tokensUsed: { type: 'integer', minimum: 0 },
+                modelUsed: { type: 'string' },
+                contextTruncated: { type: 'boolean' },
+                confidence: { type: 'number', minimum: 0, maximum: 1 },
+                llmProvider: { type: 'string' },
+              },
+              required: ['tokensUsed', 'modelUsed', 'contextTruncated', 'confidence'],
+            },
+            debug: {
+              type: 'object',
+              properties: {
+                hybridSearchConfig: { type: 'object' },
+                rerankerConfig: { type: 'object' },
+                guardrailConfig: { type: 'object' },
+                retrievalSteps: { type: 'array', items: { type: 'string' } },
+              },
+            },
+          },
+          required: ['answer', 'retrievedDocuments', 'queryId'],
+        },
       },
     },
     handler: async (request: any, reply: FastifyReply) => {
@@ -326,7 +523,137 @@ export async function askRoute(fastify: FastifyInstance, options: AskRouteOption
           debugSteps.push('Proceeding with answer synthesis');
         }
 
-        // Synthesize answer with citations
+        // Check if streaming is enabled
+        const streamingEnabled = process.env.LLM_STREAMING === 'true';
+
+        if (streamingEnabled) {
+          // Handle streaming synthesis - collect all chunks then return
+          let answer = '';
+          let citations: any = {};
+          let metadata: any = {};
+
+          try {
+            for await (const chunk of answerSynthesisService.synthesizeAnswerStreaming({
+              query,
+              documents: retrievalResult.results || [],
+              userContext,
+              maxContextLength: synthesis?.maxContextLength || 8000,
+              includeCitations: synthesis?.includeCitations ?? true,
+              answerFormat: synthesis?.answerFormat || 'markdown'
+            })) {
+              if (chunk.type === 'chunk' && typeof chunk.data === 'string') {
+                answer += chunk.data;
+              } else if (chunk.type === 'citations') {
+                citations = chunk.data;
+              } else if (chunk.type === 'metadata') {
+                metadata = chunk.data;
+              } else if (chunk.type === 'error') {
+                throw chunk.data as Error;
+              } else if (chunk.type === 'done') {
+                break;
+              }
+            }
+
+            // Convert streaming result to regular response format
+            const retrievedDocuments: RetrievedDocument[] = (retrievalResult.results || [])
+              .map((result: HybridSearchResult) => ({
+                document: {
+                  id: result.id,
+                  content: result.content || '',
+                  metadata: {
+                    tenantId: result.payload?.tenant || userContext.tenantId || 'default',
+                    docId: result.payload?.docId || result.id,
+                    acl: Array.isArray(result.payload?.acl) ? result.payload.acl : [result.payload?.acl || ''],
+                    lang: result.payload?.lang,
+                    url: result.payload?.url,
+                    ...(result.payload?.version && { version: result.payload.version }),
+                    ...(result.payload?.filepath && { filepath: result.payload.filepath }),
+                    ...(result.payload?.authors && { authors: result.payload.authors }),
+                    ...(result.payload?.keywords && { keywords: result.payload.keywords }),
+                  },
+                },
+                score: result.fusionScore || result.score || 0,
+                searchType: result.searchType,
+                vectorScore: result.vectorScore,
+                keywordScore: result.keywordScore,
+                fusionScore: result.fusionScore,
+                rerankerScore: result.score !== result.fusionScore ? result.score : undefined,
+                rank: result.rank
+              }));
+
+            const responseCitations = Object.values(citations).map((citation: any) => ({
+              id: citation.id,
+              number: citation.number,
+              source: citation.source,
+              freshness: citation.freshness,
+              docId: citation.docId,
+              version: citation.version,
+              url: citation.url,
+              filepath: citation.filepath,
+              authors: citation.authors
+            }));
+
+            const totalTime = performance.now() - startTime;
+
+            const streamingResponse: AskResponse = {
+              answer,
+              retrievedDocuments,
+              queryId,
+              guardrailDecision: {
+                isAnswerable: true,
+                confidence: metadata.confidence || 0,
+                scoreStats: retrievalResult.guardrailDecision.score?.scoreStats ? {
+                  mean: retrievalResult.guardrailDecision.score.scoreStats.mean,
+                  max: retrievalResult.guardrailDecision.score.scoreStats.max,
+                  min: retrievalResult.guardrailDecision.score.scoreStats.min,
+                  stdDev: retrievalResult.guardrailDecision.score.scoreStats.stdDev,
+                  count: retrievalResult.guardrailDecision.score.scoreStats.count
+                } : undefined,
+                algorithmScores: retrievalResult.guardrailDecision.score?.algorithmScores
+              },
+              freshnessStats: metadata.freshnessStats,
+              citations: responseCitations,
+              ...(includeMetrics && {
+                metrics: {
+                  totalDuration: totalTime,
+                  vectorSearchDuration: retrievalResult.metrics.vectorSearchDuration,
+                  keywordSearchDuration: retrievalResult.metrics.keywordSearchDuration,
+                  fusionDuration: retrievalResult.metrics.fusionDuration,
+                  rerankerDuration: retrievalResult.metrics.rerankerDuration,
+                  guardrailDuration: retrievalResult.metrics.guardrailDuration,
+                  synthesisTime: metadata.synthesisTime || 0,
+                  vectorResultCount: retrievalResult.metrics.vectorResultCount,
+                  keywordResultCount: retrievalResult.metrics.keywordResultCount,
+                  finalResultCount: retrievalResult.metrics.finalResultCount,
+                  documentsReranked: retrievalResult.metrics.documentsReranked,
+                  rerankingEnabled: retrievalResult.metrics.rerankingEnabled
+                }
+              }),
+              synthesisMetadata: {
+                tokensUsed: metadata.tokensUsed || 0,
+                modelUsed: metadata.modelUsed || 'unknown',
+                contextTruncated: metadata.contextTruncated || false,
+                confidence: metadata.confidence || 0,
+                llmProvider: metadata.llmProvider
+              },
+              ...(includeDebugInfo && {
+                debug: {
+                  hybridSearchConfig,
+                  rerankerConfig,
+                  guardrailConfig,
+                  retrievalSteps: [...debugSteps, 'Completed streaming synthesis']
+                }
+              })
+            };
+
+            return reply.send(streamingResponse);
+
+          } catch (error) {
+            throw new Error(`Streaming synthesis failed: ${(error as Error).message}`);
+          }
+        }
+
+        // Non-streaming synthesis (fallback)
         const synthesisStartTime = performance.now();
         const synthesisResponse = await answerSynthesisService.synthesizeAnswer({
           query,
@@ -344,7 +671,7 @@ export async function askRoute(fastify: FastifyInstance, options: AskRouteOption
 
         // Convert HybridSearchResult to RetrievedDocument format for response
         const retrievedDocuments: RetrievedDocument[] = (retrievalResult.results || [])
-          .map(result => ({
+          .map((result: HybridSearchResult) => ({
             document: {
               id: result.id,
               content: result.content || '',
@@ -374,7 +701,7 @@ export async function askRoute(fastify: FastifyInstance, options: AskRouteOption
         // Log synthesis metrics
         const qualityMetrics = answerSynthesisService.getQualityMetrics();
         if (qualityMetrics) {
-          fastify.log.info('Answer synthesis metrics', {
+          fastify.log.info({
             queryId,
             answerLength: qualityMetrics.answerLength,
             citationCount: qualityMetrics.citationCount,
@@ -382,7 +709,7 @@ export async function askRoute(fastify: FastifyInstance, options: AskRouteOption
             responseLatency: qualityMetrics.responseLatency,
             totalLatency: totalTime,
             model: qualityMetrics.model
-          });
+          }, 'Answer synthesis metrics');
         }
 
         // Extract citations for response format
@@ -463,12 +790,12 @@ export async function askRoute(fastify: FastifyInstance, options: AskRouteOption
           (request as any).headers?.['user-agent']
         );
 
-        fastify.log.error('Ask pipeline error:', {
+        fastify.log.error({
           queryId,
           error: (error as Error).message,
           stack: (error as Error).stack,
           query: query.substring(0, 100) // Log first 100 chars of query for debugging
-        });
+        }, 'Ask pipeline error');
 
         // Check if it's a timeout error
         if ((error as Error).message.includes('timeout') || (error as Error).message.includes('Request timeout')) {

@@ -10,7 +10,8 @@ import {
 } from '../types/hybrid.js';
 import {
   RerankerRequest,
-  RerankerDocument
+  RerankerDocument,
+  RERANKER_CONFIG
 } from '../types/reranker.js';
 import {
   UserContext,
@@ -162,8 +163,9 @@ export class HybridSearchServiceImpl implements HybridSearchService {
         const rerankerStartTime = performance.now();
 
         try {
-          // Take top 20 for reranking (or all if less than 20)
-          const resultsForReranking = fusedResults.slice(0, 20);
+          // Take top RERANKER_TOPN_IN for reranking (default 20)
+          const topNIn = RERANKER_CONFIG.TOPN_IN;
+          const resultsForReranking = fusedResults.slice(0, topNIn);
 
           // Convert to reranker documents
           const rerankerDocs: RerankerDocument[] = resultsForReranking.map(result => ({
@@ -176,7 +178,7 @@ export class HybridSearchServiceImpl implements HybridSearchService {
           const rerankerRequest: RerankerRequest = {
             query: request.query,
             documents: rerankerDocs,
-            topK: 8 // Return top 8 after reranking
+            topK: RERANKER_CONFIG.TOPN_OUT // Default 8
           };
 
           const rerankedResults = await this.rerankerService.rerank(rerankerRequest);
@@ -198,14 +200,23 @@ export class HybridSearchServiceImpl implements HybridSearchService {
           metrics.rerankingEnabled = true;
           metrics.documentsReranked = rerankerDocs.length;
 
+          console.log('StructuredLog:RerankerSuccess', {
+            inputCount: rerankerDocs.length,
+            outputCount: rerankedResults.length,
+            rerankerDuration: metrics.rerankerDuration,
+            topNIn,
+            topNOut: RERANKER_CONFIG.TOPN_OUT
+          });
+
         } catch (error) {
           console.warn('StructuredLog:RerankerFailed', {
             error: (error as Error).message,
-            fallbackToFusion: true
+            fallbackToFusion: true,
+            timeout: RERANKER_CONFIG.TIMEOUT_MS
           });
           metrics.rerankerDuration = performance.now() - rerankerStartTime;
           metrics.rerankingEnabled = false;
-          // Continue with fusion results
+          // Continue with fusion results (fail open)
         }
       }
 
@@ -249,7 +260,7 @@ export class HybridSearchServiceImpl implements HybridSearchService {
       defaultVectorWeight: 0.7,
       defaultKeywordWeight: 0.3,
       defaultRrfK: 60,
-      rerankerEnabled: false
+      rerankerEnabled: RERANKER_CONFIG.ENABLED
     };
 
     this.tenantConfigs.set('default', defaultConfig);
@@ -262,7 +273,7 @@ export class HybridSearchServiceImpl implements HybridSearchService {
       defaultVectorWeight: 0.7,
       defaultKeywordWeight: 0.3,
       defaultRrfK: 60,
-      rerankerEnabled: false
+      rerankerEnabled: RERANKER_CONFIG.ENABLED
     };
   }
 

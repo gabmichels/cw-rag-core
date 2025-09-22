@@ -1,10 +1,9 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import rateLimit from '@fastify/rate-limit';
-import pino from 'pino';
-import { FastifyInstance, FastifyReply, FastifyRequest, FastifyServerOptions } from 'fastify'; // Import all necessary Fastify types explicitly from stub
-import { FastifyBaseLogger } from 'pino';
-import { CollectionInfo, PointStruct, QdrantClient, SearchParams } from '@qdrant/js-client-rest';
+import { pino } from 'pino';
+import { FastifyReply, FastifyRequest} from 'fastify'; // Import all necessary Fastify types explicitly from stub
+import { QdrantClient } from '@qdrant/js-client-rest';
 import 'dotenv/config';
 
 import { healthzRoute } from './routes/healthz.js';
@@ -27,21 +26,19 @@ const ALLOWED_ORIGINS = [
   'http://localhost:5678'  // N8N automation
 ];
 
-const createLogger = () => pino({
+const logger = pino({
   level: process.env.NODE_ENV === 'production' ? 'info' : 'debug',
-  transport: {
+  transport: process.env.NODE_ENV !== 'production' ? {
     target: 'pino-pretty',
     options: {
       colorize: true,
       ignore: 'pid,hostname',
     },
-  },
+  } : undefined,
 });
 
-const logger = createLogger();
-
 const qdrantClient = new QdrantClient({
-  host: QDRANT_URL.replace(/^https?:\/\//, ''),
+  url: QDRANT_URL,
   apiKey: QDRANT_API_KEY,
 });
 
@@ -87,7 +84,17 @@ async function bootstrapQdrant(maxRetries = 5, retryDelay = 5000) {
 }
 
 async function startServer() {
-  const server = Fastify({ logger });
+  const server = Fastify({
+    logger: process.env.NODE_ENV === 'production' ? true : {
+      transport: {
+        target: 'pino-pretty',
+        options: {
+          colorize: true,
+          ignore: 'pid,hostname',
+        },
+      },
+    }
+  });
 
   // Validate required environment variables
   if (!INGEST_TOKEN) {
@@ -176,7 +183,7 @@ async function startServer() {
   server.register(healthzRoute);
   server.register(readyzRoute, { qdrantClient, collectionName: QDRANT_COLLECTION_NAME });
   server.register(ingestNormalizeRoute, { qdrantClient, collectionName: QDRANT_COLLECTION_NAME, embeddingService });
-  server.register(askRoute, { qdrantClient, collectionName: QDRANT_COLLECTION_NAME });
+  server.register(askRoute, { qdrantClient, collectionName: QDRANT_COLLECTION_NAME, embeddingService });
   server.register(ingestRoutes, {
     qdrantClient,
     collectionName: QDRANT_COLLECTION_NAME,

@@ -96,9 +96,99 @@ const PublishResponseSchema = z.object({
 export async function publishRoute(fastify, options) {
     fastify.post('/publish', {
         schema: {
-            body: PublishRequestSchema,
+            body: {
+                anyOf: [
+                    {
+                        type: 'object',
+                        properties: {
+                            meta: {
+                                type: 'object',
+                                properties: {
+                                    tenant: { type: 'string', minLength: 1 },
+                                    docId: { type: 'string', minLength: 1 },
+                                    source: { type: 'string', minLength: 1 },
+                                    path: { type: 'string' },
+                                    title: { type: 'string' },
+                                    lang: { type: 'string', pattern: '^[a-z]{2}$' },
+                                    version: { type: 'string' },
+                                    sha256: { type: 'string', pattern: '^[a-f0-9]{64}$' },
+                                    acl: { type: 'array', items: { type: 'string', minLength: 1 } },
+                                    authors: { type: 'array', items: { type: 'string' } },
+                                    tags: { type: 'array', items: { type: 'string' } },
+                                    timestamp: { type: 'string', format: 'date-time' },
+                                    modifiedAt: { type: 'string', format: 'date-time' },
+                                    deleted: { type: 'boolean' },
+                                },
+                                required: ['tenant', 'docId', 'source', 'sha256', 'acl', 'timestamp'],
+                            },
+                            blocks: {
+                                type: 'array',
+                                items: {
+                                    type: 'object',
+                                    properties: {
+                                        type: { type: 'string', enum: ['text', 'table', 'code', 'image-ref'] },
+                                        text: { type: 'string' },
+                                        html: { type: 'string' },
+                                    },
+                                    required: ['type'],
+                                },
+                            },
+                        },
+                        required: ['meta', 'blocks'],
+                    },
+                    {
+                        type: 'array',
+                        items: {
+                            type: 'object',
+                            properties: {
+                                meta: {
+                                    type: 'object',
+                                    properties: {
+                                        tenant: { type: 'string', minLength: 1 },
+                                        docId: { type: 'string', minLength: 1 },
+                                        source: { type: 'string', minLength: 1 },
+                                        path: { type: 'string' },
+                                        title: { type: 'string' },
+                                        lang: { type: 'string', pattern: '^[a-z]{2}$' },
+                                        version: { type: 'string' },
+                                        sha256: { type: 'string', pattern: '^[a-f0-9]{64}$' },
+                                        acl: { type: 'array', items: { type: 'string', minLength: 1 } },
+                                        authors: { type: 'array', items: { type: 'string' } },
+                                        tags: { type: 'array', items: { type: 'string' } },
+                                        timestamp: { type: 'string', format: 'date-time' },
+                                        modifiedAt: { type: 'string', format: 'date-time' },
+                                        deleted: { type: 'boolean' },
+                                    },
+                                    required: ['tenant', 'docId', 'source', 'sha256', 'acl', 'timestamp'],
+                                },
+                                blocks: {
+                                    type: 'array',
+                                    items: {
+                                        type: 'object',
+                                        properties: {
+                                            type: { type: 'string', enum: ['text', 'table', 'code', 'image-ref'] },
+                                            text: { type: 'string' },
+                                            html: { type: 'string' },
+                                        },
+                                        required: ['type'],
+                                    },
+                                },
+                            },
+                            required: ['meta', 'blocks'],
+                        },
+                    },
+                ],
+            },
             response: {
-                200: PublishResponseSchema,
+                200: {
+                    type: 'object',
+                    properties: {
+                        published: { type: 'boolean' },
+                        documentIds: { type: 'array', items: { type: 'string' } },
+                        errors: { type: 'array', items: { type: 'string' } },
+                    },
+                    required: ['published', 'documentIds'],
+                },
             },
         },
         handler: async (request, reply) => {
@@ -209,13 +299,13 @@ export async function publishRoute(fastify, options) {
                         });
                         summary.errors++;
                         options.auditLogger.logError('/ingest/publish', doc.meta?.tenant || 'unknown', doc.meta?.docId || 'unknown', doc.meta?.source || 'unknown', errorMsg, request.ip || 'unknown', request.headers['user-agent']);
-                        fastify.log.error(errorMsg, docError);
+                        fastify.log.error({ error: docError }, errorMsg);
                     }
                 }
                 return reply.send({ results, summary });
             }
             catch (error) {
-                fastify.log.error('Error in publish endpoint', error);
+                fastify.log.error({ error }, 'Error in publish endpoint');
                 return reply.status(500).send({
                     error: 'Internal Server Error',
                     message: 'Failed to process publish request'

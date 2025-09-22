@@ -1,8 +1,7 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
-import { FromSchema } from 'json-schema-to-ts';
 import { ingestDocument, QdrantClient } from '../services/qdrant.js';
 import { BgeSmallEnV15EmbeddingService, EmbeddingService } from '@cw-rag-core/retrieval';
-import { IngestDocumentRequest, IngestDocumentResponse, Document, IngestDocumentRequestSchema } from '@cw-rag-core/shared';
+import { IngestDocumentRequest, IngestDocumentResponse, Document } from '@cw-rag-core/shared';
 
 interface IngestNormalizeOptions {
   qdrantClient: QdrantClient;
@@ -10,14 +9,39 @@ interface IngestNormalizeOptions {
   embeddingService: EmbeddingService;
 }
 
-type IngestNormalizeRequest = FastifyRequest<{
-  Body: FromSchema<typeof IngestDocumentRequestSchema>;
-}>;
-
 export async function ingestNormalizeRoute(fastify: FastifyInstance, options: IngestNormalizeOptions) {
   fastify.post('/ingest/normalize', {
     schema: {
-      body: IngestDocumentRequestSchema,
+      body: {
+        type: 'object',
+        properties: {
+          documents: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                content: { type: 'string' },
+                metadata: {
+                  type: 'object',
+                  properties: {
+                    tenantId: { type: 'string', format: 'uuid' },
+                    docId: { type: 'string' },
+                    version: { type: 'string' },
+                    url: { type: 'string', format: 'uri' },
+                    filepath: { type: 'string' },
+                    authors: { type: 'array', items: { type: 'string' } },
+                    keywords: { type: 'array', items: { type: 'string' } },
+                    acl: { type: 'array', items: { type: 'string' } },
+                  },
+                  required: ['tenantId', 'docId', 'acl'],
+                },
+              },
+              required: ['content', 'metadata'],
+            },
+          },
+        },
+        required: ['documents'],
+      },
       response: {
         200: {
           type: 'object',
@@ -50,7 +74,7 @@ export async function ingestNormalizeRoute(fastify: FastifyInstance, options: In
           const id = await ingestDocument(options.qdrantClient, options.embeddingService, options.collectionName, doc as Document);
           documentIds.push(id);
         } catch (error) {
-          fastify.log.error((error as Error).message, `Failed to ingest document: ${doc.metadata?.url || 'unknown'}`);
+          fastify.log.error({ error }, `Failed to ingest document: ${doc.metadata?.url || 'unknown'}`);
           failedDocuments.push({ document: doc, error: (error as Error).message });
         }
       }

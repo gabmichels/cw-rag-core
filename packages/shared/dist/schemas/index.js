@@ -33,27 +33,131 @@ export const UserContextSchema = z.object({
     groupIds: z.array(GroupIdSchema),
     tenantId: TenantIdSchema,
 });
-export const RetrievedDocumentSchema = z.object({
-    document: DocumentSchema,
-    score: z.number(),
-});
+// Removed - will be redefined below with enhanced fields
 export const AskRequestSchema = z.object({
     query: z.string(),
     userContext: UserContextSchema,
     k: z.number().int().positive().optional(),
     filter: z.record(z.any()).optional(),
+    // Hybrid search configuration
+    hybridSearch: z.object({
+        vectorWeight: z.number().min(0).max(1).optional(),
+        keywordWeight: z.number().min(0).max(1).optional(),
+        rrfK: z.number().int().positive().optional(),
+        enableKeywordSearch: z.boolean().optional(),
+    }).optional(),
+    // Reranker configuration
+    reranker: z.object({
+        enabled: z.boolean().optional(),
+        model: z.string().optional(),
+        topK: z.number().int().positive().optional(),
+    }).optional(),
+    // Answer synthesis options
+    synthesis: z.object({
+        maxContextLength: z.number().int().positive().optional(),
+        includeCitations: z.boolean().optional(),
+        answerFormat: z.enum(['markdown', 'plain']).optional(),
+    }).optional(),
+    // Performance and debugging options
+    includeMetrics: z.boolean().optional(),
+    includeDebugInfo: z.boolean().optional(),
+});
+export const EnhancedRetrievedDocumentSchema = z.object({
+    document: DocumentSchema,
+    score: z.number(),
+    freshness: z.object({
+        category: z.enum(['Fresh', 'Recent', 'Stale']),
+        badge: z.string(),
+        humanReadable: z.string(),
+        ageInDays: z.number(),
+    }).optional(),
+    // Enhanced retrieval metadata
+    searchType: z.enum(['hybrid', 'vector_only', 'keyword_only']).optional(),
+    vectorScore: z.number().optional(),
+    keywordScore: z.number().optional(),
+    fusionScore: z.number().optional(),
+    rerankerScore: z.number().optional(),
+    rank: z.number().int().positive().optional(),
 });
 export const GuardrailDecisionSchema = z.object({
     isAnswerable: z.boolean(),
     confidence: z.number().min(0).max(1),
     reasonCode: z.string().optional(),
     suggestions: z.array(z.string()).optional(),
+    scoreStats: z.object({
+        mean: z.number(),
+        max: z.number(),
+        min: z.number(),
+        stdDev: z.number(),
+        count: z.number().int().nonnegative(),
+    }).optional(),
+    algorithmScores: z.object({
+        statistical: z.number(),
+        threshold: z.number(),
+        mlFeatures: z.number(),
+        rerankerConfidence: z.number().optional(),
+    }).optional(),
 });
 export const AskResponseSchema = z.object({
     answer: z.string(),
-    retrievedDocuments: z.array(RetrievedDocumentSchema),
+    retrievedDocuments: z.array(EnhancedRetrievedDocumentSchema),
     queryId: z.string(),
+    // Guardrail decision with enhanced metadata
     guardrailDecision: GuardrailDecisionSchema.optional(),
+    // Enhanced citation and freshness information
+    freshnessStats: z.object({
+        totalDocuments: z.number().int().nonnegative(),
+        freshPercentage: z.number().min(0).max(100),
+        recentPercentage: z.number().min(0).max(100),
+        stalePercentage: z.number().min(0).max(100),
+        avgAgeInDays: z.number().nonnegative(),
+    }).optional(),
+    citations: z.array(z.object({
+        id: z.string(),
+        number: z.number().int().positive(),
+        source: z.string(),
+        freshness: z.object({
+            category: z.enum(['Fresh', 'Recent', 'Stale']),
+            badge: z.string(),
+            humanReadable: z.string(),
+            ageInDays: z.number(),
+        }).optional(),
+        docId: z.string().optional(),
+        version: z.string().optional(),
+        url: z.string().url().optional(),
+        filepath: z.string().optional(),
+        authors: z.array(z.string()).optional(),
+    })).optional(),
+    // Performance metrics
+    metrics: z.object({
+        totalDuration: z.number().nonnegative(),
+        vectorSearchDuration: z.number().nonnegative().optional(),
+        keywordSearchDuration: z.number().nonnegative().optional(),
+        fusionDuration: z.number().nonnegative().optional(),
+        rerankerDuration: z.number().nonnegative().optional(),
+        guardrailDuration: z.number().nonnegative().optional(),
+        synthesisTime: z.number().nonnegative().optional(),
+        vectorResultCount: z.number().int().nonnegative().optional(),
+        keywordResultCount: z.number().int().nonnegative().optional(),
+        finalResultCount: z.number().int().nonnegative().optional(),
+        documentsReranked: z.number().int().nonnegative().optional(),
+        rerankingEnabled: z.boolean().optional(),
+    }).optional(),
+    // Synthesis metadata
+    synthesisMetadata: z.object({
+        tokensUsed: z.number().int().nonnegative(),
+        modelUsed: z.string(),
+        contextTruncated: z.boolean(),
+        confidence: z.number().min(0).max(1),
+        llmProvider: z.string().optional(),
+    }).optional(),
+    // Debug information (optional)
+    debug: z.object({
+        hybridSearchConfig: z.record(z.any()).optional(),
+        rerankerConfig: z.record(z.any()).optional(),
+        guardrailConfig: z.record(z.any()).optional(),
+        retrievalSteps: z.array(z.string()).optional(),
+    }).optional(),
 });
 // Normalized Document Schemas
 /**

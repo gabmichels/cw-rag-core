@@ -65,3 +65,12 @@ export declare const RERANKER_MODELS: {
 };
 export type RerankerModelName = keyof typeof RERANKER_MODELS;
 export declare const DEFAULT_RERANKER_CONFIG: RerankerConfig;
+export declare const RERANKER_CONFIG: {
+    readonly ENABLED: boolean;
+    readonly MODEL: string;
+    readonly ENDPOINT: string;
+    readonly TOPN_IN: number;
+    readonly TOPN_OUT: number;
+    readonly TIMEOUT_MS: number;
+    readonly BATCH_SIZE: number;
+};

@@ -22,11 +22,35 @@ export interface AskRequest {
     userContext: UserContext;
     k?: number;
     filter?: Record<string, any>;
+    hybridSearch?: {
+        vectorWeight?: number;
+        keywordWeight?: number;
+        rrfK?: number;
+        enableKeywordSearch?: boolean;
+    };
+    reranker?: {
+        enabled?: boolean;
+        model?: string;
+        topK?: number;
+    };
+    synthesis?: {
+        maxContextLength?: number;
+        includeCitations?: boolean;
+        answerFormat?: 'markdown' | 'plain';
+    };
+    includeMetrics?: boolean;
+    includeDebugInfo?: boolean;
 }
 export interface RetrievedDocument {
     document: Document;
     score: number;
     freshness?: FreshnessInfo;
+    searchType?: 'hybrid' | 'vector_only' | 'keyword_only';
+    vectorScore?: number;
+    keywordScore?: number;
+    fusionScore?: number;
+    rerankerScore?: number;
+    rank?: number;
 }
 export interface AskResponse {
     answer: string;
@@ -37,6 +61,19 @@ export interface AskResponse {
         confidence: number;
         reasonCode?: string;
         suggestions?: string[];
+        scoreStats?: {
+            mean: number;
+            max: number;
+            min: number;
+            stdDev: number;
+            count: number;
+        };
+        algorithmScores?: {
+            statistical: number;
+            threshold: number;
+            mlFeatures: number;
+            rerankerConfidence?: number;
+        };
     };
     freshnessStats?: FreshnessStats;
     citations?: Array<{
@@ -44,5 +81,37 @@ export interface AskResponse {
         number: number;
         source: string;
         freshness?: FreshnessInfo;
+        docId?: string;
+        version?: string;
+        url?: string;
+        filepath?: string;
+        authors?: string[];
     }>;
+    metrics?: {
+        totalDuration: number;
+        vectorSearchDuration?: number;
+        keywordSearchDuration?: number;
+        fusionDuration?: number;
+        rerankerDuration?: number;
+        guardrailDuration?: number;
+        synthesisTime?: number;
+        vectorResultCount?: number;
+        keywordResultCount?: number;
+        finalResultCount?: number;
+        documentsReranked?: number;
+        rerankingEnabled?: boolean;
+    };
+    synthesisMetadata?: {
+        tokensUsed: number;
+        modelUsed: string;
+        contextTruncated: boolean;
+        confidence: number;
+        llmProvider?: string;
+    };
+    debug?: {
+        hybridSearchConfig?: Record<string, any>;
+        rerankerConfig?: Record<string, any>;
+        guardrailConfig?: Record<string, any>;
+        retrievalSteps?: string[];
+    };
 }
