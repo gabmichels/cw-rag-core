@@ -13,7 +13,7 @@ export default function Navigation() {
   };
 
   const navItems = [
-    { href: '/', label: 'Ask', icon: '❓' },
+    { href: '/ask', label: 'Ask', icon: '❓' },
     { href: '/upload', label: 'Upload', icon: '📤' },
     { href: '/ingests', label: 'Recent Ingests', icon: '📊' },
   ];

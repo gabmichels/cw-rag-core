@@ -334,12 +334,12 @@ export declare const UserContextSchema: z.ZodObject<{
     groupIds: z.ZodArray<z.ZodString, "many">;
     tenantId: z.ZodString;
 }, "strip", z.ZodTypeAny, {
-    tenantId: string;
     id: string;
+    tenantId: string;
     groupIds: string[];
 }, {
-    tenantId: string;
     id: string;
+    tenantId: string;
     groupIds: string[];
 }>;
 export declare const RetrievedDocumentSchema: z.ZodObject<{
@@ -450,12 +450,12 @@ export declare const AskRequestSchema: z.ZodObject<{
         groupIds: z.ZodArray<z.ZodString, "many">;
         tenantId: z.ZodString;
     }, "strip", z.ZodTypeAny, {
-        tenantId: string;
         id: string;
+        tenantId: string;
         groupIds: string[];
     }, {
-        tenantId: string;
         id: string;
+        tenantId: string;
         groupIds: string[];
     }>;
     k: z.ZodOptional<z.ZodNumber>;
@@ -463,8 +463,8 @@ export declare const AskRequestSchema: z.ZodObject<{
 }, "strip", z.ZodTypeAny, {
     query: string;
     userContext: {
-        tenantId: string;
         id: string;
+        tenantId: string;
         groupIds: string[];
     };
     filter?: Record<string, any> | undefined;
@@ -472,12 +472,28 @@ export declare const AskRequestSchema: z.ZodObject<{
 }, {
     query: string;
     userContext: {
-        tenantId: string;
         id: string;
+        tenantId: string;
         groupIds: string[];
     };
     filter?: Record<string, any> | undefined;
     k?: number | undefined;
+}>;
+export declare const GuardrailDecisionSchema: z.ZodObject<{
+    isAnswerable: z.ZodBoolean;
+    confidence: z.ZodNumber;
+    reasonCode: z.ZodOptional<z.ZodString>;
+    suggestions: z.ZodOptional<z.ZodArray<z.ZodString, "many">>;
+}, "strip", z.ZodTypeAny, {
+    isAnswerable: boolean;
+    confidence: number;
+    reasonCode?: string | undefined;
+    suggestions?: string[] | undefined;
+}, {
+    isAnswerable: boolean;
+    confidence: number;
+    reasonCode?: string | undefined;
+    suggestions?: string[] | undefined;
 }>;
 export declare const AskResponseSchema: z.ZodObject<{
     answer: z.ZodString;
@@ -583,6 +599,22 @@ export declare const AskResponseSchema: z.ZodObject<{
         score: number;
     }>, "many">;
     queryId: z.ZodString;
+    guardrailDecision: z.ZodOptional<z.ZodObject<{
+        isAnswerable: z.ZodBoolean;
+        confidence: z.ZodNumber;
+        reasonCode: z.ZodOptional<z.ZodString>;
+        suggestions: z.ZodOptional<z.ZodArray<z.ZodString, "many">>;
+    }, "strip", z.ZodTypeAny, {
+        isAnswerable: boolean;
+        confidence: number;
+        reasonCode?: string | undefined;
+        suggestions?: string[] | undefined;
+    }, {
+        isAnswerable: boolean;
+        confidence: number;
+        reasonCode?: string | undefined;
+        suggestions?: string[] | undefined;
+    }>>;
 }, "strip", z.ZodTypeAny, {
     answer: string;
     retrievedDocuments: {
@@ -605,6 +637,12 @@ export declare const AskResponseSchema: z.ZodObject<{
         score: number;
     }[];
     queryId: string;
+    guardrailDecision?: {
+        isAnswerable: boolean;
+        confidence: number;
+        reasonCode?: string | undefined;
+        suggestions?: string[] | undefined;
+    } | undefined;
 }, {
     answer: string;
     retrievedDocuments: {
@@ -627,6 +665,12 @@ export declare const AskResponseSchema: z.ZodObject<{
         score: number;
     }[];
     queryId: string;
+    guardrailDecision?: {
+        isAnswerable: boolean;
+        confidence: number;
+        reasonCode?: string | undefined;
+        suggestions?: string[] | undefined;
+    } | undefined;
 }>;
 /**
  * Schema for normalized document metadata.
@@ -664,13 +708,13 @@ export declare const NormalizedMetaSchema: z.ZodObject<{
 }, "strip", z.ZodTypeAny, {
     docId: string;
     acl: string[];
-    sha256: string;
     tenant: string;
     source: string;
+    sha256: string;
     timestamp: string;
     version?: string | undefined;
-    authors?: string[] | undefined;
     path?: string | undefined;
+    authors?: string[] | undefined;
     title?: string | undefined;
     lang?: string | undefined;
     tags?: string[] | undefined;
@@ -679,13 +723,13 @@ export declare const NormalizedMetaSchema: z.ZodObject<{
 }, {
     docId: string;
     acl: string[];
-    sha256: string;
     tenant: string;
     source: string;
+    sha256: string;
     timestamp: string;
     version?: string | undefined;
-    authors?: string[] | undefined;
     path?: string | undefined;
+    authors?: string[] | undefined;
     title?: string | undefined;
     lang?: string | undefined;
     tags?: string[] | undefined;
@@ -704,11 +748,11 @@ export declare const BlockSchema: z.ZodObject<{
     /** Optional HTML representation */
     html: z.ZodOptional<z.ZodString>;
 }, "strip", z.ZodTypeAny, {
-    type: "text" | "table" | "code" | "image-ref";
+    type: "code" | "text" | "table" | "image-ref";
     text?: string | undefined;
     html?: string | undefined;
 }, {
-    type: "text" | "table" | "code" | "image-ref";
+    type: "code" | "text" | "table" | "image-ref";
     text?: string | undefined;
     html?: string | undefined;
 }>;
@@ -750,13 +794,13 @@ export declare const NormalizedDocSchema: z.ZodObject<{
     }, "strip", z.ZodTypeAny, {
         docId: string;
         acl: string[];
-        sha256: string;
         tenant: string;
         source: string;
+        sha256: string;
         timestamp: string;
         version?: string | undefined;
-        authors?: string[] | undefined;
         path?: string | undefined;
+        authors?: string[] | undefined;
         title?: string | undefined;
         lang?: string | undefined;
         tags?: string[] | undefined;
@@ -765,13 +809,13 @@ export declare const NormalizedDocSchema: z.ZodObject<{
     }, {
         docId: string;
         acl: string[];
-        sha256: string;
         tenant: string;
         source: string;
+        sha256: string;
         timestamp: string;
         version?: string | undefined;
-        authors?: string[] | undefined;
         path?: string | undefined;
+        authors?: string[] | undefined;
         title?: string | undefined;
         lang?: string | undefined;
         tags?: string[] | undefined;
@@ -787,11 +831,11 @@ export declare const NormalizedDocSchema: z.ZodObject<{
         /** Optional HTML representation */
         html: z.ZodOptional<z.ZodString>;
     }, "strip", z.ZodTypeAny, {
-        type: "text" | "table" | "code" | "image-ref";
+        type: "code" | "text" | "table" | "image-ref";
         text?: string | undefined;
         html?: string | undefined;
     }, {
-        type: "text" | "table" | "code" | "image-ref";
+        type: "code" | "text" | "table" | "image-ref";
         text?: string | undefined;
         html?: string | undefined;
     }>, "many">;
@@ -799,13 +843,13 @@ export declare const NormalizedDocSchema: z.ZodObject<{
     meta: {
         docId: string;
         acl: string[];
-        sha256: string;
         tenant: string;
         source: string;
+        sha256: string;
         timestamp: string;
         version?: string | undefined;
-        authors?: string[] | undefined;
         path?: string | undefined;
+        authors?: string[] | undefined;
         title?: string | undefined;
         lang?: string | undefined;
         tags?: string[] | undefined;
@@ -813,7 +857,7 @@ export declare const NormalizedDocSchema: z.ZodObject<{
         deleted?: boolean | undefined;
     };
     blocks: {
-        type: "text" | "table" | "code" | "image-ref";
+        type: "code" | "text" | "table" | "image-ref";
         text?: string | undefined;
         html?: string | undefined;
     }[];
@@ -821,13 +865,13 @@ export declare const NormalizedDocSchema: z.ZodObject<{
     meta: {
         docId: string;
         acl: string[];
-        sha256: string;
         tenant: string;
         source: string;
+        sha256: string;
         timestamp: string;
         version?: string | undefined;
-        authors?: string[] | undefined;
         path?: string | undefined;
+        authors?: string[] | undefined;
         title?: string | undefined;
         lang?: string | undefined;
         tags?: string[] | undefined;
@@ -835,7 +879,7 @@ export declare const NormalizedDocSchema: z.ZodObject<{
         deleted?: boolean | undefined;
     };
     blocks: {
-        type: "text" | "table" | "code" | "image-ref";
+        type: "code" | "text" | "table" | "image-ref";
         text?: string | undefined;
         html?: string | undefined;
     }[];

@@ -9,7 +9,12 @@ module.exports = {
   transform: {
     '^.+\\.ts$': ['ts-jest', {
       useESM: true,
-      tsconfig: 'tsconfig.json'
+      tsconfig: {
+        module: 'esnext',
+        moduleResolution: 'node',
+        target: 'es2022',
+        types: ['jest', 'node']
+      }
     }],
   },
   moduleNameMapper: {

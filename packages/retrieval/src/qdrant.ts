@@ -1,6 +1,4 @@
-import { Document } from '@cw-rag-core/shared';
 import { Vector } from './types/vector.js';
-import { IngestedDocument } from './types/ingestion.js';
 
 export interface QdrantClient {
   upsertVectors(collectionName: string, vectors: Vector[]): Promise<void>;
@@ -16,7 +14,7 @@ export class QdrantClientStub implements QdrantClient {
     await new Promise(resolve => setTimeout(resolve, 100));
   }
 
-  async searchVectors(collectionName: string, queryVector: number[], limit: number, filter?: Record<string, any>): Promise<Vector[]> {
+  async searchVectors(collectionName: string, queryVector: number[], limit: number, _filter?: Record<string, any>): Promise<Vector[]> {
     console.log(`Stub: Searching collection ${collectionName} with query vector (first 5 elements): [${queryVector.slice(0, 5).join(', ')}...]`);
     // Simulate async operation and return mock results
     await new Promise(resolve => setTimeout(resolve, 100));

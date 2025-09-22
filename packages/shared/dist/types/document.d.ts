@@ -1,3 +1,4 @@
+import { LanguageCode } from './user.js';
 export type TenantId = string;
 export interface DocumentMetadata {
     tenantId: TenantId;
@@ -8,6 +9,9 @@ export interface DocumentMetadata {
     authors?: string[];
     keywords?: string[];
     acl: string[];
+    lang?: LanguageCode;
+    createdAt?: string;
+    modifiedAt?: string;
     [key: string]: unknown;
 }
 export interface Document {

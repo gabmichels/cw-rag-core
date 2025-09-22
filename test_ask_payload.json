@@ -1,0 +1,8 @@
+{
+  "query": "What is a test question?",
+  "userContext": {
+    "id": "test-user",
+    "tenantId": "zenithfall",
+    "groupIds": ["public"]
+  }
+}

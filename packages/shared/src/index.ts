@@ -4,5 +4,6 @@ export * from './types/api.js';
 export * from './types/user.js';
 export * from './utils/rbac.js';
 export * from './utils/normalization.js';
+export * from './utils/freshness.js';
 export * from './schemas/index.js';
 export * from './constants.js';

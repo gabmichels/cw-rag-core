@@ -1,0 +1,7 @@
+{"id": "ood_001", "query": "What is the weather like today?", "tenantId": "acme_corp", "expectedResponse": "IDK", "category": "outside_domain"}
+{"id": "ood_002", "query": "How do I cook pasta?", "tenantId": "acme_corp", "expectedResponse": "IDK", "category": "outside_domain"}
+{"id": "ood_003", "query": "What is the capital of France?", "tenantId": "acme_corp", "expectedResponse": "IDK", "category": "outside_domain"}
+{"id": "ood_004", "query": "Tell me about our competitor's financial results", "tenantId": "acme_corp", "expectedResponse": "IDK", "category": "no_relevant_docs"}
+{"id": "ood_005", "query": "What is the meaning of life?", "tenantId": "acme_corp", "expectedResponse": "IDK", "category": "ambiguous"}
+{"id": "ood_006", "query": "How many employees work at Google?", "tenantId": "acme_corp", "expectedResponse": "IDK", "category": "outside_domain"}
+{"id": "ood_007", "query": "What should I have for lunch?", "tenantId": "acme_corp", "expectedResponse": "IDK", "category": "outside_domain"}

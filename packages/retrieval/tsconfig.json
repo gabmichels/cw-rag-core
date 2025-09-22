@@ -6,7 +6,6 @@
     "module": "node16",
     "moduleResolution": "node16",
     "outDir": "dist",
-    "rootDir": "src",
     "tsBuildInfoFile": "dist/.tsbuildinfo",
     "baseUrl": ".",
     "paths": {
@@ -14,6 +13,6 @@
     },
    "types": ["jest", "node"]
   },
-  "include": ["src/**/*.ts", "../shared/src/**/*.d.ts"],
+  "include": ["src/**/*.ts", "__tests__/**/*.ts", "../shared/src/**/*.d.ts"],
   "exclude": ["node_modules", "dist"]
 }

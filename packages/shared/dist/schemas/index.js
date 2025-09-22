@@ -43,10 +43,17 @@ export const AskRequestSchema = z.object({
     k: z.number().int().positive().optional(),
     filter: z.record(z.any()).optional(),
 });
+export const GuardrailDecisionSchema = z.object({
+    isAnswerable: z.boolean(),
+    confidence: z.number().min(0).max(1),
+    reasonCode: z.string().optional(),
+    suggestions: z.array(z.string()).optional(),
+});
 export const AskResponseSchema = z.object({
     answer: z.string(),
     retrievedDocuments: z.array(RetrievedDocumentSchema),
     queryId: z.string(),
+    guardrailDecision: GuardrailDecisionSchema.optional(),
 });
 // Normalized Document Schemas
 /**

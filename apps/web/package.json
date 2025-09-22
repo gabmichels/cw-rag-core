@@ -7,13 +7,16 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
+    "test": "echo \"No tests yet. Add jest or vitest setup for testing.\"",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@cw-rag-core/shared": "workspace:*",
     "next": "14.2.5",
     "react": "^18",
-    "react-dom": "^18"
+    "react-dom": "^18",
+    "react-markdown": "^9.0.1",
+    "remark-gfm": "^4.0.0"
   },
   "devDependencies": {
     "typescript": "^5",

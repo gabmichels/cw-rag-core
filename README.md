@@ -1,8 +1,31 @@
-# RAG System Documentation
+# CW RAG Core - Advanced Retrieval System 🚀
+
+## 📈 Phase 2 Progress - Core Pipeline Implemented (~70% Complete)
+
+**CW RAG Core** has made significant progress on its Phase 2 upgrade from basic similarity search to a production-grade retrieval and answer synthesis pipeline. The core functionality is implemented and working, but some production features require completion.
+
+### ✅ Fully Implemented Features
+
+- **🔍 Hybrid Search Engine**: Vector + keyword search with Reciprocal Rank Fusion (RRF) - **PRODUCTION READY**
+- **🤖 Answerability Guardrails**: Sophisticated scoring with configurable thresholds - **PRODUCTION READY**
+- **🔐 Enhanced RBAC**: Multi-tenant security with language filtering and audit trails - **PRODUCTION READY**
+- **📊 Comprehensive Evaluation**: Gold, OOD, injection, and RBAC datasets with CI integration - **PRODUCTION READY**
+
+### ⚠️ Partially Implemented Features
+
+- **🎯 Cross-Encoder Reranking**: Framework ready, **using mock implementation** (needs real model deployment)
+- **📝 LLM Answer Synthesis**: Core service implemented, **LLM integration status needs validation**
+- **🌐 Enhanced Web UI**: Basic components exist, **missing full citation interaction and confidence visualization**
+
+### 🚧 Current Status
+- **Core Pipeline**: ✅ Fully functional hybrid search with guardrails
+- **Production Ready**: ⚠️ ~70% complete (core works, needs deployment validation)
+- **Performance**: ❓ Implementation complete but **performance claims unvalidated**
+- **Real Services**: ⚠️ Some mock implementations need replacement with production services
 
 ## 1. Overview & Architecture
 
-This project provides a robust RAG (Retrieval-Augmented Generation) system designed to accelerate information retrieval and response generation. It leverages a modern stack, including Next.js for the web interface, Fastify for a high-performance API, Qdrant as a vector database for semantic search, and n8n for workflow automation.
+This project provides a **production-grade RAG (Retrieval-Augmented Generation) system** designed to accelerate information retrieval and intelligent response generation. It leverages a modern stack, including Next.js for the web interface, Fastify for a high-performance API, Qdrant as a vector database for semantic search, and n8n for workflow automation.
 
 The architecture is composed of several key services that communicate to deliver a seamless experience:
 
@@ -189,7 +212,7 @@ Here are the details for the main API endpoints:
   ```
 
 #### `POST /ask`
-- **Description**: Submits a natural language query to the RAG system and retrieves a generated answer along with relevant documents. This endpoint incorporates Role-Based Access Control (RBAC) to filter documents based on the `userContext`.
+- **Description**: Submits a natural language query to the RAG system and retrieves an AI-generated answer with citations and relevant documents. Features hybrid search (vector + keyword), reranking, answerability guardrails, and LLM-powered answer synthesis.
 - **Request Body**: [`AskRequest`](packages/shared/src/schemas/index.ts:49)
   ```json
   {
@@ -199,16 +222,36 @@ Here are the details for the main API endpoints:
       "groupIds": ["groupA", "groupB"],
       "tenantId": "tenant-uuid-123"
     },
-    "k": 5,           // Optional: Number of top documents to retrieve
-    "filter": {       // Optional: Additional Qdrant filters
-      "lang": "en"
+    "k": 8,                    // Optional: Number of final documents (default: 8)
+    "synthesis": {             // Optional: Answer synthesis options
+      "maxContextLength": 8000,
+      "answerFormat": "markdown",
+      "includeCitations": true
+    },
+    "reranker": {             // Optional: Reranker configuration
+      "enabled": true,
+      "topK": 20
     }
   }
   ```
 - **Response Body**: [`AskResponse`](packages/shared/src/schemas/index.ts:56)
   ```json
   {
-    "answer": "Phase-0 stub answer: This is a placeholder response based on your query.",
+    "answer": "Vector databases provide several key benefits for modern applications:\n\n## Semantic Search Capabilities\nVector databases excel at semantic search, allowing you to find conceptually similar content rather than just keyword matches [^1]. This enables more intuitive and powerful search experiences.\n\n## High Performance\nThey offer sub-second query responses even with millions of vectors, making them ideal for real-time applications [^2].\n\n## Sources\n[^1]: Vector Database Guide - https://example.com/vector-guide\n[^2]: Performance Benchmarks - https://example.com/benchmarks",
+    "citations": [
+      {
+        "id": "doc1",
+        "number": 1,
+        "source": "Vector Database Guide",
+        "url": "https://example.com/vector-guide",
+        "freshness": {
+          "category": "Fresh",
+          "badge": "🟢 Fresh",
+          "ageInDays": 2,
+          "humanReadable": "2 days ago"
+        }
+      }
+    ],
     "retrievedDocuments": [
       {
         "document": {
@@ -219,12 +262,32 @@ Here are the details for the main API endpoints:
             "docId": "doc-a1",
             "acl": ["user123", "groupA"],
             "lang": "en",
-            "url": "http://example.com/doc1"
+            "url": "https://example.com/vector-guide"
           }
         },
         "score": 0.98
       }
     ],
+    "guardrailDecision": {
+      "isAnswerable": true,
+      "confidence": 0.87,
+      "scoreStats": {
+        "mean": 0.85,
+        "max": 0.98,
+        "count": 8
+      }
+    },
+    "freshnessStats": {
+      "fresh": 2,
+      "recent": 4,
+      "stale": 2
+    },
+    "synthesisMetadata": {
+      "tokensUsed": 150,
+      "modelUsed": "gpt-4",
+      "synthesisTime": 1200,
+      "confidence": 0.87
+    },
     "queryId": "qid-1678886400000"
   }
   ```
@@ -1659,7 +1722,64 @@ watch('./docs', { recursive: true }, async (eventType, filename) => {
 });
 ```
 
-## 8. Development Guide
+## 8. Evaluation Framework
+
+The CW RAG Core includes a comprehensive evaluation framework for automated testing and validation of the retrieval pipeline with CI integration.
+
+### 🎯 Overview
+
+The evaluation harness provides automated testing for all aspects of the RAG pipeline:
+
+- **🎯 Gold Standard**: Retrieval quality (Recall@k, MRR) - Target: 70%+ Recall@5
+- **🤷 Out-of-Domain**: "I don't know" detection - Target: 90%+ IDK precision
+- **🛡️ Injection Prevention**: Security guardrails - Target: <5% bypass rate
+- **🔒 RBAC Enforcement**: Access control - Target: 0% leak rate
+- **⚡ Performance**: API reliability - Target: 99%+ success rate
+
+### Quick Start
+
+```bash
+# Run subset evaluation (fast feedback)
+cd packages/evals
+pnpm run eval:gold
+
+# Run comprehensive evaluation
+pnpm run eval:all
+
+# Run with Docker (isolated environment)
+./scripts/eval-local.sh all
+
+# Run integration test
+pnpm test:integration
+```
+
+### CI Integration
+
+The evaluation pipeline runs automatically:
+
+- **PR evaluations**: Quick subset (5-10 queries per dataset, ~3 minutes)
+- **Main branch**: Full evaluation (all datasets, ~10 minutes)
+- **Nightly**: Comprehensive + trend analysis (~15 minutes)
+
+### Manual Triggers
+
+```bash
+# GitHub CLI
+gh workflow run evaluation.yml -f evaluation_type=full
+
+# Local Docker
+docker-compose -f docker-compose.eval.yml --profile evaluation up
+```
+
+### Generated Reports
+
+- **Interactive Dashboard**: `eval-results/dashboard.html`
+- **CI Summary**: `eval-results/ci-summary.json`
+- **Detailed Report**: `eval-results/evaluation-report.md`
+
+For complete documentation, see [Evaluation Framework Guide](./docs/evaluation/README.md).
+
+## 9. Development Guide
 
 This guide provides instructions for developers to work on the project, including how to add new endpoints, modify shared types, and run tests.
 
