@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { MessageSquare, Upload, BarChart3, Bot } from 'lucide-react';
 
 export default function Navigation() {
   const pathname = usePathname();
@@ -13,41 +14,48 @@ export default function Navigation() {
   };
 
   const navItems = [
-    { href: '/ask', label: 'Ask', icon: '❓' },
-    { href: '/upload', label: 'Upload', icon: '📤' },
-    { href: '/ingests', label: 'Recent Ingests', icon: '📊' },
+    { href: '/ask', label: 'AI Chat', icon: MessageSquare },
+    { href: '/upload', label: 'Upload', icon: Upload },
+    { href: '/ingests', label: 'Analytics', icon: BarChart3 },
   ];
 
   return (
-    <nav className="bg-white shadow-sm border-b border-gray-200">
+    <nav className="bg-card/50 backdrop-blur-sm border-b border-border/50 sticky top-0 z-50">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between items-center h-16">
           {/* Logo/Brand */}
-          <div className="flex items-center">
-            <Link href="/" className="text-xl font-bold text-gray-900">
-              RAG Core Ops Console
+          <div className="flex items-center space-x-3">
+            <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
+              <Bot className="w-5 h-5 text-primary-foreground" />
+            </div>
+            <Link href="/" className="text-xl font-semibold text-foreground hover:text-primary transition-colors">
+              RAG Chat
             </Link>
           </div>
 
           {/* Navigation Links */}
           <div className="flex space-x-1">
-            {navItems.map((item) => (
-              <Link
-                key={item.href}
-                href={item.href}
-                className={`
-                  px-4 py-2 rounded-md text-sm font-medium transition-colors
-                  ${
-                    isActive(item.href)
-                      ? 'bg-blue-100 text-blue-700 border border-blue-200'
-                      : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
-                  }
-                `}
-              >
-                <span className="mr-2">{item.icon}</span>
-                {item.label}
-              </Link>
-            ))}
+            {navItems.map((item) => {
+              const Icon = item.icon;
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  className={`
+                    px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200
+                    flex items-center space-x-2 hover:scale-105
+                    ${
+                      isActive(item.href)
+                        ? 'bg-primary text-primary-foreground shadow-md'
+                        : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
+                    }
+                  `}
+                >
+                  <Icon className="w-4 h-4" />
+                  <span>{item.label}</span>
+                </Link>
+              );
+            })}
           </div>
         </div>
       </div>
