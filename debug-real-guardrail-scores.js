@@ -21,11 +21,16 @@ async function debugRealGuardrailScores() {
   try {
     const result = await makeRequest('localhost', 3000, '/ask', requestPayload);
 
+    console.log('\n--- RAW API RESPONSE START ---');
+    console.log(JSON.stringify(result, null, 2));
+    console.log('--- RAW API RESPONSE END ---');
+
     console.log('\n📊 GUARDRAIL DECISION:');
     console.log('isAnswerable:', result.guardrailDecision?.isAnswerable);
     console.log('confidence:', result.guardrailDecision?.confidence);
-    console.log('reasonCode:', result.guardrailDecision?.reasonCode);
+    console.log('reasonCode:', result.guardrailDecision?.idkResponse?.reasonCode);
     console.log('threshold:', result.guardrailDecision?.threshold);
+    console.log('sourceAwareConfidence (final):', result.guardrailDecision?.score?.sourceAwareConfidence?.finalConfidence); // Log final confidence
 
     if (result.guardrailDecision?.scoreStats) {
       console.log('\n📈 SCORE STATISTICS:');
@@ -46,18 +51,24 @@ async function debugRealGuardrailScores() {
       console.log('rerankerConfidence:', alg.rerankerConfidence);
     }
 
-    // Check threshold logic manually
-    if (result.guardrailDecision?.threshold && result.guardrailDecision?.scoreStats) {
+    if (result.guardrailDecision?.score?.sourceAwareConfidence) {
+      console.log('\n--- Source-Aware Confidence Details ---');
+      console.log(JSON.stringify(result.guardrailDecision.score.sourceAwareConfidence, null, 2));
+      console.log('--- END Source-Aware Confidence Details ---');
+    }
+
+    // Check threshold logic manually, using guardrailDecision.confidence
+    if (result.guardrailDecision?.threshold && result.guardrailDecision?.scoreStats && result.guardrailDecision?.confidence !== undefined) {
       console.log('\n🎯 THRESHOLD CHECKS:');
-      const score = result.guardrailDecision;
-      const threshold = score.threshold;
+      const gd = result.guardrailDecision; // Use short alias for guardrailDecision
+      const threshold = gd.threshold;
 
       const checks = [
-        { name: 'confidence >= minConfidence', pass: score.confidence >= threshold.minConfidence, actual: score.confidence, expected: threshold.minConfidence },
-        { name: 'max >= minTopScore', pass: score.scoreStats.max >= threshold.minTopScore, actual: score.scoreStats.max, expected: threshold.minTopScore },
-        { name: 'mean >= minMeanScore', pass: score.scoreStats.mean >= threshold.minMeanScore, actual: score.scoreStats.mean, expected: threshold.minMeanScore },
-        { name: 'stdDev <= maxStdDev', pass: score.scoreStats.stdDev <= threshold.maxStdDev, actual: score.scoreStats.stdDev, expected: threshold.maxStdDev },
-        { name: 'count >= minResultCount', pass: score.scoreStats.count >= threshold.minResultCount, actual: score.scoreStats.count, expected: threshold.minResultCount }
+        { name: 'confidence >= minConfidence', pass: gd.confidence >= threshold.minConfidence, actual: gd.confidence, expected: threshold.minConfidence },
+        { name: 'max >= minTopScore', pass: gd.scoreStats.max >= threshold.minTopScore, actual: gd.scoreStats.max, expected: threshold.minTopScore },
+        { name: 'mean >= minMeanScore', pass: gd.scoreStats.mean >= threshold.minMeanScore, actual: gd.scoreStats.mean, expected: threshold.minMeanScore },
+        { name: 'stdDev <= maxStdDev', pass: gd.scoreStats.stdDev <= threshold.maxStdDev, actual: gd.scoreStats.stdDev, expected: threshold.maxStdDev },
+        { name: 'count >= minResultCount', pass: gd.scoreStats.count >= threshold.minResultCount, actual: gd.scoreStats.count, expected: threshold.minResultCount }
       ];
 
       checks.forEach(check => {
@@ -66,8 +77,8 @@ async function debugRealGuardrailScores() {
       });
 
       const allPass = checks.every(check => check.pass);
-      console.log(`\n🔍 Expected decision: ${allPass ? 'ANSWERABLE' : 'NOT_ANSWERABLE'}`);
-      console.log(`🔍 Actual decision: ${score.isAnswerable ? 'ANSWERABLE' : 'NOT_ANSWERABLE'}`);
+      console.log(`\n🔍 Expected decision (based on checks): ${allPass ? 'ANSWERABLE' : 'NOT_ANSWERABLE'}`);
+      console.log(`🔍 Actual decision (from API): ${gd.isAnswerable ? 'ANSWERABLE' : 'NOT_ANSWERABLE'}`);
 
       const failedChecks = checks.filter(check => !check.pass);
       if (failedChecks.length > 0) {

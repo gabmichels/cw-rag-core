@@ -48,6 +48,7 @@ export interface SourceAwareConfidenceResult {
     keyword?: StageConfidence;
     fusion: StageConfidence;
     reranking?: StageConfidence;
+    rawFusionResults?: HybridSearchResult[];
   };
   /** Quality degradation alerts */
   degradationAlerts: QualityDegradationAlert[];
@@ -99,7 +100,7 @@ export class SourceAwareConfidenceService {
    */
   calculateSourceAwareConfidence(
     vectorResults: VectorSearchResult[],
-    keywordResults: any[] = [],
+    keywordResults: HybridSearchResult[] = [],
     fusionResults: HybridSearchResult[] = [],
     rerankerResults: RerankerResult[] = []
   ): SourceAwareConfidenceResult {
@@ -107,10 +108,13 @@ export class SourceAwareConfidenceService {
 
     // Calculate confidence at each stage
     const vectorConfidence = this.calculateVectorStageConfidence(vectorResults);
+
     const keywordConfidence = keywordResults.length > 0
       ? this.calculateKeywordStageConfidence(keywordResults)
       : undefined;
+
     const fusionConfidence = this.calculateFusionStageConfidence(fusionResults, vectorConfidence);
+
     const rerankerConfidence = rerankerResults.length > 0
       ? this.calculateRerankerStageConfidence(rerankerResults)
       : undefined;
@@ -150,19 +154,22 @@ export class SourceAwareConfidenceService {
       degradationAlerts
     );
 
-    return {
+    const result = {
       finalConfidence,
       stageConfidences: {
         vector: vectorConfidence,
         keyword: keywordConfidence,
         fusion: fusionConfidence,
-        reranking: rerankerConfidence
+        reranking: rerankerConfidence,
+        rawFusionResults: fusionResults
       },
       degradationAlerts,
       recommendedStrategy: strategy,
       explanation,
       computationTime: performance.now() - startTime
     };
+
+    return result;
   }
 
   private calculateVectorStageConfidence(results: VectorSearchResult[]): StageConfidence {
@@ -175,14 +182,15 @@ export class SourceAwareConfidenceService {
 
     // Vector search confidence is directly based on similarity scores
     const confidence = Math.min(
-      stats.max * 0.6 +           // Top score weight
-      stats.mean * 0.3 +          // Mean score weight
-      this.calculateConsistencyScore(stats) * 0.1  // Consistency bonus
-    , 1.0);
+      stats.max * 0.6 +
+      stats.mean * 0.3 +
+      this.calculateConsistencyScore(stats) * 0.1,
+      1.0
+    );
 
     return {
       confidence,
-      quality: confidence,  // For vector search, quality = confidence
+      quality: confidence,
       resultCount: results.length,
       topScore: stats.max,
       meanScore: stats.mean,
@@ -194,7 +202,7 @@ export class SourceAwareConfidenceService {
     };
   }
 
-  private calculateKeywordStageConfidence(results: any[]): StageConfidence {
+  private calculateKeywordStageConfidence(results: HybridSearchResult[]): StageConfidence {
     if (results.length === 0) {
       return this.createEmptyStageConfidence();
     }
@@ -204,7 +212,7 @@ export class SourceAwareConfidenceService {
 
     // Keyword search tends to have lower absolute scores but good relative ranking
     const confidence = Math.min(
-      (stats.max / 2) * 0.5 +     // Adjust for typically lower keyword scores
+      (stats.max / 2) * 0.5 +
       stats.mean * 0.3 +
       this.calculateConsistencyScore(stats) * 0.2,
       1.0
@@ -241,10 +249,10 @@ export class SourceAwareConfidenceService {
 
     // CRITICAL: Detect if fusion degraded vector quality
     let qualityPreservation = 1.0;
+    let vectorToFusionRatio = 0;
     if (vectorStats && vectorStage.confidence > 0.7) {
-      // If vector stage was high quality, check how much fusion preserved it
-      const vectorToFusionRatio = fusionStats.max / vectorStats.max;
-      qualityPreservation = Math.max(vectorToFusionRatio, 0.1); // Minimum 10% preservation
+      vectorToFusionRatio = vectorStats.max > 0 ? fusionStats.max / vectorStats.max : 0;
+      qualityPreservation = Math.max(vectorToFusionRatio, 0.1);
     }
 
     // Fusion confidence considers both fusion scores and quality preservation
@@ -256,7 +264,7 @@ export class SourceAwareConfidenceService {
     );
 
     const confidence = baseConfidence * qualityPreservation;
-    const quality = qualityPreservation; // Quality specifically tracks preservation
+    const quality = qualityPreservation;
 
     return {
       confidence,
@@ -268,7 +276,7 @@ export class SourceAwareConfidenceService {
       metadata: {
         stageType: 'fusion',
         qualityPreservation,
-        vectorToFusionRatio: vectorStats ? fusionStats.max / vectorStats.max : 0,
+        vectorToFusionRatio,
         hybridTypes: this.analyzeHybridTypes(results)
       }
     };
@@ -395,6 +403,10 @@ export class SourceAwareConfidenceService {
         return this.calculateMaxConfidence(vector, keyword, fusion, reranker);
 
       case 'adaptive_weighted':
+        // If there's degradation from vector to fusion, lean towards vector confidence more
+        if (fusion?.metadata?.qualityPreservation !== undefined && fusion.metadata.qualityPreservation < this.finalConfig.degradationThreshold) {
+          return this.calculateAdjustedAdaptiveWeightedConfidence(vector, keyword, fusion, reranker);
+        }
         return this.calculateAdaptiveWeightedConfidence(vector, keyword, fusion, reranker);
 
       case 'conservative':
@@ -449,7 +461,40 @@ export class SourceAwareConfidenceService {
       totalWeight += adjustedRerankerWeight;
     }
 
-    return Math.min(weightedSum / totalWeight, 1.0);
+    // Ensure totalWeight is not zero to prevent division by zero
+    return totalWeight > 0 ? Math.min(weightedSum / totalWeight, 1.0) : 0;
+  }
+
+  // A variant for adaptive weighted that gives more weight to vector if fusion degrades
+  private calculateAdjustedAdaptiveWeightedConfidence(
+    vector: StageConfidence,
+    keyword?: StageConfidence,
+    fusion?: StageConfidence,
+    reranker?: StageConfidence
+  ): number {
+    const weights = this.finalConfig.adaptiveWeights;
+    let totalWeight = weights.vector * 1.5; // Give more weight to vector
+    let weightedSum = vector.confidence * weights.vector * 1.5;
+
+    if (keyword) {
+      const adjustedKeywordWeight = weights.keyword * keyword.quality;
+      weightedSum += keyword.confidence * adjustedKeywordWeight;
+      totalWeight += adjustedKeywordWeight;
+    }
+
+    if (fusion) { // Reduce fusion weight if it degraded
+      const adjustedFusionWeight = weights.fusion * fusion.quality * 0.5; // Reduced weight
+      weightedSum += fusion.confidence * adjustedFusionWeight;
+      totalWeight += adjustedFusionWeight;
+    }
+
+    if (reranker) {
+      const adjustedRerankerWeight = weights.reranking * reranker.quality;
+      weightedSum += reranker.confidence * adjustedRerankerWeight;
+      totalWeight += adjustedRerankerWeight;
+    }
+
+    return totalWeight > 0 ? Math.min(weightedSum / totalWeight, 1.0) : 0;
   }
 
   private calculateConservativeConfidence(
@@ -489,10 +534,10 @@ export class SourceAwareConfidenceService {
     return explanation;
   }
 
-  // Helper methods
+  // Helper methods for calculating score statistics
   private calculateScoreStatistics(scores: number[]) {
     if (scores.length === 0) {
-      return { max: 0, mean: 0, stdDev: 0 };
+      return { max: 0, mean: 0, stdDev: 0, count: 0 };
     }
 
     const max = Math.max(...scores);
@@ -500,16 +545,17 @@ export class SourceAwareConfidenceService {
     const variance = scores.reduce((sum, score) => sum + Math.pow(score - mean, 2), 0) / scores.length;
     const stdDev = Math.sqrt(variance);
 
-    return { max, mean, stdDev };
+    return { max, mean, stdDev, count: scores.length };
   }
 
-  private calculateConsistencyScore(stats: { stdDev: number, mean: number }): number {
+  private calculateConsistencyScore(stats: { stdDev: number; mean: number }): number {
     if (stats.mean === 0) return 0;
     const coefficientOfVariation = stats.stdDev / stats.mean;
     return Math.max(0, 1 - coefficientOfVariation);
   }
 
   private analyzeScoreDistribution(scores: number[]) {
+    if (scores.length === 0) return { topQuartileAvg: 0, range: 0, count: 0 };
     const sorted = [...scores].sort((a, b) => b - a);
     return {
       topQuartileAvg: sorted.slice(0, Math.ceil(sorted.length / 4)).reduce((sum, s) => sum + s, 0) / Math.ceil(sorted.length / 4),

@@ -61,7 +61,7 @@ services:
 
       # Phase 2: LLM Integration
       - LLM_PROVIDER=openai
-      - LLM_MODEL=gpt-4-turbo
+      - LLM_MODEL=gpt-4.1-2025-04-14-turbo
       - LLM_MAX_TOKENS=500
       - LLM_TEMPERATURE=0.1
       - LLM_TIMEOUT=10000
@@ -303,7 +303,7 @@ GUARDRAILS_BYPASS_ADMIN=false
 
 # Phase 2: LLM Integration
 LLM_PROVIDER=openai
-LLM_MODEL=gpt-4-turbo
+LLM_MODEL=gpt-4.1-2025-04-14-turbo
 LLM_MAX_TOKENS=500
 LLM_TEMPERATURE=0.1
 LLM_TIMEOUT=10000
@@ -494,7 +494,7 @@ export const productionConfig = {
   },
   llm: {
     provider: 'openai',
-    model: 'gpt-4-turbo',
+    model: 'gpt-4.1-2025-04-14-turbo',
     maxTokens: 500,
     temperature: 0.1,
     timeout: 10000
@@ -536,7 +536,7 @@ const tenantConfigs = {
   'enterprise-corp': {
     hybridSearch: { vectorWeight: 0.8, keywordWeight: 0.2 },
     guardrails: { threshold: 0.2 }, // Permissive
-    llm: { model: 'gpt-4-turbo' },
+    llm: { model: 'gpt-4.1-2025-04-14-turbo' },
     reranker: { enabled: true }
   },
   'strict-compliance': {
@@ -786,7 +786,7 @@ curl -X POST https://api.openai.com/v1/chat/completions \
   -H "Authorization: Bearer $OPENAI_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "gpt-4-turbo",
+    "model": "gpt-4.1-2025-04-14-turbo",
     "messages": [{"role": "user", "content": "test"}],
     "max_tokens": 10
   }'

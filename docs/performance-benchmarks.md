@@ -122,7 +122,7 @@ Paranoid       | 26.1%    | 91.2%     | 96.2%  | 0.936
 ```
 Provider  | Model          | Latency | Quality | Token/s | Cost/1K
 ----------|----------------|---------|---------|---------|--------
-OpenAI    | gpt-4-turbo    | 1.95s   | 94.2%   | 28.5    | $0.03
+OpenAI    | gpt-4.1-2025-04-14-turbo    | 1.95s   | 94.2%   | 28.5    | $0.03
 OpenAI    | gpt-3.5-turbo  | 1.12s   | 87.6%   | 42.1    | $0.002
 Anthropic | claude-3-sonnet| 2.31s   | 91.8%   | 24.2    | $0.015
 Local     | llama-2-7b     | 3.42s   | 82.1%   | 18.7    | $0.00

@@ -1,3 +1,5 @@
+import { SourceAwareConfidenceResult } from '../services/source-aware-confidence.js';
+
 export interface AnswerabilityScore {
   /** Overall confidence score (0-1) */
   confidence: number;
@@ -12,7 +14,7 @@ export interface AnswerabilityScore {
   /** Computation time in milliseconds */
   computationTime: number;
   /** Source-aware confidence tracking result */
-  sourceAwareConfidence?: any; // Will be typed properly when imported
+  sourceAwareConfidence?: SourceAwareConfidenceResult;
 }
 
 export interface ScoreStatistics {

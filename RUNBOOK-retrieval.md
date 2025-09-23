@@ -152,7 +152,7 @@ curl -X POST http://localhost:3000/config/llm \
 # Enable streaming with custom model
 curl -X POST http://localhost:3000/config/llm \
   -H "Content-Type: application/json" \
-  -d '{"enabled": true, "streaming": true, "model": "gpt-4"}'
+  -d '{"enabled": true, "streaming": true, "model": "gpt-4.1-2025-04-14"}'
 ```
 
 ## Troubleshooting Guide
@@ -227,7 +227,7 @@ curl -X POST http://llm-service:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $LLM_API_KEY" \
   -d '{
-    "model": "gpt-4",
+    "model": "gpt-4.1-2025-04-14",
     "messages": [{"role": "user", "content": "Test message"}],
     "stream": false
   }'

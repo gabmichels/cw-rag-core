@@ -23,7 +23,7 @@ describe('LLMClient', () => {
     // Reset environment variables
     process.env.LLM_ENABLED = 'true';
     process.env.LLM_PROVIDER = 'openai';
-    process.env.LLM_MODEL = 'gpt-4';
+    process.env.LLM_MODEL = 'gpt-4.1-2025-04-14';
     process.env.LLM_STREAMING = 'true';
     process.env.LLM_TIMEOUT_MS = '25000';
     process.env.OPENAI_API_KEY = 'test-openai-key';
@@ -42,7 +42,7 @@ describe('LLMClient', () => {
       it('should create OpenAI client successfully', () => {
         const config: LLMConfig = {
           provider: 'openai',
-          model: 'gpt-4',
+          model: 'gpt-4.1-2025-04-14',
           temperature: 0.1,
           maxTokens: 1000,
           apiKey: 'test-key'
@@ -56,7 +56,7 @@ describe('LLMClient', () => {
       it('should have model created', () => {
         const config: LLMConfig = {
           provider: 'openai',
-          model: 'gpt-4',
+          model: 'gpt-4.1-2025-04-14',
           temperature: 0.1,
           maxTokens: 1000,
           apiKey: 'test-key'
@@ -256,7 +256,7 @@ describe('LLMClient', () => {
 
         const config: LLMConfig = {
           provider: 'openai',
-          model: 'gpt-4',
+          model: 'gpt-4.1-2025-04-14',
           streaming: false // Explicitly disable streaming
         };
 
@@ -293,7 +293,7 @@ describe('LLMClient', () => {
       const factory = new LLMClientFactoryImpl();
       const config: LLMConfig = {
         provider: 'openai',
-        model: 'gpt-4',
+        model: 'gpt-4.1-2025-04-14',
         temperature: 0.2,
         maxTokens: 500
       };
@@ -375,7 +375,7 @@ describe('LLMClient', () => {
     it('should estimate tokens correctly', () => {
       const config: LLMConfig = {
         provider: 'openai',
-        model: 'gpt-4',
+        model: 'gpt-4.1-2025-04-14',
         temperature: 0.1,
         maxTokens: 1000
       };

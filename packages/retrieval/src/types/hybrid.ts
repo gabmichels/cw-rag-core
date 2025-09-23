@@ -1,31 +1,28 @@
-export interface KeywordSearchResult {
-  id: string;
-  score: number;
-  payload?: Record<string, any>;
-  content?: string;
-}
+import { VectorSearchResult } from './vector.js';
+import { RerankerResult } from './reranker.js';
 
 export interface HybridSearchRequest {
   query: string;
   limit: number;
-  vectorWeight?: number; // Weight for vector search results (0-1, default 0.7)
-  keywordWeight?: number; // Weight for keyword search results (0-1, default 0.3)
-  rrfK?: number; // RRF k parameter for rank fusion (default 60)
-  enableKeywordSearch?: boolean; // Whether to enable keyword search
-  filter?: Record<string, any>; // Metadata filter
-  tenantId?: string; // For tenant-specific configuration
+  vectorWeight?: number;
+  keywordWeight?: number;
+  rrfK?: number;
+  enableKeywordSearch?: boolean;
+  filter?: Record<string, any>;
+  tenantId?: string; // Optional tenant ID for overriding user context
 }
 
 export interface HybridSearchResult {
   id: string;
-  score: number;
-  payload?: Record<string, any>;
+  score: number; // Final score after fusion/reranking
   content?: string;
-  vectorScore?: number; // Original vector search score
-  keywordScore?: number; // Original keyword search score
-  fusionScore: number; // Final RRF fusion score
-  searchType: 'hybrid' | 'vector_only' | 'keyword_only';
-  rank?: number; // Position in final ranked results (added by reranker)
+  payload?: Record<string, any>;
+  searchType?: 'vector_only' | 'keyword_only' | 'hybrid';
+  vectorScore?: number;
+  keywordScore?: number;
+  fusionScore?: number; // Score specifically from RRF fusion
+  rerankerScore?: number; // Score specifically from reranker
+  rank?: number; // Rank in the final sorted results
 }
 
 export interface TenantSearchConfig {
@@ -42,21 +39,25 @@ export interface TenantSearchConfig {
   };
 }
 
-export interface RrfConfig {
-  k: number; // RRF parameter k (typically 60)
-  vectorWeight: number; // Weight for vector results
-  keywordWeight: number; // Weight for keyword results
-}
-
 export interface SearchPerformanceMetrics {
+  totalDuration: number;
   vectorSearchDuration: number;
   keywordSearchDuration: number;
   fusionDuration: number;
-  rerankerDuration?: number;
-  totalDuration: number;
+  rerankerDuration: number;
+  embeddingDuration?: number; // Time for embedding generation
   vectorResultCount: number;
   keywordResultCount: number;
-  finalResultCount: number;
-  rerankingEnabled?: boolean;
-  documentsReranked?: number;
+  finalResultCount: number; // After fusion and reranking
+  rerankingEnabled: boolean;
+  documentsReranked: number;
+}
+
+export interface StructuredHybridSearchResult {
+  finalResults: HybridSearchResult[];
+  vectorSearchResults: VectorSearchResult[];
+  keywordSearchResults: HybridSearchResult[]; // Keyword results as HybridSearchResult[] for consistency
+  fusionResults: HybridSearchResult[];
+  rerankerResults?: RerankerResult[];
+  metrics: SearchPerformanceMetrics;
 }

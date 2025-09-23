@@ -288,7 +288,7 @@ Here are the details for the main API endpoints:
     },
     "synthesisMetadata": {
       "tokensUsed": 150,
-      "modelUsed": "gpt-4",
+      "modelUsed": "gpt-4.1-2025-04-14",
       "synthesisTime": 1200,
       "confidence": 0.87
     },

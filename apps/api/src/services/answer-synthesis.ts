@@ -54,24 +54,47 @@ export class AnswerSynthesisServiceImpl implements AnswerSynthesisService {
       // Validate request
       this.validateRequest(request);
 
-      // Check answerability guardrail
-      const guardrailDecision = await this.guardrailService.evaluateAnswerability(
-        request.query,
-        request.documents,
-        request.userContext
-      );
+      // Use passed guardrail decision if available, otherwise evaluate
+      let guardrailDecision;
+
+      if (request.guardrailDecision) {
+        // Trust the pre-evaluated guardrail decision from the main retrieval pipeline
+        guardrailDecision = {
+          isAnswerable: request.guardrailDecision.isAnswerable,
+          score: {
+            confidence: request.guardrailDecision.confidence,
+            ...request.guardrailDecision.score
+          }
+        };
+        console.log(`Using pre-evaluated guardrail decision: confidence=${guardrailDecision.score.confidence}, isAnswerable=${guardrailDecision.isAnswerable}`);
+      } else {
+        // Fallback: Check answerability guardrail
+        // The answer synthesis service only receives the already fused documents.
+        // We pass them as fusionResults for source-aware confidence calculation.
+        guardrailDecision = await this.guardrailService.evaluateAnswerability(
+          request.query,
+          {
+            vectorResults: [],       // Not available at this stage
+            keywordResults: [],      // Not available at this stage
+            fusionResults: request.documents,
+            rerankerResults: undefined // Not available as RerankerResult[] at this stage
+          },
+          request.userContext
+        );
+        console.log(`Evaluated guardrail decision: confidence=${guardrailDecision.score.confidence}, isAnswerable=${guardrailDecision.isAnswerable}`);
+      }
 
       const tenantId = request.userContext.tenantId || 'default';
-      const answerabilityThreshold = parseFloat(process.env.ANSWERABILITY_THRESHOLD || '0.5');
+      const answerabilityThreshold = parseFloat(process.env.ANSWERABILITY_THRESHOLD || '0.5'); // Retain for clarity/future use if needed
 
-      // If not answerable according to guardrail, return IDK response
-      if (!guardrailDecision.isAnswerable || guardrailDecision.score.confidence < answerabilityThreshold) {
-        console.log(`Answerability guardrail triggered: confidence=${guardrailDecision.score.confidence}, threshold=${answerabilityThreshold}`);
+      // If not answerable according to guardrail's definitive decision, return IDK response
+      if (!guardrailDecision.isAnswerable) {
+        console.log(`Answerability guardrail triggered IDK: confidence=${guardrailDecision.score.confidence}, isAnswerable=${guardrailDecision.isAnswerable}`);
 
         const idkResponse = this.guardrailService.generateIdkResponse(
           guardrailDecision.score,
           await this.guardrailService.getTenantConfig(tenantId),
-          request.documents
+          request.documents // Still pass unfiltered documents for suggestions
         );
 
         const synthesisTime = performance.now() - startTime;
@@ -81,7 +104,7 @@ export class AnswerSynthesisServiceImpl implements AnswerSynthesisService {
           citations: {},
           tokensUsed: 0,
           synthesisTime,
-          confidence: guardrailDecision.score.confidence,
+          confidence: guardrailDecision.score.confidence, // Use confidence from guardrailDecision
           modelUsed: 'guardrail',
           contextTruncated: false,
           freshnessStats: this.calculateFreshnessStats(request.documents, tenantId)
@@ -107,7 +130,12 @@ export class AnswerSynthesisServiceImpl implements AnswerSynthesisService {
       const completion = await llmClient.generateCompletion(
         request.query,
         contextResult.context,
-        1000 // max tokens for answer
+        1000, // max tokens for answer
+        {
+          isAnswerable: guardrailDecision.isAnswerable,
+          confidence: guardrailDecision.score.confidence,
+          score: guardrailDecision.score
+        }
       );
 
       // Format answer with citations
@@ -175,24 +203,47 @@ export class AnswerSynthesisServiceImpl implements AnswerSynthesisService {
       // Validate request
       this.validateRequest(request);
 
-      // Check answerability guardrail
-      const guardrailDecision = await this.guardrailService.evaluateAnswerability(
-        request.query,
-        request.documents,
-        request.userContext
-      );
+      // Use passed guardrail decision if available, otherwise evaluate
+      let guardrailDecision;
+
+      if (request.guardrailDecision) {
+        // Trust the pre-evaluated guardrail decision from the main retrieval pipeline
+        guardrailDecision = {
+          isAnswerable: request.guardrailDecision.isAnswerable,
+          score: {
+            confidence: request.guardrailDecision.confidence,
+            ...request.guardrailDecision.score
+          }
+        };
+        console.log(`Using pre-evaluated guardrail decision: confidence=${guardrailDecision.score.confidence}, isAnswerable=${guardrailDecision.isAnswerable}`);
+      } else {
+        // Fallback: Check answerability guardrail
+        // The answer synthesis service only receives the already fused documents.
+        // We pass them as fusionResults for source-aware confidence calculation.
+        guardrailDecision = await this.guardrailService.evaluateAnswerability(
+          request.query,
+          {
+            vectorResults: [],
+            keywordResults: [],
+            fusionResults: request.documents,
+            rerankerResults: undefined
+          },
+          request.userContext
+        );
+        console.log(`Evaluated guardrail decision: confidence=${guardrailDecision.score.confidence}, isAnswerable=${guardrailDecision.isAnswerable}`);
+      }
 
       const tenantId = request.userContext.tenantId || 'default';
       const answerabilityThreshold = parseFloat(process.env.ANSWERABILITY_THRESHOLD || '0.5');
 
-      // If not answerable according to guardrail, return IDK response
-      if (!guardrailDecision.isAnswerable || guardrailDecision.score.confidence < answerabilityThreshold) {
-        console.log(`Answerability guardrail triggered: confidence=${guardrailDecision.score.confidence}, threshold=${answerabilityThreshold}`);
+      // If not answerable according to guardrail's definitive decision, return IDK response
+      if (!guardrailDecision.isAnswerable) {
+        console.log(`Answerability guardrail triggered IDK: confidence=${guardrailDecision.score.confidence}, isAnswerable=${guardrailDecision.isAnswerable}`);
 
         const idkResponse = this.guardrailService.generateIdkResponse(
           guardrailDecision.score,
           await this.guardrailService.getTenantConfig(tenantId),
-          request.documents
+          request.documents // Still pass unfiltered documents for suggestions
         );
 
         const synthesisTime = performance.now() - startTime;
@@ -209,7 +260,7 @@ export class AnswerSynthesisServiceImpl implements AnswerSynthesisService {
           data: {
             tokensUsed: 0,
             synthesisTime,
-            confidence: guardrailDecision.score.confidence,
+            confidence: guardrailDecision.score.confidence, // Use confidence from guardrailDecision
             modelUsed: 'guardrail',
             contextTruncated: false,
             freshnessStats: this.calculateFreshnessStats(request.documents, tenantId)
@@ -276,7 +327,12 @@ export class AnswerSynthesisServiceImpl implements AnswerSynthesisService {
       for await (const chunk of llmClient.generateStreamingCompletion(
         request.query,
         contextResult.context,
-        1000
+        1000,
+        {
+          isAnswerable: guardrailDecision.isAnswerable,
+          confidence: guardrailDecision.score.confidence,
+          score: guardrailDecision.score
+        }
       )) {
         if (chunk.type === 'chunk' && typeof chunk.data === 'string') {
           fullAnswer += chunk.data;
@@ -302,7 +358,7 @@ export class AnswerSynthesisServiceImpl implements AnswerSynthesisService {
       // Calculate freshness statistics
       const freshnessStats = this.calculateFreshnessStats(request.documents, tenantId);
 
-      // Calculate confidence
+      // Calculate confidence (this confidence is for the LLM's raw answer, distinct from guardrail's overall decision)
       const confidence = this.calculateConfidence(
         request.documents,
         contextResult.contextTruncated,
@@ -334,7 +390,8 @@ export class AnswerSynthesisServiceImpl implements AnswerSynthesisService {
         data: {
           tokensUsed: totalTokens,
           synthesisTime,
-          confidence,
+          // Use guardrail decision's confidence here for consistency with the overall decision
+          confidence: guardrailDecision.score.confidence,
           modelUsed: llmClient.getConfig().model,
           contextTruncated: contextResult.contextTruncated,
           freshnessStats

@@ -17,7 +17,12 @@ export interface LLMClient {
   generateCompletion(
     prompt: string,
     context: string,
-    maxTokens?: number
+    maxTokens?: number,
+    guardrailDecision?: {
+      isAnswerable: boolean;
+      confidence: number;
+      score: any;
+    }
   ): Promise<{
     text: string;
     tokensUsed: number;
@@ -30,7 +35,12 @@ export interface LLMClient {
   generateStreamingCompletion(
     prompt: string,
     context: string,
-    maxTokens?: number
+    maxTokens?: number,
+    guardrailDecision?: {
+      isAnswerable: boolean;
+      confidence: number;
+      score: any;
+    }
   ): AsyncGenerator<StreamingSynthesisResponse, void, unknown>;
 
   /**
@@ -59,7 +69,12 @@ export class LLMClientImpl implements LLMClient {
   async generateCompletion(
     prompt: string,
     context: string,
-    maxTokens?: number
+    maxTokens?: number,
+    guardrailDecision?: {
+      isAnswerable: boolean;
+      confidence: number;
+      score: any;
+    }
   ): Promise<{
     text: string;
     tokensUsed: number;
@@ -68,27 +83,13 @@ export class LLMClientImpl implements LLMClient {
     try {
       // For vLLM, use direct HTTP API
       if (this.config.provider === 'vllm') {
-        return this.generateVLLMCompletion(prompt, context, maxTokens, false);
+        return this.generateVLLMCompletion(prompt, context, maxTokens, false, guardrailDecision);
       }
 
       // Create the chat prompt template for LangChain providers
+      const systemPrompt = this.buildSystemPrompt(guardrailDecision);
       const promptTemplate = ChatPromptTemplate.fromMessages([
-        [
-          'system',
-          `You are a helpful AI assistant that answers questions based only on the provided context.
-
-CRITICAL INSTRUCTIONS:
-1. Use ONLY the information provided in the context below
-2. If the context doesn't contain enough information to answer the question, respond with "I don't have enough information in the provided context to answer this question."
-3. Include inline citations in your response using the format [^1], [^2], etc. for each source you reference
-4. Each piece of information should be cited to its source document
-5. Do NOT invent, hallucinate, or make up any citations
-6. Provide a clear, well-structured answer in markdown format
-7. If multiple sources support the same point, cite all relevant sources
-
-Context:
-{context}`
-        ],
+        ['system', systemPrompt.replace('{context}', context)],
         ['human', '{query}']
       ]);
 
@@ -127,7 +128,12 @@ Context:
   async *generateStreamingCompletion(
     prompt: string,
     context: string,
-    maxTokens?: number
+    maxTokens?: number,
+    guardrailDecision?: {
+      isAnswerable: boolean;
+      confidence: number;
+      score: any;
+    }
   ): AsyncGenerator<StreamingSynthesisResponse, void, unknown> {
     if (!this.supportsStreaming()) {
       throw new LLMProviderError(
@@ -139,12 +145,12 @@ Context:
     try {
       // For vLLM streaming
       if (this.config.provider === 'vllm') {
-        yield* this.generateVLLMStreamingCompletion(prompt, context, maxTokens);
+        yield* this.generateVLLMStreamingCompletion(prompt, context, maxTokens, guardrailDecision);
         return;
       }
 
       // For other providers that support streaming (fallback to non-streaming for now)
-      const result = await this.generateCompletion(prompt, context, maxTokens);
+      const result = await this.generateCompletion(prompt, context, maxTokens, guardrailDecision);
       yield {
         type: 'chunk',
         data: result.text
@@ -187,25 +193,18 @@ Context:
     prompt: string,
     context: string,
     maxTokens?: number,
-    streaming: boolean = false
+    streaming: boolean = false,
+    guardrailDecision?: {
+      isAnswerable: boolean;
+      confidence: number;
+      score: any;
+    }
   ): Promise<{
     text: string;
     tokensUsed: number;
     model: string;
   }> {
-    const systemPrompt = `You are a helpful AI assistant that answers questions based only on the provided context.
-
-CRITICAL INSTRUCTIONS:
-1. Use ONLY the information provided in the context below
-2. If the context doesn't contain enough information to answer the question, respond with "I don't have enough information in the provided context to answer this question."
-3. Include inline citations in your response using the format [^1], [^2], etc. for each source you reference
-4. Each piece of information should be cited to its source document
-5. Do NOT invent, hallucinate, or make up any citations
-6. Provide a clear, well-structured answer in markdown format
-7. If multiple sources support the same point, cite all relevant sources
-
-Context:
-${context}`;
+    const systemPrompt = this.buildSystemPrompt(guardrailDecision).replace('{context}', context);
 
     const messages = [
       { role: 'system', content: systemPrompt },
@@ -216,7 +215,7 @@ ${context}`;
       model: this.config.model,
       messages,
       max_tokens: maxTokens || this.config.maxTokens || 1000,
-      temperature: this.config.temperature || 0.1,
+      temperature: this.config.temperature || (guardrailDecision?.confidence && guardrailDecision.confidence > 0.7 ? 0.3 : 0.1),
       stream: streaming
     };
 
@@ -268,21 +267,14 @@ ${context}`;
   private async *generateVLLMStreamingCompletion(
     prompt: string,
     context: string,
-    maxTokens?: number
+    maxTokens?: number,
+    guardrailDecision?: {
+      isAnswerable: boolean;
+      confidence: number;
+      score: any;
+    }
   ): AsyncGenerator<StreamingSynthesisResponse, void, unknown> {
-    const systemPrompt = `You are a helpful AI assistant that answers questions based only on the provided context.
-
-CRITICAL INSTRUCTIONS:
-1. Use ONLY the information provided in the context below
-2. If the context doesn't contain enough information to answer the question, respond with "I don't have enough information in the provided context to answer this question."
-3. Include inline citations in your response using the format [^1], [^2], etc. for each source you reference
-4. Each piece of information should be cited to its source document
-5. Do NOT invent, hallucinate, or make up any citations
-6. Provide a clear, well-structured answer in markdown format
-7. If multiple sources support the same point, cite all relevant sources
-
-Context:
-${context}`;
+    const systemPrompt = this.buildSystemPrompt(guardrailDecision).replace('{context}', context);
 
     const messages = [
       { role: 'system', content: systemPrompt },
@@ -293,7 +285,7 @@ ${context}`;
       model: this.config.model,
       messages,
       max_tokens: maxTokens || this.config.maxTokens || 1000,
-      temperature: this.config.temperature || 0.1,
+      temperature: this.config.temperature || (guardrailDecision?.confidence && guardrailDecision.confidence > 0.7 ? 0.3 : 0.1),
       stream: true
     };
 
@@ -436,6 +428,49 @@ ${context}`;
     }
   }
 
+  private buildSystemPrompt(guardrailDecision?: {
+    isAnswerable: boolean;
+    confidence: number;
+    score: any;
+  }): string {
+    const isHighConfidence = guardrailDecision?.confidence && guardrailDecision.confidence > 0.7;
+    const isAnswerable = guardrailDecision?.isAnswerable;
+
+    if (isAnswerable && isHighConfidence) {
+      // High confidence: encourage confident answers, remove IDK instruction
+      return `You are a helpful AI assistant that provides comprehensive answers based on the provided context.
+
+INSTRUCTIONS FOR HIGH-CONFIDENCE QUERIES:
+1. The system has determined this query is HIGHLY ANSWERABLE (confidence: ${(guardrailDecision?.confidence * 100).toFixed(1)}%)
+2. Use ALL relevant information provided in the context below to give a complete answer
+3. Be confident and comprehensive in your response - the relevant information IS present
+4. Include inline citations in your response using the format [^1], [^2], etc. for each source you reference
+5. Each piece of information should be cited to its source document
+6. Do NOT invent, hallucinate, or make up any citations
+7. Provide a clear, well-structured answer in markdown format
+8. If multiple sources support the same point, cite all relevant sources
+9. Since the system has high confidence, provide the best possible answer from the available context
+
+Context:
+{context}`;
+    } else {
+      // Lower confidence or not answerable: use conservative approach
+      return `You are a helpful AI assistant that answers questions based only on the provided context.
+
+STANDARD INSTRUCTIONS:
+1. Use ONLY the information provided in the context below
+2. If the context doesn't contain enough information to answer the question, respond with "I don't have enough information in the provided context to answer this question."
+3. Include inline citations in your response using the format [^1], [^2], etc. for each source you reference
+4. Each piece of information should be cited to its source document
+5. Do NOT invent, hallucinate, or make up any citations
+6. Provide a clear, well-structured answer in markdown format
+7. If multiple sources support the same point, cite all relevant sources
+
+Context:
+{context}`;
+    }
+  }
+
   private estimateTokens(text: string): number {
     // Rough estimation: ~4 characters per token for English text
     return Math.ceil(text.length / 4);
@@ -531,7 +566,7 @@ export class LLMClientFactoryImpl implements LLMClientFactory {
     // Read LLM configuration from environment with OpenAI as default
     const llmEnabled = process.env.LLM_ENABLED === 'true';
     const llmProvider = (process.env.LLM_PROVIDER as LLMProvider) || 'openai';
-    const llmModel = process.env.LLM_MODEL || 'gpt-4';
+    const llmModel = process.env.LLM_MODEL || 'gpt-4.1-2025-04-14';
     const llmEndpoint = process.env.LLM_ENDPOINT;
     const llmStreaming = process.env.LLM_STREAMING === 'true';
     const llmTimeout = parseInt(process.env.LLM_TIMEOUT_MS || '25000');
@@ -564,12 +599,7 @@ export class LLMClientFactoryImpl implements LLMClientFactory {
       tenantId: 'default',
       defaultConfig,
       fallbackConfigs: [
-        {
-          provider: 'anthropic',
-          model: 'claude-3-sonnet-20240229',
-          temperature: 0.1,
-          maxTokens: 1000
-        }
+        // No fallback for now, remove Anthropic if present
       ],
       maxRetries: 3,
       timeoutMs: llmTimeout
@@ -582,7 +612,7 @@ export class LLMClientFactoryImpl implements LLMClientFactory {
     // Read LLM configuration from environment with OpenAI as default
     const llmEnabled = process.env.LLM_ENABLED === 'true';
     const llmProvider = (process.env.LLM_PROVIDER as LLMProvider) || 'openai';
-    const llmModel = process.env.LLM_MODEL || 'gpt-4';
+    const llmModel = process.env.LLM_MODEL || 'gpt-4.1-2025-04-14';
     const llmEndpoint = process.env.LLM_ENDPOINT;
     const llmStreaming = process.env.LLM_STREAMING === 'true';
     const llmTimeout = parseInt(process.env.LLM_TIMEOUT_MS || '25000');
@@ -615,12 +645,7 @@ export class LLMClientFactoryImpl implements LLMClientFactory {
       tenantId: 'default',
       defaultConfig,
       fallbackConfigs: [
-        {
-          provider: 'anthropic',
-          model: 'claude-3-sonnet-20240229',
-          temperature: 0.1,
-          maxTokens: 1000
-        }
+        // No fallback for now, remove Anthropic if present
       ],
       maxRetries: 3,
       timeoutMs: llmTimeout
@@ -668,7 +693,12 @@ class ResilientLLMClient implements LLMClient {
   async generateCompletion(
     prompt: string,
     context: string,
-    maxTokens?: number
+    maxTokens?: number,
+    guardrailDecision?: {
+      isAnswerable: boolean;
+      confidence: number;
+      score: any;
+    }
   ): Promise<{
     text: string;
     tokensUsed: number;
@@ -685,7 +715,7 @@ class ResilientLLMClient implements LLMClient {
             setTimeout(() => reject(new Error('Request timeout')), this.timeoutMs);
           });
 
-          const completionPromise = client.generateCompletion(prompt, context, maxTokens);
+          const completionPromise = client.generateCompletion(prompt, context, maxTokens, guardrailDecision);
 
           const result = await Promise.race([completionPromise, timeoutPromise]);
 
@@ -713,7 +743,12 @@ class ResilientLLMClient implements LLMClient {
   async *generateStreamingCompletion(
     prompt: string,
     context: string,
-    maxTokens?: number
+    maxTokens?: number,
+    guardrailDecision?: {
+      isAnswerable: boolean;
+      confidence: number;
+      score: any;
+    }
   ): AsyncGenerator<StreamingSynthesisResponse, void, unknown> {
     const clients = [this.primaryClient, ...this.fallbackClients];
 
@@ -728,7 +763,7 @@ class ResilientLLMClient implements LLMClient {
         try {
           // Create a timeout generator wrapper
           const timeoutMs = this.timeoutMs;
-          const generator = client.generateStreamingCompletion(prompt, context, maxTokens);
+          const generator = client.generateStreamingCompletion(prompt, context, maxTokens, guardrailDecision);
 
           let timeoutId: NodeJS.Timeout;
           let hasStarted = false;
@@ -765,7 +800,7 @@ class ResilientLLMClient implements LLMClient {
           if (i === clients.length - 1 && retry === this.maxRetries - 1) {
             // Fallback to non-streaming completion
             try {
-              const result = await this.generateCompletion(prompt, context, maxTokens);
+              const result = await this.generateCompletion(prompt, context, maxTokens, guardrailDecision);
               yield {
                 type: 'chunk',
                 data: result.text
@@ -794,7 +829,7 @@ class ResilientLLMClient implements LLMClient {
 
     // If no streaming clients are available, fallback to non-streaming
     try {
-      const result = await this.generateCompletion(prompt, context, maxTokens);
+      const result = await this.generateCompletion(prompt, context, maxTokens, guardrailDecision);
       yield {
         type: 'chunk',
         data: result.text

@@ -16,41 +16,53 @@ import { RerankerResult } from '../types/reranker.js';
 import { UserContext } from '@cw-rag-core/shared';
 import {
   SourceAwareConfidenceService,
-  SourceAwareConfidenceResult,
+  SourceAwareConfidenceResult, // Correct import for SourceAwareConfidenceResult
   createSourceAwareConfidenceService
 } from './source-aware-confidence.js';
 
 export interface AnswerabilityGuardrailService {
   /**
-   * Evaluate if a query is answerable based on retrieval results
+   * Evaluate if a query is answerable based on retrieval results.
+   * Accepts structured retrieval results for source-aware confidence.
    */
   evaluateAnswerability(
     query: string,
-    results: HybridSearchResult[],
+    retrievalResults: {
+      vectorResults: VectorSearchResult[];
+      keywordResults: HybridSearchResult[];
+      fusionResults: HybridSearchResult[];
+      rerankerResults?: RerankerResult[];
+    },
     userContext: UserContext,
     metrics?: SearchPerformanceMetrics
   ): Promise<GuardrailDecision>;
 
   /**
-   * Calculate answerability score from retrieval results
+   * Calculate answerability score from structured retrieval results
+   * using the SourceAwareConfidenceService.
    */
   calculateAnswerabilityScore(
-    results: HybridSearchResult[],
-    rerankerResults?: RerankerResult[]
+    retrievalResults: {
+      vectorResults: VectorSearchResult[];
+      keywordResults: HybridSearchResult[];
+      fusionResults: HybridSearchResult[];
+      rerankerResults?: RerankerResult[];
+    }
   ): AnswerabilityScore;
 
   /**
-   * Get tenant-specific guardrail configuration
+   * Get tenant-specific guardrail configuration.
    */
   getTenantConfig(tenantId: string): Promise<TenantGuardrailConfig>;
 
   /**
-   * Update tenant guardrail configuration
+   * Update tenant guardrail configuration.
    */
   updateTenantConfig(config: TenantGuardrailConfig): Promise<void>;
 
   /**
-   * Generate IDK response based on score and configuration
+   * Generate IDK response based on score and configuration.
+   * This method still needs a flat list of results for generating suggestions.
    */
   generateIdkResponse(
     score: AnswerabilityScore,
@@ -70,7 +82,12 @@ export class AnswerabilityGuardrailServiceImpl implements AnswerabilityGuardrail
 
   async evaluateAnswerability(
     query: string,
-    results: HybridSearchResult[],
+    retrievalResults: {
+      vectorResults: VectorSearchResult[];
+      keywordResults: HybridSearchResult[];
+      fusionResults: HybridSearchResult[];
+      rerankerResults?: RerankerResult[];
+    },
     userContext: UserContext,
     _metrics?: SearchPerformanceMetrics
   ): Promise<GuardrailDecision> {
@@ -85,7 +102,8 @@ export class AnswerabilityGuardrailServiceImpl implements AnswerabilityGuardrail
         isAnswerable: true,
         score: this.createPassthroughScore(),
         threshold: config.threshold,
-        auditTrail: this.createAuditTrail(query, userContext, results, 'GUARDRAIL_DISABLED', startTime)
+        // Use fusionResults for audit trail as it represents the overall documents considered for retrieval
+        auditTrail: this.createAuditTrail(query, userContext, retrievalResults.fusionResults, 'GUARDRAIL_DISABLED', startTime)
       };
     }
 
@@ -95,29 +113,33 @@ export class AnswerabilityGuardrailServiceImpl implements AnswerabilityGuardrail
         isAnswerable: true,
         score: this.createPassthroughScore(),
         threshold: config.threshold,
-        auditTrail: this.createAuditTrail(query, userContext, results, 'BYPASS_ENABLED', startTime)
+        // Use fusionResults for audit trail
+        auditTrail: this.createAuditTrail(query, userContext, retrievalResults.fusionResults, 'BYPASS_ENABLED', startTime)
       };
     }
 
-    // Calculate answerability score
-    const score = this.calculateAnswerabilityScore(results);
+    // Calculate answerability score using the new structured input
+    const score = this.calculateAnswerabilityScore(retrievalResults);
 
     // Apply threshold decision logic
-    const isAnswerable = this.applyThresholdDecision(score, config.threshold);
+    const finalIsAnswerableDecision = this.applyThresholdDecision(score, config.threshold);
+
+    // Update the isAnswerable property within the score object for consistency
+    score.isAnswerable = finalIsAnswerableDecision;
 
     // Generate IDK response if not answerable
-    const idkResponse = isAnswerable ? undefined : this.generateIdkResponse(score, config, results);
+    const idkResponse = finalIsAnswerableDecision ? undefined : this.generateIdkResponse(score, config, retrievalResults.fusionResults);
 
     const decision: GuardrailDecision = {
-      isAnswerable,
+      isAnswerable: finalIsAnswerableDecision,
       score,
       threshold: config.threshold,
       idkResponse,
       auditTrail: this.createAuditTrail(
         query,
         userContext,
-        results,
-        isAnswerable ? 'ANSWERABLE' : 'NOT_ANSWERABLE',
+        retrievalResults.fusionResults, // Use fusionResults for audit trail
+        finalIsAnswerableDecision ? 'ANSWERABLE' : 'NOT_ANSWERABLE',
         startTime
       )
     };
@@ -125,84 +147,74 @@ export class AnswerabilityGuardrailServiceImpl implements AnswerabilityGuardrail
     return decision;
   }
 
-  calculateAnswerabilityScore(
-    results: HybridSearchResult[],
-    rerankerResults?: RerankerResult[]
-  ): AnswerabilityScore {
+  calculateAnswerabilityScore({
+    vectorResults,
+    keywordResults,
+    fusionResults,
+    rerankerResults
+  }: {
+    vectorResults: VectorSearchResult[];
+    keywordResults: HybridSearchResult[];
+    fusionResults: HybridSearchResult[];
+    rerankerResults?: RerankerResult[];
+  }): AnswerabilityScore {
     const startTime = performance.now();
 
-    if (results.length === 0) {
+    if (fusionResults.length === 0 && vectorResults.length === 0 && keywordResults.length === 0) {
       return {
         confidence: 0,
         scoreStats: this.createEmptyStats(),
         algorithmScores: {
           statistical: 0,
           threshold: 0,
-          mlFeatures: 0,
-          rerankerConfidence: 0
+          mlFeatures: 0
         },
         isAnswerable: false,
-        reasoning: 'No retrieval results found',
+        reasoning: 'No retrieval results found from any source',
         computationTime: performance.now() - startTime,
         sourceAwareConfidence: undefined
       };
     }
 
-    // Extract vector results from hybrid results to track source quality
-    const vectorResults: VectorSearchResult[] = results
-      .filter(r => r.vectorScore !== undefined)
-      .map(r => ({
-        id: r.id,
-        vector: [], // Empty vector array as we only need score tracking
-        score: r.vectorScore!,
-        payload: r.payload
-      }));
-
-    // Extract keyword results
-    const keywordResults = results
-      .filter(r => r.keywordScore !== undefined)
-      .map(r => ({
-        id: r.id,
-        score: r.keywordScore!,
-        payload: r.payload
-      }));
-
     // Calculate source-aware confidence
     const sourceAwareResult = this.sourceAwareConfidenceService.calculateSourceAwareConfidence(
       vectorResults,
       keywordResults,
-      results,
+      fusionResults,
       rerankerResults
     );
 
-    // Extract scores for legacy analysis
-    const scores = results.map(r => r.fusionScore || r.score || 0);
-    const vectorScores = results.map(r => r.vectorScore || 0).filter(s => s > 0);
-    const keywordScores = results.map(r => r.keywordScore || 0).filter(s => s > 0);
-    const rerankerScores = rerankerResults?.map(r => r.rerankerScore) || [];
-
-    // Calculate score statistics (legacy)
-    const scoreStats = this.calculateScoreStatistics(scores);
-
-    // Calculate algorithm-specific scores (enhanced with source-aware data)
-    const algorithmScores: AlgorithmScores = {
-      statistical: this.calculateStatisticalScore(scoreStats),
-      threshold: this.calculateThresholdScore(scores),
-      mlFeatures: this.calculateMLFeaturesScore(scoreStats, vectorScores, keywordScores),
-      rerankerConfidence: rerankerScores.length > 0 ?
-        this.calculateRerankerConfidenceScore(rerankerScores) : undefined
-    };
-
-    // Use source-aware confidence as primary confidence metric
+    // Map source-aware result to the existing AnswerabilityScore interface
     const confidence = sourceAwareResult.finalConfidence;
 
+    // Combine all scores to calculate overall statistics (for legacy AlgorithmScores and stats)
+    // We filter for values above 0 to avoid skewing statistics with default/zero scores,
+    // reflecting truly contributing results.
+    const allScores: number[] = [
+      ...vectorResults.map(r => r.score || 0),
+      ...keywordResults.map(r => r.score || 0),
+      ...fusionResults.map(r => r.fusionScore || r.score || 0),
+      ...(rerankerResults?.map(r => r.rerankerScore) || [])
+    ].filter(s => s !== undefined && s > 0) as number[];
+
+    const scoreStats = this.calculateScoreStatistics(allScores);
+
+    // Populate algorithmScores with values from source-aware stages
+    // These reflect confidence at specific stages, not simply raw scores
+    const algorithmScores: AlgorithmScores = {
+      statistical: sourceAwareResult.stageConfidences.vector?.confidence || 0,
+      threshold: sourceAwareResult.stageConfidences.fusion?.confidence || 0,
+      mlFeatures: sourceAwareResult.stageConfidences.fusion?.confidence || 0, // Using fusion for ML score for now
+      rerankerConfidence: sourceAwareResult.stageConfidences.reranking?.confidence
+    };
+
+    // Removed debug console.log for SourceAwareConfidenceResult
     return {
       confidence,
       scoreStats,
       algorithmScores,
-      isAnswerable: confidence > 0.5, // Default threshold, will be overridden by tenant config
-      reasoning: this.generateScoreReasoning(scoreStats, algorithmScores) +
-                ` Source-aware: ${sourceAwareResult.explanation}`,
+      isAnswerable: false, // Reverted to default; `evaluateAnswerability` will set the definitive flag.
+      reasoning: sourceAwareResult.explanation,
       computationTime: performance.now() - startTime,
       sourceAwareConfidence: sourceAwareResult
     };
@@ -218,6 +230,10 @@ export class AnswerabilityGuardrailServiceImpl implements AnswerabilityGuardrail
 
   async updateTenantConfig(config: TenantGuardrailConfig): Promise<void> {
     this.tenantConfigs.set(config.tenantId, config);
+
+    // Clear related cache entries (if any) or invalidate configs
+    const tenantCacheKey = `tenant-config:${config.tenantId}`;
+    // example: this.someConfigCache.delete(tenantCacheKey);
   }
 
   generateIdkResponse(
@@ -355,7 +371,7 @@ export class AnswerabilityGuardrailServiceImpl implements AnswerabilityGuardrail
       const keywordDiff = keyword[i] - keywordMean;
       correlation += vectorDiff * keywordDiff;
       vectorVar += vectorDiff * vectorDiff;
-      keywordVar += keywordDiff * keywordDiff;
+      keywordVar += keywordDiff * keywordVar;
     }
 
     const denominator = Math.sqrt(vectorVar * keywordVar);
@@ -392,6 +408,7 @@ export class AnswerabilityGuardrailServiceImpl implements AnswerabilityGuardrail
   private applyThresholdDecision(score: AnswerabilityScore, threshold: AnswerabilityThreshold): boolean {
     // Multiple criteria must be met for answerability
     const checks = [
+      // Crucial check: overall confidence must meet the minimum threshold
       score.confidence >= threshold.minConfidence,
       score.scoreStats.max >= threshold.minTopScore,
       score.scoreStats.mean >= threshold.minMeanScore,
@@ -552,21 +569,23 @@ export class AnswerabilityGuardrailServiceImpl implements AnswerabilityGuardrail
   }
 
   private getDefaultConfig(tenantId: string): TenantGuardrailConfig {
-    // Create environment-aware threshold at runtime, not at module load time
     const envThreshold = parseFloat(process.env.ANSWERABILITY_THRESHOLD || '0.6');
 
     let threshold;
-    if (envThreshold <= 0.1) {
+    // Ensure minConfidence is never exactly 0, even if envThreshold is 0.
+    // A confidence of 0 means no relevant docs, which should never pass.
+    const effectiveMinConfidence = Math.max(envThreshold, 0.001);
+
+    if (effectiveMinConfidence <= 0.1) {
       threshold = {
         type: 'custom' as const,
-        minConfidence: envThreshold,
-        minTopScore: 0.01,       // Match actual search quality (1.55%)
-        minMeanScore: 0.01,      // Match actual search quality (1.25%)
-        maxStdDev: 1.0,          // Allow high variance
-        minResultCount: 1        // Only need 1 result
+        minConfidence: effectiveMinConfidence,
+        minTopScore: 0.01,
+        minMeanScore: 0.01,
+        maxStdDev: 1.0,
+        minResultCount: 1
       };
     } else {
-      // For higher values, scale proportionally from permissive threshold
       const baseThreshold = {
         minConfidence: 0.4,
         minTopScore: 0.3,
@@ -574,11 +593,11 @@ export class AnswerabilityGuardrailServiceImpl implements AnswerabilityGuardrail
         maxStdDev: 0.5,
         minResultCount: 1
       };
-      const scaleFactor = envThreshold / 0.4; // 0.4 is permissive minConfidence
+      const scaleFactor = effectiveMinConfidence / 0.4;
 
       threshold = {
         type: 'custom' as const,
-        minConfidence: envThreshold,
+        minConfidence: effectiveMinConfidence,
         minTopScore: Math.min(baseThreshold.minTopScore * scaleFactor, 1.0),
         minMeanScore: Math.min(baseThreshold.minMeanScore * scaleFactor, 1.0),
         maxStdDev: baseThreshold.maxStdDev,
@@ -607,12 +626,10 @@ export class AnswerabilityGuardrailServiceImpl implements AnswerabilityGuardrail
   }
 }
 
-// Factory function for creating guardrail service
 export function createAnswerabilityGuardrailService(): AnswerabilityGuardrailService {
   return new AnswerabilityGuardrailServiceImpl();
 }
 
-// Performance-optimized guardrail service with caching
 export class CachedAnswerabilityGuardrailService extends AnswerabilityGuardrailServiceImpl {
   private configCache = new Map<string, {
     config: TenantGuardrailConfig;
@@ -622,28 +639,20 @@ export class CachedAnswerabilityGuardrailService extends AnswerabilityGuardrailS
   private readonly CONFIG_CACHE_TTL = 10 * 60 * 1000; // 10 minutes
 
   async getTenantConfig(tenantId: string): Promise<TenantGuardrailConfig> {
-    // Check cache first
     const cached = this.configCache.get(tenantId);
     if (cached && Date.now() - cached.timestamp < this.CONFIG_CACHE_TTL) {
       return cached.config;
     }
-
-    // Get fresh config
     const config = await super.getTenantConfig(tenantId);
-
-    // Cache the result
     this.configCache.set(tenantId, {
       config,
       timestamp: Date.now()
     });
-
     return config;
   }
 
   async updateTenantConfig(config: TenantGuardrailConfig): Promise<void> {
     await super.updateTenantConfig(config);
-
-    // Invalidate cache
     this.configCache.delete(config.tenantId);
   }
 }

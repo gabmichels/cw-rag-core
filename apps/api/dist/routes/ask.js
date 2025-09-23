@@ -1,4 +1,6 @@
-import { validateUserAuthorization } from '@cw-rag-core/shared';
+import { 
+// AskResponseSchema, // Removed as it's defined inline now for clarity and direct control
+validateUserAuthorization } from '@cw-rag-core/shared';
 import { createHybridSearchService, createGuardedRetrievalService, QdrantKeywordSearchService, ReciprocalRankFusionService, HttpRerankerService, SentenceTransformersRerankerService, DEFAULT_RERANKER_CONFIG, RERANKER_MODELS } from '@cw-rag-core/retrieval';
 import { createAnswerSynthesisService } from '../services/answer-synthesis.js';
 import { createCitationService } from '../services/citation.js';
@@ -221,6 +223,18 @@ export async function askRoute(fastify, options) {
                                 confidence: { type: 'number', minimum: 0, maximum: 1 },
                                 reasonCode: { type: 'string' },
                                 suggestions: { type: 'array', items: { type: 'string' } },
+                                threshold: {
+                                    type: 'object',
+                                    properties: {
+                                        type: { type: 'string' },
+                                        minConfidence: { type: 'number' },
+                                        minTopScore: { type: 'number' },
+                                        minMeanScore: { type: 'number' },
+                                        maxStdDev: { type: 'number' },
+                                        minResultCount: { type: 'integer' },
+                                    },
+                                    required: ['type', 'minConfidence', 'minTopScore', 'minMeanScore', 'maxStdDev', 'minResultCount'],
+                                },
                                 scoreStats: {
                                     type: 'object',
                                     properties: {
@@ -242,6 +256,91 @@ export async function askRoute(fastify, options) {
                                     },
                                     required: ['statistical', 'threshold', 'mlFeatures'],
                                 },
+                                sourceAwareConfidence: {
+                                    type: 'object',
+                                    properties: {
+                                        finalConfidence: { type: 'number', minimum: 0, maximum: 1 },
+                                        stageConfidences: {
+                                            type: 'object',
+                                            properties: {
+                                                vector: {
+                                                    type: 'object',
+                                                    properties: {
+                                                        confidence: { type: 'number' },
+                                                        quality: { type: 'number' },
+                                                        resultCount: { type: 'integer' },
+                                                        topScore: { type: 'number' },
+                                                        meanScore: { type: 'number' },
+                                                        stdDev: { type: 'number' },
+                                                    },
+                                                    required: ['confidence', 'quality', 'resultCount', 'topScore', 'meanScore', 'stdDev'],
+                                                },
+                                                keyword: {
+                                                    type: 'object',
+                                                    properties: {
+                                                        confidence: { type: 'number' },
+                                                        quality: { type: 'number' },
+                                                        resultCount: { type: 'integer' },
+                                                        topScore: { type: 'number' },
+                                                        meanScore: { type: 'number' },
+                                                        stdDev: { type: 'number' },
+                                                    },
+                                                    required: ['confidence', 'quality', 'resultCount', 'topScore', 'meanScore', 'stdDev'],
+                                                },
+                                                fusion: {
+                                                    type: 'object',
+                                                    properties: {
+                                                        confidence: { type: 'number' },
+                                                        quality: { type: 'number' },
+                                                        resultCount: { type: 'integer' },
+                                                        topScore: { type: 'number' },
+                                                        meanScore: { type: 'number' },
+                                                        stdDev: { type: 'number' },
+                                                    },
+                                                    required: ['confidence', 'quality', 'resultCount', 'topScore', 'meanScore', 'stdDev'],
+                                                },
+                                                reranking: {
+                                                    type: 'object',
+                                                    properties: {
+                                                        confidence: { type: 'number' },
+                                                        quality: { type: 'number' },
+                                                        resultCount: { type: 'integer' },
+                                                        topScore: { type: 'number' },
+                                                        meanScore: { type: 'number' },
+                                                        stdDev: { type: 'number' },
+                                                    },
+                                                    required: ['confidence', 'quality', 'resultCount', 'topScore', 'meanScore', 'stdDev'],
+                                                },
+                                                rawFusionResults: {
+                                                    type: 'array',
+                                                    items: {
+                                                        type: 'object',
+                                                        properties: { id: { type: 'string' }, score: { type: 'number' }, searchType: { type: 'string' } },
+                                                        required: ['id', 'score'],
+                                                    }
+                                                }
+                                            },
+                                            required: ['vector', 'fusion'],
+                                        },
+                                        degradationAlerts: {
+                                            type: 'array',
+                                            items: {
+                                                type: 'object',
+                                                properties: {
+                                                    stage: { type: 'string' },
+                                                    severity: { type: 'number' },
+                                                    description: { type: 'string' },
+                                                    recommendation: { type: 'string' },
+                                                },
+                                                required: ['stage', 'severity', 'description', 'recommendation'],
+                                            },
+                                        },
+                                        recommendedStrategy: { type: 'string' },
+                                        explanation: { type: 'string' },
+                                        computationTime: { type: 'number' },
+                                    },
+                                    required: ['finalConfidence', 'stageConfidences', 'degradationAlerts', 'recommendedStrategy', 'explanation', 'computationTime'],
+                                }
                             },
                             required: ['isAnswerable', 'confidence'],
                         },
@@ -488,7 +587,8 @@ export async function askRoute(fastify, options) {
                                 stdDev: retrievalResult.guardrailDecision.score.scoreStats.stdDev,
                                 count: retrievalResult.guardrailDecision.score.scoreStats.count
                             } : undefined,
-                            algorithmScores: retrievalResult.guardrailDecision.score?.algorithmScores
+                            algorithmScores: retrievalResult.guardrailDecision.score?.algorithmScores,
+                            sourceAwareConfidence: retrievalResult.guardrailDecision.score?.sourceAwareConfidence // Add sourceAwareConfidence
                         },
                         ...(includeMetrics && {
                             metrics: {
@@ -529,7 +629,7 @@ export async function askRoute(fastify, options) {
                     try {
                         for await (const chunk of answerSynthesisService.synthesizeAnswerStreaming({
                             query,
-                            documents: retrievalResult.results || [],
+                            documents: retrievalResult.results || [], // Correctly use retrievalResult.results
                             userContext,
                             maxContextLength: synthesis?.maxContextLength || 8000,
                             includeCitations: synthesis?.includeCitations ?? true,
@@ -552,7 +652,7 @@ export async function askRoute(fastify, options) {
                             }
                         }
                         // Convert streaming result to regular response format
-                        const retrievedDocuments = (retrievalResult.results || [])
+                        const retrievedDocuments = (retrievalResult.results || []) // Correctly use retrievalResult.results
                             .map((result) => ({
                             document: {
                                 id: result.id,
@@ -595,7 +695,7 @@ export async function askRoute(fastify, options) {
                             queryId,
                             guardrailDecision: {
                                 isAnswerable: true,
-                                confidence: metadata.confidence || 0,
+                                confidence: retrievalResult.guardrailDecision.score?.confidence || 0, // Direct from guardrail decision score
                                 scoreStats: retrievalResult.guardrailDecision.score?.scoreStats ? {
                                     mean: retrievalResult.guardrailDecision.score.scoreStats.mean,
                                     max: retrievalResult.guardrailDecision.score.scoreStats.max,
@@ -603,7 +703,8 @@ export async function askRoute(fastify, options) {
                                     stdDev: retrievalResult.guardrailDecision.score.scoreStats.stdDev,
                                     count: retrievalResult.guardrailDecision.score.scoreStats.count
                                 } : undefined,
-                                algorithmScores: retrievalResult.guardrailDecision.score?.algorithmScores
+                                algorithmScores: retrievalResult.guardrailDecision.score?.algorithmScores,
+                                sourceAwareConfidence: retrievalResult.guardrailDecision.score?.sourceAwareConfidence
                             },
                             freshnessStats: metadata.freshnessStats,
                             citations: responseCitations,
@@ -649,7 +750,7 @@ export async function askRoute(fastify, options) {
                 const synthesisStartTime = performance.now();
                 const synthesisResult = await timeoutManager.executeWithTimeout(() => answerSynthesisService.synthesizeAnswer({
                     query,
-                    documents: retrievalResult.results || [],
+                    documents: retrievalResult.results || [], // Correctly use retrievalResult.results
                     userContext,
                     maxContextLength: synthesis?.maxContextLength || 8000,
                     includeCitations: synthesis?.includeCitations ?? true,
@@ -661,7 +762,7 @@ export async function askRoute(fastify, options) {
                     debugSteps.push('Completed answer synthesis');
                 }
                 // Convert HybridSearchResult to RetrievedDocument format for response
-                const retrievedDocuments = (retrievalResult.results || [])
+                const retrievedDocuments = (retrievalResult.results || []) // Correctly use retrievalResult.results
                     .map((result) => ({
                     document: {
                         id: result.id,
@@ -732,7 +833,7 @@ export async function askRoute(fastify, options) {
                     queryId,
                     guardrailDecision: {
                         isAnswerable: true,
-                        confidence: synthesisResponse.confidence,
+                        confidence: retrievalResult.guardrailDecision.score?.confidence || 0, // Direct from guardrail decision score
                         threshold: retrievalResult.guardrailDecision.threshold,
                         scoreStats: retrievalResult.guardrailDecision.score?.scoreStats ? {
                             mean: retrievalResult.guardrailDecision.score.scoreStats.mean,
@@ -741,7 +842,8 @@ export async function askRoute(fastify, options) {
                             stdDev: retrievalResult.guardrailDecision.score.scoreStats.stdDev,
                             count: retrievalResult.guardrailDecision.score.scoreStats.count
                         } : undefined,
-                        algorithmScores: retrievalResult.guardrailDecision.score?.algorithmScores
+                        algorithmScores: retrievalResult.guardrailDecision.score?.algorithmScores,
+                        sourceAwareConfidence: retrievalResult.guardrailDecision.score?.sourceAwareConfidence
                     },
                     freshnessStats: synthesisResponse.freshnessStats,
                     citations: responseCitations,
@@ -797,7 +899,8 @@ export async function askRoute(fastify, options) {
                 }, 'Ask request failed');
                 // Log error using audit logger
                 auditLogger.logError('/ask', userContext.tenantId || 'default', qHash, // Use query hash for consistency
-                'pipeline', error.message, request.ip, request.headers?.['user-agent']);
+                'pipeline', error.message, request.ip, request.ip // useAgent parameter
+                );
                 // Check if it's a timeout error
                 if (error.message.includes('timeout') || error.message.includes('Request timeout')) {
                     return reply.status(408).send({

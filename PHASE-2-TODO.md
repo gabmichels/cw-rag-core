@@ -649,7 +649,7 @@ import { RunnableSequence } from "langchain/schema/runnable";
 
 export interface SynthesisConfig {
   llmProvider: 'openai' | 'anthropic' | 'local';
-  model: string; // 'gpt-4-turbo', 'claude-3-sonnet', etc.
+  model: string; // 'gpt-4.1-2025-04-14-turbo', 'claude-3-sonnet', etc.
   temperature: number; // default 0.1
   maxTokens: number; // default 500
   timeout: number; // default 10000ms

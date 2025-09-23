@@ -49,6 +49,11 @@ export interface SynthesisRequest {
   maxContextLength?: number;
   includeCitations?: boolean;
   answerFormat?: 'markdown' | 'plain';
+  guardrailDecision?: {
+    isAnswerable: boolean;
+    confidence: number;
+    score: any;
+  };
 }
 
 export interface SynthesisResponse {

@@ -228,7 +228,7 @@ const synthesizer = new AnswerSynthesisServiceImpl(
 
 #### Supported Models
 1. **OpenAI GPT-4** (Primary)
-   - Model: `gpt-4-turbo`
+   - Model: `gpt-4.1-2025-04-14-turbo`
    - Performance: <2s average
    - Quality: Highest accuracy
 
@@ -248,7 +248,7 @@ import { ChatOpenAI } from "langchain/chat_models/openai";
 import { PromptTemplate } from "langchain/prompts";
 
 const llm = new ChatOpenAI({
-  modelName: "gpt-4-turbo",
+  modelName: "gpt-4.1-2025-04-14-turbo",
   temperature: 0.1,
   maxTokens: 500
 });
@@ -705,7 +705,7 @@ GUARDRAILS_THRESHOLD=0.3
 GUARDRAILS_AUDIT_ENABLED=true
 
 LLM_PROVIDER=openai
-LLM_MODEL=gpt-4-turbo
+LLM_MODEL=gpt-4.1-2025-04-14-turbo
 LLM_MAX_TOKENS=500
 LLM_TEMPERATURE=0.1
 

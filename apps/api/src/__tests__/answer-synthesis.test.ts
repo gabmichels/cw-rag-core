@@ -50,7 +50,7 @@ class MockLLMClientFactory implements LLMClientFactory {
   async createClientForTenant(tenantId: string): Promise<LLMClient> {
     return new MockLLMClient({
       provider: 'openai',
-      model: 'gpt-4',
+      model: 'gpt-4.1-2025-04-14',
       temperature: 0.1
     });
   }
@@ -64,7 +64,7 @@ class MockLLMClientFactory implements LLMClientFactory {
       tenantId,
       defaultConfig: {
         provider: 'openai' as const,
-        model: 'gpt-4',
+        model: 'gpt-4.1-2025-04-14',
         temperature: 0.1
       },
       maxRetries: 3,
@@ -177,7 +177,7 @@ describe('AnswerSynthesisService', () => {
       expect(response.citations).toBeDefined();
       expect(Object.keys(response.citations)).toHaveLength(2);
       expect(response.tokensUsed).toBe(150);
-      expect(response.modelUsed).toBe('gpt-4');
+      expect(response.modelUsed).toBe('gpt-4.1-2025-04-14');
       expect(response.confidence).toBeGreaterThan(0);
       expect(response.confidence).toBeLessThanOrEqual(1);
       expect(response.synthesisTime).toBeGreaterThan(0);
@@ -292,7 +292,7 @@ describe('AnswerSynthesisService', () => {
       expect(metrics!.citationCount).toBe(2);
       expect(metrics!.responseLatency).toBeGreaterThan(0);
       expect(metrics!.llmProvider).toBe('openai');
-      expect(metrics!.model).toBe('gpt-4');
+      expect(metrics!.model).toBe('gpt-4.1-2025-04-14');
     });
   });
 

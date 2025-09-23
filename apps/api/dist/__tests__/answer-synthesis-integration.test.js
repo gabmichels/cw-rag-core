@@ -124,7 +124,7 @@ describe('Answer Synthesis Integration Tests', () => {
             expect(response.tokensUsed).toBeGreaterThan(0);
             expect(response.confidence).toBeGreaterThan(0.7);
             expect(response.synthesisTime).toBeGreaterThan(0);
-            expect(response.modelUsed).toBe('gpt-4');
+            expect(response.modelUsed).toBe('gpt-4.1-2025-04-14');
             expect(response.contextTruncated).toBe(false);
         });
     });

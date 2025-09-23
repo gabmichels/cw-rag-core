@@ -21,7 +21,14 @@ export class AnswerSynthesisServiceImpl {
             // Validate request
             this.validateRequest(request);
             // Check answerability guardrail
-            const guardrailDecision = await this.guardrailService.evaluateAnswerability(request.query, request.documents, request.userContext);
+            // The answer synthesis service only receives the already fused documents.
+            // We pass them as fusionResults for source-aware confidence calculation.
+            const guardrailDecision = await this.guardrailService.evaluateAnswerability(request.query, {
+                vectorResults: [], // Not available at this stage
+                keywordResults: [], // Not available at this stage
+                fusionResults: request.documents,
+                rerankerResults: undefined // Not available as RerankerResult[] at this stage
+            }, request.userContext);
             const tenantId = request.userContext.tenantId || 'default';
             const answerabilityThreshold = parseFloat(process.env.ANSWERABILITY_THRESHOLD || '0.5');
             // If not answerable according to guardrail, return IDK response
@@ -91,7 +98,14 @@ export class AnswerSynthesisServiceImpl {
             // Validate request
             this.validateRequest(request);
             // Check answerability guardrail
-            const guardrailDecision = await this.guardrailService.evaluateAnswerability(request.query, request.documents, request.userContext);
+            // The answer synthesis service only receives the already fused documents.
+            // We pass them as fusionResults for source-aware confidence calculation.
+            const guardrailDecision = await this.guardrailService.evaluateAnswerability(request.query, {
+                vectorResults: [],
+                keywordResults: [],
+                fusionResults: request.documents,
+                rerankerResults: undefined
+            }, request.userContext);
             const tenantId = request.userContext.tenantId || 'default';
             const answerabilityThreshold = parseFloat(process.env.ANSWERABILITY_THRESHOLD || '0.5');
             // If not answerable according to guardrail, return IDK response

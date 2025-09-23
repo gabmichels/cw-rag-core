@@ -290,7 +290,7 @@ interface SourceCitation {
 ```typescript
 export class GPT4LLMService implements LLMService {
   private client: OpenAI;
-  private model = 'gpt-4';
+  private model = 'gpt-4.1-2025-04-14';
 
   constructor(config: OpenAIConfig) {
     this.client = new OpenAI({

@@ -18,7 +18,7 @@ async function testOpenAIIntegration() {
   // Test OpenAI configuration
   const openaiConfig = {
     provider: 'openai',
-    model: 'gpt-4',
+    model: 'gpt-4.1-2025-04-14',
     temperature: 0.1,
     maxTokens: 500,
     apiKey: process.env.OPENAI_API_KEY

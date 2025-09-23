@@ -6,11 +6,13 @@ import {
   HybridSearchRequest,
   HybridSearchResult,
   TenantSearchConfig,
-  SearchPerformanceMetrics
+  SearchPerformanceMetrics,
+  StructuredHybridSearchResult
 } from '../types/hybrid.js';
 import {
   RerankerRequest,
   RerankerDocument,
+  RerankerResult, // Added import for RerankerResult
   RERANKER_CONFIG
 } from '../types/reranker.js';
 import {
@@ -50,10 +52,7 @@ export interface HybridSearchService {
     collectionName: string,
     request: HybridSearchRequest,
     userContext: UserContext
-  ): Promise<{
-    results: HybridSearchResult[];
-    metrics: SearchPerformanceMetrics;
-  }>;
+  ): Promise<StructuredHybridSearchResult>;
 
   // Legacy compatibility method
   searchLegacy(
@@ -61,10 +60,7 @@ export interface HybridSearchService {
     request: HybridSearchRequest,
     userTenants: string[],
     userAcl: string[]
-  ): Promise<{
-    results: HybridSearchResult[];
-    metrics: SearchPerformanceMetrics;
-  }>;
+  ): Promise<StructuredHybridSearchResult>;
 
   getTenantConfig(tenantId: string): Promise<TenantSearchConfig>;
   updateTenantConfig(config: TenantSearchConfig): Promise<void>;
@@ -81,13 +77,9 @@ export class HybridSearchServiceImpl implements HybridSearchService {
     private embeddingService: { embed(text: string): Promise<number[]> },
     private rerankerService?: RerankerService
   ) {
-    // Set default configurations
     this.initializeDefaultConfigs();
   }
 
-  /**
-   * Execute operation with timeout and optional fallback
-   */
   private async executeWithTimeout<T>(
     operation: () => Promise<T>,
     timeoutMs: number,
@@ -126,9 +118,6 @@ export class HybridSearchServiceImpl implements HybridSearchService {
     }
   }
 
-  /**
-   * Get timeout configuration for tenant
-   */
   private getTimeoutConfig(tenantId?: string): TimeoutConfig {
     const config = this.timeoutConfigs.get(tenantId || 'default');
     return config || DEFAULT_TIMEOUTS;
@@ -138,35 +127,26 @@ export class HybridSearchServiceImpl implements HybridSearchService {
     collectionName: string,
     request: HybridSearchRequest,
     userContext: UserContext
-  ): Promise<{
-    results: HybridSearchResult[];
-    metrics: SearchPerformanceMetrics;
-  }> {
+  ): Promise<StructuredHybridSearchResult> {
     const startTime = performance.now();
 
-    // Validate user authorization first
     if (!validateUserAuthorization(userContext)) {
       throw new Error('User authorization validation failed');
     }
 
-    // Get tenant configuration
     const tenantConfig = request.tenantId ?
       await this.getTenantConfig(request.tenantId) :
       this.getDefaultConfig();
 
-    // Re-enable hybrid search after fixing vector embeddings
     const keywordSearchEnabled = request.enableKeywordSearch ?? tenantConfig.keywordSearchEnabled;
     console.log(`🔄 Hybrid search mode: vector + ${keywordSearchEnabled ? 'keyword' : 'vector-only'}`);
 
-    // Build enhanced RBAC filter
     const rbacFilter = buildQdrantRBACFilter(userContext);
 
-    // Add additional filters if provided
     if (request.filter && Object.keys(request.filter).length > 0) {
       this.addAdditionalFilters(rbacFilter, request.filter);
     }
 
-    // Initialize metrics
     const metrics: SearchPerformanceMetrics = {
       vectorSearchDuration: 0,
       keywordSearchDuration: 0,
@@ -180,13 +160,14 @@ export class HybridSearchServiceImpl implements HybridSearchService {
       documentsReranked: 0
     };
 
-    let vectorResults: VectorSearchResult[] = [];
-    let keywordResults: any[] = [];
+    let vectorSearchResults: VectorSearchResult[] = [];
+    let keywordSearchResults: HybridSearchResult[] = [];
+    let fusedResults: HybridSearchResult[] = [];
+    let rerankerActualResults: RerankerResult[] | undefined = undefined; // Actual raw reranker results
 
     try {
       const timeouts = this.getTimeoutConfig(request.tenantId);
 
-      // Perform vector search with timeout
       const vectorStartTime = performance.now();
       console.log('🔍 Hybrid search: Starting embedding generation...');
       console.log('Query:', request.query);
@@ -212,16 +193,15 @@ export class HybridSearchServiceImpl implements HybridSearchService {
         }),
         timeouts.vectorSearch,
         'Vector search',
-        // Fallback: return empty results if vector search fails
         () => Promise.resolve([])
       );
 
-      vectorResults = vectorSearchResult.result;
-      console.log('✅ Vector search completed:', vectorResults?.length, 'results');
+      vectorSearchResults = vectorSearchResult.result;
+      console.log('✅ Vector search completed:', vectorSearchResults?.length, 'results');
 
-      if (vectorResults && vectorResults.length > 0) {
+      if (vectorSearchResults && vectorSearchResults.length > 0) {
         console.log('📋 Vector search results:');
-        vectorResults.forEach((result, i) => {
+        vectorSearchResults.forEach((result, i) => {
           console.log(`   ${i+1}. ID: ${result.id}, Score: ${result.score}`);
           console.log(`      Tenant: ${result.payload?.tenant || result.payload?.tenantId}`);
           console.log(`      ACL: ${JSON.stringify(result.payload?.acl)}`);
@@ -231,7 +211,7 @@ export class HybridSearchServiceImpl implements HybridSearchService {
       }
 
       metrics.vectorSearchDuration = performance.now() - vectorStartTime;
-      metrics.vectorResultCount = vectorResults.length;
+      metrics.vectorResultCount = vectorSearchResults.length;
 
       if (vectorSearchResult.timedOut) {
         console.warn('StructuredLog:VectorSearchTimeout', {
@@ -241,7 +221,6 @@ export class HybridSearchServiceImpl implements HybridSearchService {
         });
       }
 
-      // Perform keyword search if enabled with timeout
       if (keywordSearchEnabled) {
         const keywordStartTime = performance.now();
         const keywordSearchResult = await this.executeWithTimeout(
@@ -253,13 +232,12 @@ export class HybridSearchServiceImpl implements HybridSearchService {
           ),
           timeouts.keywordSearch,
           'Keyword search',
-          // Fallback: return empty results if keyword search fails
           () => Promise.resolve([])
         );
 
-        keywordResults = keywordSearchResult.result;
+        keywordSearchResults = keywordSearchResult.result;
         metrics.keywordSearchDuration = performance.now() - keywordStartTime;
-        metrics.keywordResultCount = keywordResults.length;
+        metrics.keywordResultCount = keywordSearchResults.length;
 
         if (keywordSearchResult.timedOut) {
           console.warn('StructuredLog:KeywordSearchTimeout', {
@@ -270,7 +248,6 @@ export class HybridSearchServiceImpl implements HybridSearchService {
         }
       }
 
-      // Perform RRF fusion
       const fusionStartTime = performance.now();
       const rrfConfig = {
         k: request.rrfK ?? tenantConfig.defaultRrfK,
@@ -278,27 +255,25 @@ export class HybridSearchServiceImpl implements HybridSearchService {
         keywordWeight: request.keywordWeight ?? tenantConfig.defaultKeywordWeight
       };
 
-      const fusedResults = this.rrfFusionService.fuseResults(
-        vectorResults,
-        keywordResults,
+      fusedResults = this.rrfFusionService.fuseResults(
+        vectorSearchResults,
+        keywordSearchResults,
         rrfConfig
       );
 
       metrics.fusionDuration = performance.now() - fusionStartTime;
       metrics.finalResultCount = fusedResults.length;
 
-      // Apply reranking if enabled with timeout and fallback
-      let finalResults = fusedResults;
+      let finalResults = fusedResults; // This will hold the results after reranking if applied
+
       if (tenantConfig.rerankerEnabled && this.rerankerService) {
         const rerankerStartTime = performance.now();
 
-        const rerankerResult = await this.executeWithTimeout(
+        const rerankerOpResult = await this.executeWithTimeout(
           async () => {
-            // Take top RERANKER_TOPN_IN for reranking (default 20)
             const topNIn = RERANKER_CONFIG.TOPN_IN;
             const resultsForReranking = fusedResults.slice(0, topNIn);
 
-            // Convert to reranker documents
             const rerankerDocs: RerankerDocument[] = resultsForReranking.map(result => ({
               id: result.id,
               content: result.content || '',
@@ -309,19 +284,17 @@ export class HybridSearchServiceImpl implements HybridSearchService {
             const rerankerRequest: RerankerRequest = {
               query: request.query,
               documents: rerankerDocs,
-              topK: RERANKER_CONFIG.TOPN_OUT // Default 8
+              topK: RERANKER_CONFIG.TOPN_OUT
             };
 
-            const rerankedResults = await this.rerankerService!.rerank(rerankerRequest);
+            rerankerActualResults = await this.rerankerService!.rerank(rerankerRequest); // Store raw reranker results
 
-            // Convert reranked results back to HybridSearchResult format
-            return rerankedResults.map(rerankedResult => {
+            return rerankerActualResults.map(rerankedResult => { // Use raw reranker results for mapping
               const originalResult = fusedResults.find(r => r.id === rerankedResult.id);
               return {
                 ...originalResult!,
                 score: rerankedResult.rerankerScore,
                 fusionScore: rerankedResult.rerankerScore,
-                // Preserve original scores for debugging
                 vectorScore: originalResult?.vectorScore,
                 keywordScore: originalResult?.keywordScore
               };
@@ -329,16 +302,15 @@ export class HybridSearchServiceImpl implements HybridSearchService {
           },
           timeouts.reranker,
           'Reranker',
-          // Fallback: return fusion results if reranking fails
           () => Promise.resolve(fusedResults)
         );
 
-        finalResults = rerankerResult.result;
+        finalResults = rerankerOpResult.result;
         metrics.rerankerDuration = performance.now() - rerankerStartTime;
-        metrics.rerankingEnabled = !rerankerResult.timedOut;
-        metrics.documentsReranked = rerankerResult.timedOut ? 0 : Math.min(fusedResults.length, RERANKER_CONFIG.TOPN_IN);
+        metrics.rerankingEnabled = !rerankerOpResult.timedOut;
+        metrics.documentsReranked = rerankerOpResult.timedOut ? 0 : Math.min(fusedResults.length, RERANKER_CONFIG.TOPN_IN);
 
-        if (rerankerResult.timedOut) {
+        if (rerankerOpResult.timedOut) {
           console.warn('StructuredLog:RerankerTimeout', {
             timeoutMs: timeouts.reranker,
             fallbackUsed: true,
@@ -356,7 +328,6 @@ export class HybridSearchServiceImpl implements HybridSearchService {
         }
       }
 
-      // Apply final limit and enhanced RBAC post-filtering with language relevance
       const filteredResults = finalResults
         .slice(0, request.limit)
         .filter(result => this.validateEnhancedRbacAccess(result, userContext))
@@ -366,7 +337,11 @@ export class HybridSearchServiceImpl implements HybridSearchService {
       metrics.finalResultCount = filteredResults.length;
 
       return {
-        results: filteredResults,
+        finalResults: filteredResults,
+        vectorSearchResults: vectorSearchResults,
+        keywordSearchResults: keywordSearchResults,
+        fusionResults: fusedResults,
+        rerankerResults: rerankerActualResults, // Pass actual raw reranker results
         metrics
       };
 
@@ -389,7 +364,6 @@ export class HybridSearchServiceImpl implements HybridSearchService {
   }
 
   private initializeDefaultConfigs(): void {
-    // Initialize with some default tenant configurations
     const defaultConfig: TenantSearchConfig = {
       tenantId: 'default',
       keywordSearchEnabled: true,
@@ -403,16 +377,10 @@ export class HybridSearchServiceImpl implements HybridSearchService {
     this.timeoutConfigs.set('default', DEFAULT_TIMEOUTS);
   }
 
-  /**
-   * Update timeout configuration for a tenant
-   */
   updateTenantTimeouts(tenantId: string, timeouts: TimeoutConfig): void {
     this.timeoutConfigs.set(tenantId, timeouts);
   }
 
-  /**
-   * Get timeout configuration for a tenant
-   */
   getTenantTimeouts(tenantId: string): TimeoutConfig {
     return this.timeoutConfigs.get(tenantId) || DEFAULT_TIMEOUTS;
   }
@@ -428,17 +396,12 @@ export class HybridSearchServiceImpl implements HybridSearchService {
     };
   }
 
-  // Legacy compatibility method
   async searchLegacy(
     collectionName: string,
     request: HybridSearchRequest,
     userTenants: string[],
     userAcl: string[]
-  ): Promise<{
-    results: HybridSearchResult[];
-    metrics: SearchPerformanceMetrics;
-  }> {
-    // Convert legacy parameters to UserContext
+  ): Promise<StructuredHybridSearchResult> {
     const userContext: UserContext = {
       id: userAcl[0] || '',
       groupIds: userAcl.slice(1),
@@ -449,21 +412,17 @@ export class HybridSearchServiceImpl implements HybridSearchService {
   }
 
   private addAdditionalFilters(rbacFilter: any, additionalFilter: Record<string, any>): void {
-    // If the additional filter has a complex structure (already properly formatted), merge it
     if (additionalFilter.must && Array.isArray(additionalFilter.must)) {
-      // Merge must conditions from properly structured filter
       rbacFilter.must.push(...additionalFilter.must);
     }
 
     if (additionalFilter.should && Array.isArray(additionalFilter.should)) {
-      // Add should conditions (for language preferences, etc.)
       if (!rbacFilter.should) {
         rbacFilter.should = [];
       }
       rbacFilter.should.push(...additionalFilter.should);
-    }
+     }
 
-    // Handle simple key-value filters (for backward compatibility)
     for (const [key, value] of Object.entries(additionalFilter)) {
       if (key !== 'must' && key !== 'should') {
         if (Array.isArray(value)) {
@@ -488,15 +447,13 @@ export class HybridSearchServiceImpl implements HybridSearchService {
     const payload = result.payload;
     if (!payload) return false;
 
-    // Create document metadata for RBAC validation
     const docMetadata = {
-      tenantId: payload.tenantId || payload.tenant, // Try tenantId first, fallback to tenant
+      tenantId: payload.tenantId || payload.tenant,
       docId: payload.docId || result.id,
       acl: Array.isArray(payload.acl) ? payload.acl : [payload.acl],
       lang: payload.lang
     };
 
-    // Add debug logging to track RBAC filtering
     const hasAccess = hasDocumentAccess(userContext, docMetadata);
     if (!hasAccess) {
       console.log('🚫 RBAC Access Denied:', {
@@ -528,7 +485,6 @@ export class HybridSearchServiceImpl implements HybridSearchService {
   }
 }
 
-// Factory function for creating hybrid search service
 export function createHybridSearchService(
   vectorSearchService: VectorSearchService,
   keywordSearchService: KeywordSearchService,
@@ -545,7 +501,6 @@ export function createHybridSearchService(
   );
 }
 
-// Performance-optimized hybrid search with caching
 export class CachedHybridSearchService extends HybridSearchServiceImpl {
   private queryCache = new Map<string, {
     results: HybridSearchResult[];
@@ -553,24 +508,23 @@ export class CachedHybridSearchService extends HybridSearchServiceImpl {
     ttl: number;
   }>();
 
-  private readonly CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+  private readonly CACHE_TTL = 5 * 60 * 1000;
 
   async search(
     collectionName: string,
     request: HybridSearchRequest,
     userContext: UserContext
-  ): Promise<{
-    results: HybridSearchResult[];
-    metrics: SearchPerformanceMetrics;
-  }> {
-    // Create cache key
+  ): Promise<StructuredHybridSearchResult> {
     const cacheKey = this.createCacheKey(collectionName, request, userContext);
 
-    // Check cache
     const cached = this.queryCache.get(cacheKey);
     if (cached && Date.now() - cached.timestamp < cached.ttl) {
       return {
-        results: cached.results,
+        finalResults: cached.results,
+        vectorSearchResults: [],
+        keywordSearchResults: [],
+        fusionResults: cached.results,
+        rerankerResults: undefined,
         metrics: {
           vectorSearchDuration: 0,
           keywordSearchDuration: 0,
@@ -586,39 +540,17 @@ export class CachedHybridSearchService extends HybridSearchServiceImpl {
       };
     }
 
-    // Perform search
     const result = await super.search(collectionName, request, userContext);
 
-    // Cache result
     this.queryCache.set(cacheKey, {
-      results: result.results,
+      results: result.finalResults,
       timestamp: Date.now(),
       ttl: this.CACHE_TTL
     });
 
-    // Clean up old cache entries
     this.cleanupCache();
 
     return result;
-  }
-
-  // Legacy compatibility method
-  async searchLegacy(
-    collectionName: string,
-    request: HybridSearchRequest,
-    userTenants: string[],
-    userAcl: string[]
-  ): Promise<{
-    results: HybridSearchResult[];
-    metrics: SearchPerformanceMetrics;
-  }> {
-    const userContext: UserContext = {
-      id: userAcl[0] || '',
-      groupIds: userAcl.slice(1),
-      tenantId: userTenants[0] || ''
-    };
-
-    return this.search(collectionName, request, userContext);
   }
 
   private createCacheKey(

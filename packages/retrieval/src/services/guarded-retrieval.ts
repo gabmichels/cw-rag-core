@@ -84,11 +84,16 @@ export class GuardedRetrievalServiceImpl implements GuardedRetrievalService {
         userContext
       );
 
-      // Evaluate answerability
+      // Evaluate answerability with structured results
       const guardrailStartTime = performance.now();
       const guardrailDecision = await this.guardrailService.evaluateAnswerability(
         request.query,
-        searchResult.results,
+        {
+          vectorResults: searchResult.vectorSearchResults,
+          keywordResults: searchResult.keywordSearchResults,
+          fusionResults: searchResult.fusionResults,
+          rerankerResults: searchResult.rerankerResults,
+        }, // Pass the structured results directly
         userContext,
         searchResult.metrics
       );
@@ -106,7 +111,8 @@ export class GuardedRetrievalServiceImpl implements GuardedRetrievalService {
 
       const result: GuardedRetrievalResult = {
         isAnswerable: guardrailDecision.isAnswerable,
-        results: guardrailDecision.isAnswerable ? searchResult.results : undefined,
+        // The `results` field in GuardedRetrievalResult should now map to finalResults
+        results: guardrailDecision.isAnswerable ? searchResult.finalResults : undefined,
         idkResponse: guardrailDecision.idkResponse,
         guardrailDecision,
         metrics: {

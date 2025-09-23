@@ -229,7 +229,7 @@ jest.mock('../services/answer-synthesis.js', () => ({
             tokensUsed: 150,
             synthesisTime: 800,
             confidence: 0.85,
-            modelUsed: 'gpt-4',
+            modelUsed: 'gpt-4.1-2025-04-14',
             contextTruncated: false,
             freshnessStats: {
                 totalDocuments: 2,
@@ -245,7 +245,7 @@ jest.mock('../services/answer-synthesis.js', () => ({
             contextUtilization: 0.8,
             responseLatency: 800,
             llmProvider: 'openai',
-            model: 'gpt-4'
+            model: 'gpt-4.1-2025-04-14'
         })
     }))
 }));
@@ -280,11 +280,11 @@ jest.mock('../services/llm-client.js', () => ({
             generateCompletion: jest.fn().mockResolvedValue({
                 text: 'Machine learning algorithms are computational methods that enable systems to learn from data.',
                 tokensUsed: 150,
-                model: 'gpt-4'
+                model: 'gpt-4.1-2025-04-14'
             }),
             getConfig: jest.fn().mockReturnValue({
                 provider: 'openai',
-                model: 'gpt-4'
+                model: 'gpt-4.1-2025-04-14'
             })
         })
     }))

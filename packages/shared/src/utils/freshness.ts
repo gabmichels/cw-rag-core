@@ -165,7 +165,7 @@ export interface FreshnessStats {
   freshPercentage: number;
   recentPercentage: number;
   stalePercentage: number;
-  averageAge: number;
+  avgAgeInDays: number; // Renamed from averageAge
 }
 
 export function calculateFreshnessStats(
@@ -182,7 +182,7 @@ export function calculateFreshnessStats(
       freshPercentage: 0,
       recentPercentage: 0,
       stalePercentage: 0,
-      averageAge: 0
+      avgAgeInDays: 0 // Renamed from averageAge
     };
   }
 
@@ -222,7 +222,7 @@ export function calculateFreshnessStats(
   }
 
   const totalDocuments = validDocuments;
-  const averageAge = totalDocuments > 0 ? totalAge / totalDocuments : 0;
+  const avgAgeInDays = totalDocuments > 0 ? totalAge / totalDocuments : 0; // Renamed for consistency
 
   return {
     totalDocuments,
@@ -232,7 +232,7 @@ export function calculateFreshnessStats(
     freshPercentage: totalDocuments > 0 ? (freshCount / totalDocuments) * 100 : 0,
     recentPercentage: totalDocuments > 0 ? (recentCount / totalDocuments) * 100 : 0,
     stalePercentage: totalDocuments > 0 ? (staleCount / totalDocuments) * 100 : 0,
-    averageAge
+    avgAgeInDays // Renamed for consistency
   };
 }
 

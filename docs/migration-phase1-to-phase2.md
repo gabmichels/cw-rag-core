@@ -130,7 +130,7 @@ GUARDRAILS_AUDIT_ENABLED=true
 
 # Phase 2: LLM Integration
 LLM_PROVIDER=openai
-LLM_MODEL=gpt-4-turbo
+LLM_MODEL=gpt-4.1-2025-04-14-turbo
 LLM_MAX_TOKENS=500
 LLM_TEMPERATURE=0.1
 OPENAI_API_KEY=your-openai-api-key-here
@@ -315,7 +315,7 @@ const phase2Config = {
   synthesis: {
     enabled: true,
     llmProvider: 'openai',
-    model: 'gpt-4-turbo',
+    model: 'gpt-4.1-2025-04-14-turbo',
     maxContextLength: 8000
   }
 };
@@ -594,7 +594,7 @@ curl -X POST https://api.openai.com/v1/chat/completions \
   -H "Authorization: Bearer $OPENAI_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "gpt-4-turbo",
+    "model": "gpt-4.1-2025-04-14-turbo",
     "messages": [{"role": "user", "content": "test"}],
     "max_tokens": 10
   }'

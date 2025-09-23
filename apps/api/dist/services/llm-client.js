@@ -370,7 +370,7 @@ export class LLMClientFactoryImpl {
         // Read LLM configuration from environment with OpenAI as default
         const llmEnabled = process.env.LLM_ENABLED === 'true';
         const llmProvider = process.env.LLM_PROVIDER || 'openai';
-        const llmModel = process.env.LLM_MODEL || 'gpt-4';
+        const llmModel = process.env.LLM_MODEL || 'gpt-4.1-2025-04-14';
         const llmEndpoint = process.env.LLM_ENDPOINT;
         const llmStreaming = process.env.LLM_STREAMING === 'true';
         const llmTimeout = parseInt(process.env.LLM_TIMEOUT_MS || '25000');
@@ -401,12 +401,7 @@ export class LLMClientFactoryImpl {
             tenantId: 'default',
             defaultConfig,
             fallbackConfigs: [
-                {
-                    provider: 'anthropic',
-                    model: 'claude-3-sonnet-20240229',
-                    temperature: 0.1,
-                    maxTokens: 1000
-                }
+            // No fallback for now, remove Anthropic if present
             ],
             maxRetries: 3,
             timeoutMs: llmTimeout
@@ -417,7 +412,7 @@ export class LLMClientFactoryImpl {
         // Read LLM configuration from environment with OpenAI as default
         const llmEnabled = process.env.LLM_ENABLED === 'true';
         const llmProvider = process.env.LLM_PROVIDER || 'openai';
-        const llmModel = process.env.LLM_MODEL || 'gpt-4';
+        const llmModel = process.env.LLM_MODEL || 'gpt-4.1-2025-04-14';
         const llmEndpoint = process.env.LLM_ENDPOINT;
         const llmStreaming = process.env.LLM_STREAMING === 'true';
         const llmTimeout = parseInt(process.env.LLM_TIMEOUT_MS || '25000');
@@ -448,12 +443,7 @@ export class LLMClientFactoryImpl {
             tenantId: 'default',
             defaultConfig,
             fallbackConfigs: [
-                {
-                    provider: 'anthropic',
-                    model: 'claude-3-sonnet-20240229',
-                    temperature: 0.1,
-                    maxTokens: 1000
-                }
+            // No fallback for now, remove Anthropic if present
             ],
             maxRetries: 3,
             timeoutMs: llmTimeout
