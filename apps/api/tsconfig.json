@@ -1,24 +1,13 @@
 {
-  "extends": "../../tsconfig.json",
+  "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "composite": true,
-    "target": "es2022",
-    "module": "node16",
-    "moduleResolution": "node16",
-    "outDir": "dist",
-    "rootDir": "src",
-    "tsBuildInfoFile": "dist/.tsbuildinfo",
     "baseUrl": ".",
     "paths": {
-      "fastify": ["./src/types/stubs/fastify.d.ts"],
-      "@fastify/cors": ["./src/types/stubs/@fastify/cors.d.ts"],
-      "pino": ["./src/types/stubs/pino.d.ts"],
-      "crypto": ["./src/types/stubs/crypto.d.ts"],
-      "@qdrant/js-client-rest": ["./src/types/stubs/@qdrant/js-client-rest.d.ts"],
-      "dotenv/config": ["./src/types/stubs/dotenv.d.ts"],
-      "json-schema-to-ts": ["./src/types/stubs/json-schema-to-ts.d.ts"]
-    }
+      "@cw-rag-core/shared": ["../../packages/shared/src/index.ts"],
+      "@cw-rag-core/retrieval": ["../../packages/retrieval/src/index.ts"],
+      "@cw-rag-core/ingestion-sdk": ["../../packages/ingestion-sdk/src/index.ts"]
+    },
+    "types": ["node"]
   },
-  "include": ["src/**/*.ts", "src/__tests__/**/*.ts", "../../packages/shared/src/**/*.d.ts", "../../packages/retrieval/src/**/*.d.ts", "src/types/stubs/**/*.d.ts"],
-  "exclude": ["node_modules", "dist"]
+  "include": ["src/**/*.ts"]
 }

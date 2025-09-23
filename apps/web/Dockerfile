@@ -1,4 +1,4 @@
-# Use an official Node.js image as the base image
+# ---------- base ----------
 FROM node:20-bookworm-slim AS base
 WORKDIR /app
 ENV PNPM_HOME=/usr/local/share/pnpm
@@ -7,17 +7,11 @@ RUN corepack enable
 
 # ---------- deps ----------
 FROM base AS deps
-# 1) copy workspace manifests (NO app-local lockfile)
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-# if you have a root .npmrc, copy it so settings match the lockfile
 COPY .npmrc ./.npmrc
-# prime cache: copy only relevant package manifests
 COPY apps/web/package.json apps/web/
 COPY packages/shared/package.json packages/shared/
-
-# optional: prefetch
 RUN pnpm fetch --prefer-offline
-# bring full source and install per-package (dev deps needed for Next)
 COPY . .
 ENV NODE_ENV=development
 RUN pnpm -r install --no-frozen-lockfile
@@ -27,4 +21,27 @@ FROM base AS builder
 WORKDIR /app
 COPY --from=deps /app ./
 RUN pnpm --filter @cw-rag-core/shared run build
+# (uncomment if web imports retrieval too)
+# RUN pnpm --filter @cw-rag-core/retrieval run build
 RUN pnpm --filter @cw-rag-core/web build
+
+# ---------- runner ----------
+FROM node:20-bookworm-slim AS runner
+WORKDIR /app
+
+ENV NODE_ENV=production
+ENV PORT=3000
+ENV HOSTNAME=0.0.0.0
+ENV NEXT_TELEMETRY_DISABLED=1
+
+# Copy Next standalone output preserving its internal paths
+COPY --from=builder /app/apps/web/.next/standalone ./
+# Static assets + public for the web app
+COPY --from=builder /app/apps/web/.next/static ./apps/web/.next/static
+COPY --from=builder /app/apps/web/public ./apps/web/public
+
+# (optional sanity)
+# RUN test -f apps/web/server.js && echo "Found apps/web/server.js"
+
+EXPOSE 3000
+CMD ["node", "apps/web/server.js"]

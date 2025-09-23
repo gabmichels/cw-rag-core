@@ -21,7 +21,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Get the API base URL from environment
-    const apiBaseUrl = process.env.API_BASE_URL || 'http://localhost:3001';
+    const apiBaseUrl = process.env.API_URL || 'http://localhost:3000';
 
     // Forward the request to the backend API
     const response = await fetch(`${apiBaseUrl}/ask`, {

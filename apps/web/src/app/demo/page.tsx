@@ -17,7 +17,7 @@ const mockHighConfidenceResponse: AskResponse = {
         id: "doc1",
         content: "Machine learning (ML) is a type of artificial intelligence (AI) that allows software applications to become more accurate at predicting outcomes without being explicitly programmed to do so. Machine learning algorithms use historical data as input to predict new output values.",
         metadata: {
-          tenantId: "demo-tenant",
+          tenantId: "550e8400-e29b-41d4-a716-446655440001",
           docId: "ml-basics-2024",
           version: "1.2",
           filepath: "/docs/ai/machine-learning-basics.md",
@@ -47,7 +47,7 @@ const mockHighConfidenceResponse: AskResponse = {
         id: "doc2",
         content: "The machine learning process involves several key steps: data collection, data preprocessing, model selection, training, evaluation, and deployment. During training, algorithms analyze patterns in the data to build mathematical models.",
         metadata: {
-          tenantId: "demo-tenant",
+          tenantId: "550e8400-e29b-41d4-a716-446655440001",
           docId: "ml-process-guide",
           version: "2.1",
           filepath: "/guides/ml-workflow.md",
@@ -77,7 +77,7 @@ const mockHighConfidenceResponse: AskResponse = {
         id: "doc3",
         content: "Data is the foundation of machine learning. Quality data leads to better model performance. The model learns from training data to make predictions on new data points.",
         metadata: {
-          tenantId: "demo-tenant",
+          tenantId: "550e8400-e29b-41d4-a716-446655440001",
           docId: "data-importance",
           version: "1.0",
           filepath: "/tutorials/data-quality.md",

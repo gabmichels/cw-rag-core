@@ -5,9 +5,9 @@
   "description": "Fastify API application with Qdrant integration",
   "main": "dist/server.js",
   "scripts": {
+    "dev": "tsx watch --tsconfig tsconfig.json src/server.ts",
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/server.js",
-    "dev": "tsx watch src/server.ts",
     "test": "cross-env NODE_OPTIONS=\"--experimental-vm-modules\" jest --config=jest.config.cjs --passWithNoTests",
     "lint": "eslint ."
   },

@@ -44,32 +44,32 @@ services:
       retries: 5
 
   # N8N Workflow Automation Service
-  n8n:
-    image: n8nio/n8n:latest
-    container_name: ${PROJECT_PREFIX:-cw-rag}-${TENANT:-zenithfall}-n8n
-    ports:
-      - "${N8N_PORT:-5678}:5678"
-    environment:
-      - N8N_BASIC_AUTH_ACTIVE=true
-      - N8N_BASIC_AUTH_USER=admin
-      - N8N_BASIC_AUTH_PASSWORD=password
-      - N8N_HOST=${N8N_HOST:-localhost}
-      - N8N_PORT=5678
-      - N8N_PROTOCOL=http
-      - NODE_ENV=production
-      - WEBHOOK_URL=http://localhost:5678/
-      - GENERIC_TIMEZONE=UTC
-    volumes:
-      - n8n_data:/home/node/.n8n
-      - ./n8n/workflows:/home/node/.n8n/workflows:ro
-    networks:
-      - app_network
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:5678/healthz || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+  #n8n:
+  #  image: n8nio/n8n:latest
+  #  container_name: ${PROJECT_PREFIX:-cw-rag}-${TENANT:-zenithfall}-n8n
+  #  ports:
+  #    - "${N8N_PORT:-5678}:5678"
+  #  environment:
+  #    - N8N_BASIC_AUTH_ACTIVE=true
+  #    - N8N_BASIC_AUTH_USER=admin
+  #    - N8N_BASIC_AUTH_PASSWORD=password
+  #    - N8N_HOST=${N8N_HOST:-localhost}
+  #    - N8N_PORT=5678
+  #    - N8N_PROTOCOL=http
+  #    - NODE_ENV=production
+  #    - WEBHOOK_URL=http://localhost:5678/
+  #    - GENERIC_TIMEZONE=UTC
+  #  volumes:
+  #    - n8n_data:/home/node/.n8n
+  #    - ./n8n/workflows:/home/node/.n8n/workflows:ro
+  #  networks:
+  #    - app_network
+  #  restart: unless-stopped
+  #  healthcheck:
+  #    test: ["CMD-SHELL", "curl -f http://localhost:5678/healthz || exit 1"]
+  #    interval: 30s
+  #   timeout: 10s
+  #   retries: 3
 
   api:
     build:
@@ -123,7 +123,7 @@ services:
       dockerfile: apps/web/Dockerfile
     container_name: ${WEB_CONTAINER_NAME:-cw-rag-zenithfall-web}
     ports:
-      - "${WEB_PORT:-3001}:3001"
+      - "${WEB_PORT:-3001}:3000"
     environment:
       - API_URL=http://api:3000
       - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:3000}

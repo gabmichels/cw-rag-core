@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
+const API_BASE_URL = process.env.API_URL || 'http://localhost:3000';
 const INGEST_TOKEN = process.env.INGEST_TOKEN;
 
 export async function POST(request: NextRequest) {
