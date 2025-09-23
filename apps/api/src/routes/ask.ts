@@ -586,6 +586,7 @@ export async function askRoute(fastify: FastifyInstance, options: AskRouteOption
               confidence: retrievalResult.guardrailDecision.score?.confidence || 0,
               reasonCode: retrievalResult.idkResponse?.reasonCode,
               suggestions: retrievalResult.idkResponse?.suggestions,
+              threshold: retrievalResult.guardrailDecision.threshold,
               scoreStats: retrievalResult.guardrailDecision.score?.scoreStats ? {
                 mean: retrievalResult.guardrailDecision.score.scoreStats.mean,
                 max: retrievalResult.guardrailDecision.score.scoreStats.max,
@@ -857,6 +858,7 @@ export async function askRoute(fastify: FastifyInstance, options: AskRouteOption
           guardrailDecision: {
             isAnswerable: true,
             confidence: synthesisResponse.confidence,
+            threshold: retrievalResult.guardrailDecision.threshold,
             scoreStats: retrievalResult.guardrailDecision.score?.scoreStats ? {
               mean: retrievalResult.guardrailDecision.score.scoreStats.mean,
               max: retrievalResult.guardrailDecision.score.scoreStats.max,

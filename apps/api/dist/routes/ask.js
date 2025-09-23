@@ -14,12 +14,32 @@ class EnhancedQdrantService {
         this.collectionName = collectionName;
     }
     async search(collectionName, params) {
+        console.log('Vector search - filter:', JSON.stringify(params.filter, null, 2));
+        console.log('Vector search - limit:', params.limit);
         const results = await this.qdrantClient.search(this.collectionName, {
             vector: params.queryVector,
             limit: params.limit,
             filter: params.filter,
             with_payload: true
         });
+        console.log('Vector search results count:', results.length);
+        const targetPointId = 'a3d5597a-1d56-b174-03e0-fc7f2722b64e';
+        let targetFound = false;
+        results.forEach((result, i) => {
+            const content = result.payload?.content;
+            const contentPreview = typeof content === 'string' ? content.substring(0, 100) : String(content || '').substring(0, 100);
+            const isTarget = result.id === targetPointId;
+            if (isTarget) {
+                targetFound = true;
+                console.log(`🎯 TARGET FOUND! Result ${i + 1}: score=${result.score}, id=${result.id}, docId=${result.payload?.docId}, content preview=${contentPreview}...`);
+            }
+            else {
+                console.log(`Result ${i + 1}: score=${result.score}, id=${result.id}, docId=${result.payload?.docId}, content preview=${contentPreview}...`);
+            }
+        });
+        if (!targetFound) {
+            console.log(`❌ TARGET POINT ${targetPointId} NOT FOUND in top ${results.length} results!`);
+        }
         return results.map(result => ({
             id: result.id,
             score: result.score,
@@ -29,10 +49,14 @@ class EnhancedQdrantService {
     }
     // Add scroll method for keyword search compatibility
     async scroll(collectionName, params) {
-        // Use existing search functionality as fallback for scroll
-        return {
-            points: await this.search(collectionName, params)
-        };
+        // For keyword search, use Qdrant's scroll API directly without vectors
+        const scrollResult = await this.qdrantClient.scroll(this.collectionName, {
+            filter: params.filter,
+            limit: params.limit,
+            with_payload: params.with_payload !== false,
+            with_vector: params.with_vector === true
+        });
+        return scrollResult;
     }
     // Add discover method for semantic keyword search
     async discover(collectionName, params) {
@@ -99,12 +123,13 @@ export async function askRoute(fastify, options) {
                         properties: {
                             id: { type: 'string' },
                             groupIds: { type: 'array', items: { type: 'string' } },
-                            tenantId: { type: 'string', format: 'uuid' },
+                            tenantId: { type: 'string' },
                         },
                         required: ['id', 'groupIds', 'tenantId'],
                     },
                     k: { type: 'integer', minimum: 1 },
                     filter: { type: 'object' },
+                    docId: { type: 'string' },
                     hybridSearch: {
                         type: 'object',
                         properties: {
@@ -303,7 +328,7 @@ export async function askRoute(fastify, options) {
         },
         handler: async (request, reply) => {
             const startTime = performance.now();
-            const { query, userContext, k, filter, hybridSearch, reranker, synthesis, includeMetrics, includeDebugInfo } = request.body;
+            const { query, userContext, k, filter, docId, hybridSearch, reranker, synthesis, includeMetrics, includeDebugInfo } = request.body;
             const queryId = `qid-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
             const qHash = Buffer.from(query).toString('base64').slice(0, 16); // Hash query for audit
             // Get timeout configuration
@@ -341,6 +366,29 @@ export async function askRoute(fastify, options) {
                 });
                 const processRequest = async () => {
                     // Prepare hybrid search request with enhanced configuration
+                    let enhancedFilter = filter ? { ...filter } : undefined;
+                    // Add docId filter in Qdrant format if provided
+                    if (docId) {
+                        const docIdFilter = {
+                            key: "docId",
+                            match: { value: docId }
+                        };
+                        if (enhancedFilter) {
+                            // If there's already a filter, add docId to existing must conditions
+                            if (enhancedFilter.must) {
+                                enhancedFilter.must.push(docIdFilter);
+                            }
+                            else {
+                                enhancedFilter.must = [docIdFilter];
+                            }
+                        }
+                        else {
+                            // If no existing filter, create new filter with just docId
+                            enhancedFilter = {
+                                must: [docIdFilter]
+                            };
+                        }
+                    }
                     const hybridSearchRequest = {
                         query,
                         limit: k || 10,
@@ -348,7 +396,7 @@ export async function askRoute(fastify, options) {
                         keywordWeight: hybridSearch?.keywordWeight ?? 0.3,
                         rrfK: hybridSearch?.rrfK ?? 60,
                         enableKeywordSearch: hybridSearch?.enableKeywordSearch ?? true,
-                        filter,
+                        filter: enhancedFilter,
                         tenantId: userContext.tenantId
                     };
                     if (includeDebugInfo) {

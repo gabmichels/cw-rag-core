@@ -154,9 +154,9 @@ export class HybridSearchServiceImpl implements HybridSearchService {
       await this.getTenantConfig(request.tenantId) :
       this.getDefaultConfig();
 
-    // Temporarily disable keyword search to test vector-only
-    const keywordSearchEnabled = false; // Force vector-only search
-    console.log('FORCED VECTOR-ONLY SEARCH FOR DEBUGGING');
+    // Re-enable hybrid search after fixing vector embeddings
+    const keywordSearchEnabled = request.enableKeywordSearch ?? tenantConfig.keywordSearchEnabled;
+    console.log(`🔄 Hybrid search mode: vector + ${keywordSearchEnabled ? 'keyword' : 'vector-only'}`);
 
     // Build enhanced RBAC filter
     const rbacFilter = buildQdrantRBACFilter(userContext);
@@ -188,12 +188,21 @@ export class HybridSearchServiceImpl implements HybridSearchService {
 
       // Perform vector search with timeout
       const vectorStartTime = performance.now();
+      console.log('🔍 Hybrid search: Starting embedding generation...');
+      console.log('Query:', request.query);
+
       const embeddingResult = await this.executeWithTimeout(
         () => this.embeddingService.embed(request.query),
         timeouts.embedding,
         'Embedding generation'
       );
       const queryVector = embeddingResult.result;
+      console.log('✅ Embedding generated:', queryVector?.length, 'dimensions');
+
+      console.log('🔍 Hybrid search: Starting vector search...');
+      console.log('Collection:', collectionName);
+      console.log('Limit:', request.limit);
+      console.log('Filter:', JSON.stringify(rbacFilter, null, 2));
 
       const vectorSearchResult = await this.executeWithTimeout(
         () => this.vectorSearchService.search(collectionName, {
@@ -208,6 +217,19 @@ export class HybridSearchServiceImpl implements HybridSearchService {
       );
 
       vectorResults = vectorSearchResult.result;
+      console.log('✅ Vector search completed:', vectorResults?.length, 'results');
+
+      if (vectorResults && vectorResults.length > 0) {
+        console.log('📋 Vector search results:');
+        vectorResults.forEach((result, i) => {
+          console.log(`   ${i+1}. ID: ${result.id}, Score: ${result.score}`);
+          console.log(`      Tenant: ${result.payload?.tenant || result.payload?.tenantId}`);
+          console.log(`      ACL: ${JSON.stringify(result.payload?.acl)}`);
+        });
+      } else {
+        console.log('❌ Vector search returned 0 results!');
+      }
+
       metrics.vectorSearchDuration = performance.now() - vectorStartTime;
       metrics.vectorResultCount = vectorResults.length;
 
@@ -468,13 +490,25 @@ export class HybridSearchServiceImpl implements HybridSearchService {
 
     // Create document metadata for RBAC validation
     const docMetadata = {
-      tenantId: payload.tenant,
+      tenantId: payload.tenantId || payload.tenant, // Try tenantId first, fallback to tenant
       docId: payload.docId || result.id,
       acl: Array.isArray(payload.acl) ? payload.acl : [payload.acl],
       lang: payload.lang
     };
 
-    return hasDocumentAccess(userContext, docMetadata);
+    // Add debug logging to track RBAC filtering
+    const hasAccess = hasDocumentAccess(userContext, docMetadata);
+    if (!hasAccess) {
+      console.log('🚫 RBAC Access Denied:', {
+        resultId: result.id,
+        userTenant: userContext.tenantId,
+        userGroups: userContext.groupIds,
+        docTenant: docMetadata.tenantId,
+        docAcl: docMetadata.acl
+      });
+    }
+
+    return hasAccess;
   }
 
   private applyLanguageRelevance(

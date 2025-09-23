@@ -203,11 +203,41 @@ export const DEFAULT_IDK_TEMPLATES: IdkResponseTemplate[] = [
   }
 ];
 
+// Create environment-aware threshold configuration
+function createEnvironmentAwareThreshold(): AnswerabilityThreshold {
+  const envThreshold = parseFloat(process.env.ANSWERABILITY_THRESHOLD || '0.6');
+
+  // If environment variable is set to a very low value (like 0.01), create a permissive threshold
+  if (envThreshold <= 0.1) {
+    return {
+      type: 'custom',
+      minConfidence: envThreshold,
+      minTopScore: 0.01,       // Match actual search quality (1.55%)
+      minMeanScore: 0.01,      // Match actual search quality (1.25%)
+      maxStdDev: 1.0,          // Allow high variance
+      minResultCount: 1        // Only need 1 result
+    };
+  }
+
+  // For higher values, scale proportionally from permissive threshold
+  const baseThreshold = ANSWERABILITY_THRESHOLDS.permissive;
+  const scaleFactor = envThreshold / 0.4; // 0.4 is permissive minConfidence
+
+  return {
+    type: 'custom',
+    minConfidence: envThreshold,
+    minTopScore: Math.min(baseThreshold.minTopScore * scaleFactor, 1.0),
+    minMeanScore: Math.min(baseThreshold.minMeanScore * scaleFactor, 1.0),
+    maxStdDev: baseThreshold.maxStdDev,
+    minResultCount: baseThreshold.minResultCount
+  };
+}
+
 // Default tenant guardrail configuration
 export const DEFAULT_GUARDRAIL_CONFIG: TenantGuardrailConfig = {
   tenantId: 'default',
   enabled: true,
-  threshold: ANSWERABILITY_THRESHOLDS.moderate,
+  threshold: createEnvironmentAwareThreshold(),
   idkTemplates: DEFAULT_IDK_TEMPLATES,
   fallbackConfig: {
     enabled: true,

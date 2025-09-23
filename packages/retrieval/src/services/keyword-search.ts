@@ -149,7 +149,9 @@ export class QdrantKeywordSearchService implements KeywordSearchService {
     let score = 0;
 
     for (const term of queryTerms) {
-      const tf = (contentLower.match(new RegExp(term, 'g')) || []).length;
+      // Escape special regex characters to prevent regex errors
+      const escapedTerm = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const tf = (contentLower.match(new RegExp(escapedTerm, 'g')) || []).length;
       if (tf > 0) {
         const normalizedTf = (tf * (k1 + 1)) / (tf + k1 * (1 - b + b * (docLength / avgDocLength)));
         // Simplified IDF calculation (in real BM25, this would use document frequency)

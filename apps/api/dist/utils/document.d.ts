@@ -24,7 +24,7 @@ export declare function validateDocumentMetadata(doc: NormalizedDoc): string[];
  */
 export declare function applyPIIRedactionToDocument(doc: NormalizedDoc, maskedText: string): NormalizedDoc;
 /**
- * Generate a unique point ID for Qdrant
+ * Generate a unique point ID for Qdrant (UUID format)
  */
 export declare function generatePointId(tenant: string, docId: string, chunkId: string): string;
 /**

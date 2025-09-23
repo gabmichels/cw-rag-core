@@ -183,11 +183,41 @@ export async function publishRoute(fastify, options) {
                 200: {
                     type: 'object',
                     properties: {
-                        published: { type: 'boolean' },
-                        documentIds: { type: 'array', items: { type: 'string' } },
-                        errors: { type: 'array', items: { type: 'string' } },
+                        results: {
+                            type: 'array',
+                            items: {
+                                type: 'object',
+                                properties: {
+                                    docId: { type: 'string' },
+                                    status: { type: 'string', enum: ['published', 'updated', 'blocked', 'deleted', 'error'] },
+                                    pointsUpserted: { type: 'number' },
+                                    message: { type: 'string' },
+                                    findings: {
+                                        type: 'array',
+                                        items: {
+                                            type: 'object',
+                                            properties: {
+                                                type: { type: 'string' },
+                                                count: { type: 'number' }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        summary: {
+                            type: 'object',
+                            properties: {
+                                total: { type: 'number' },
+                                published: { type: 'number' },
+                                updated: { type: 'number' },
+                                blocked: { type: 'number' },
+                                deleted: { type: 'number' },
+                                errors: { type: 'number' }
+                            }
+                        }
                     },
-                    required: ['published', 'documentIds'],
+                    required: ['results', 'summary'],
                 },
             },
         },
@@ -347,26 +377,57 @@ async function handleDocumentDeletion(doc, options, request) {
     options.auditLogger.logTombstone(doc.meta.tenant, doc.meta.docId, doc.meta.source, request.ip || 'unknown', request.headers['user-agent']);
 }
 async function publishDocument(doc, maskedText, options) {
-    // Simple chunking strategy - split by blocks
-    const chunks = doc.blocks.map((block, index) => ({
-        id: `chunk_${index}`,
-        text: block.text || block.html || '',
-        sectionPath: `block_${index}`
-    }));
-    const points = chunks.map((chunk, index) => {
+    // Adaptive chunking strategy - split large blocks intelligently
+    const maxCharsPerChunk = 1500; // Character limit to avoid 413 errors
+    const chunks = await createAdaptiveChunks(doc, maxCharsPerChunk);
+    const points = [];
+    // Initialize embedding service once (optimization)
+    const { BgeSmallEnV15EmbeddingService } = await import('@cw-rag-core/retrieval');
+    const embeddingService = new BgeSmallEnV15EmbeddingService();
+    console.log(`📄 Processing document ${doc.meta.docId} with ${chunks.length} chunks`);
+    // Process chunks sequentially to avoid rate limits
+    for (let i = 0; i < chunks.length; i++) {
+        const chunk = chunks[i];
         const pointId = generatePointId(doc.meta.tenant, doc.meta.docId, chunk.id);
         const payload = createChunkPayload(doc, chunk.id, chunk.sectionPath);
-        // Use placeholder embedding (in production, generate real embeddings)
-        const vector = new Array(384).fill(0).map(() => Math.random() * 2 - 1);
-        return {
+        // Generate embedding with size validation
+        console.log(`🔄 Generating embedding for chunk ${chunk.id} (${chunk.text.length} chars)`);
+        let vector;
+        try {
+            if (chunk.text.length > 2000) {
+                console.warn(`⚠️  Large chunk detected: ${chunk.text.length} chars, truncating...`);
+                const truncatedText = chunk.text.substring(0, 1800) + '...';
+                vector = await embeddingService.embed(truncatedText);
+            }
+            else {
+                vector = await embeddingService.embed(chunk.text);
+            }
+            console.log(`✅ Embedding generated for chunk ${chunk.id}: ${vector.length} dimensions`);
+        }
+        catch (error) {
+            console.error(`❌ Failed to generate embedding for chunk ${chunk.id}:`, error);
+            // Try with a smaller chunk if it fails
+            try {
+                console.log(`🔄 Retrying with smaller chunk...`);
+                const smallerText = chunk.text.substring(0, 800);
+                vector = await embeddingService.embed(smallerText);
+                console.log(`✅ Retry successful with truncated chunk`);
+            }
+            catch (retryError) {
+                throw new Error(`Embedding generation failed for chunk ${chunk.id} even after retry: ${retryError.message}`);
+            }
+        }
+        points.push({
             id: pointId,
             vector,
             payload: {
                 ...payload,
-                content: chunk.text // Use chunked text instead of full document
+                content: chunk.text,
+                chunkIndex: i,
+                totalChunks: chunks.length
             }
-        };
-    });
+        });
+    }
     // Upsert points to Qdrant using the correct batch format
     await options.qdrantClient.upsert(options.collectionName, {
         wait: true,
@@ -377,4 +438,113 @@ async function publishDocument(doc, maskedText, options) {
         }
     });
     return points.length;
+}
+// Adaptive chunking function that handles large blocks better
+async function createAdaptiveChunks(doc, maxCharsPerChunk) {
+    const chunks = [];
+    for (const [blockIndex, block] of doc.blocks.entries()) {
+        const text = block.text || block.html || '';
+        if (text.length <= maxCharsPerChunk) {
+            // Block fits in one chunk
+            chunks.push({
+                id: `chunk_${blockIndex}`,
+                text: text,
+                sectionPath: `block_${blockIndex}`,
+                index: chunks.length
+            });
+        }
+        else {
+            // Split large block intelligently
+            const sentences = text.split(/[.!?]+\s+/);
+            let currentChunk = '';
+            let subChunkIndex = 0;
+            for (const sentence of sentences) {
+                if (currentChunk.length + sentence.length + 1 <= maxCharsPerChunk) {
+                    currentChunk += (currentChunk ? '. ' : '') + sentence;
+                }
+                else {
+                    // Save current chunk if it has content
+                    if (currentChunk.trim()) {
+                        chunks.push({
+                            id: `chunk_${blockIndex}_${subChunkIndex}`,
+                            text: currentChunk.trim(),
+                            sectionPath: `block_${blockIndex}/part_${subChunkIndex}`,
+                            index: chunks.length
+                        });
+                        subChunkIndex++;
+                    }
+                    // Start new chunk with current sentence
+                    if (sentence.length <= maxCharsPerChunk) {
+                        currentChunk = sentence;
+                    }
+                    else {
+                        // Handle extremely long sentences by word splitting
+                        const words = sentence.split(' ');
+                        let wordChunk = '';
+                        for (const word of words) {
+                            if (wordChunk.length + word.length + 1 <= maxCharsPerChunk) {
+                                wordChunk += (wordChunk ? ' ' : '') + word;
+                            }
+                            else {
+                                if (wordChunk.trim()) {
+                                    chunks.push({
+                                        id: `chunk_${blockIndex}_${subChunkIndex}`,
+                                        text: wordChunk.trim(),
+                                        sectionPath: `block_${blockIndex}/part_${subChunkIndex}`,
+                                        index: chunks.length
+                                    });
+                                    subChunkIndex++;
+                                }
+                                wordChunk = word;
+                            }
+                        }
+                        currentChunk = wordChunk;
+                    }
+                }
+            }
+            // Don't forget the last chunk
+            if (currentChunk.trim()) {
+                chunks.push({
+                    id: `chunk_${blockIndex}_${subChunkIndex}`,
+                    text: currentChunk.trim(),
+                    sectionPath: `block_${blockIndex}/part_${subChunkIndex}`,
+                    index: chunks.length
+                });
+            }
+        }
+    }
+    return chunks;
+}
+// Smart chunking function that respects token limits (legacy)
+async function createSmartChunks(doc, maxTokensPerChunk) {
+    const chunks = [];
+    for (const [blockIndex, block] of doc.blocks.entries()) {
+        const text = block.text || block.html || '';
+        // Estimate tokens (rough approximation: 1 token ≈ 4 characters)
+        const estimatedTokens = Math.ceil(text.length / 4);
+        if (estimatedTokens <= maxTokensPerChunk) {
+            // Block fits in one chunk
+            chunks.push({
+                id: `chunk_${blockIndex}`,
+                text: text,
+                sectionPath: `block_${blockIndex}`,
+                index: chunks.length
+            });
+        }
+        else {
+            // Split large block into smaller chunks
+            const wordsPerChunk = Math.floor(maxTokensPerChunk * 0.8); // Conservative estimate
+            const words = text.split(' ');
+            for (let i = 0; i < words.length; i += wordsPerChunk) {
+                const chunkWords = words.slice(i, i + wordsPerChunk);
+                chunks.push({
+                    id: `chunk_${blockIndex}_${Math.floor(i / wordsPerChunk)}`,
+                    text: chunkWords.join(' '),
+                    sectionPath: `block_${blockIndex}/part_${Math.floor(i / wordsPerChunk)}`,
+                    index: chunks.length
+                });
+            }
+        }
+    }
+    return chunks;
 }

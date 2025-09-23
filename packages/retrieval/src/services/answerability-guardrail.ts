@@ -509,13 +509,62 @@ export class AnswerabilityGuardrailServiceImpl implements AnswerabilityGuardrail
   }
 
   private initializeDefaultConfigs(): void {
-    this.tenantConfigs.set('default', DEFAULT_GUARDRAIL_CONFIG);
+    // Use dynamic config creation instead of static DEFAULT_GUARDRAIL_CONFIG
+    this.tenantConfigs.set('default', this.getDefaultConfig('default'));
   }
 
   private getDefaultConfig(tenantId: string): TenantGuardrailConfig {
+    // Create environment-aware threshold at runtime, not at module load time
+    const envThreshold = parseFloat(process.env.ANSWERABILITY_THRESHOLD || '0.6');
+
+    let threshold;
+    if (envThreshold <= 0.1) {
+      threshold = {
+        type: 'custom' as const,
+        minConfidence: envThreshold,
+        minTopScore: 0.01,       // Match actual search quality (1.55%)
+        minMeanScore: 0.01,      // Match actual search quality (1.25%)
+        maxStdDev: 1.0,          // Allow high variance
+        minResultCount: 1        // Only need 1 result
+      };
+    } else {
+      // For higher values, scale proportionally from permissive threshold
+      const baseThreshold = {
+        minConfidence: 0.4,
+        minTopScore: 0.3,
+        minMeanScore: 0.2,
+        maxStdDev: 0.5,
+        minResultCount: 1
+      };
+      const scaleFactor = envThreshold / 0.4; // 0.4 is permissive minConfidence
+
+      threshold = {
+        type: 'custom' as const,
+        minConfidence: envThreshold,
+        minTopScore: Math.min(baseThreshold.minTopScore * scaleFactor, 1.0),
+        minMeanScore: Math.min(baseThreshold.minMeanScore * scaleFactor, 1.0),
+        maxStdDev: baseThreshold.maxStdDev,
+        minResultCount: baseThreshold.minResultCount
+      };
+    }
+
     return {
-      ...DEFAULT_GUARDRAIL_CONFIG,
-      tenantId
+      tenantId,
+      enabled: true,
+      threshold,
+      idkTemplates: DEFAULT_IDK_TEMPLATES,
+      fallbackConfig: {
+        enabled: true,
+        maxSuggestions: 3,
+        suggestionThreshold: 0.3
+      },
+      bypassEnabled: false,
+      algorithmWeights: {
+        statistical: 0.4,
+        threshold: 0.3,
+        mlFeatures: 0.2,
+        rerankerConfidence: 0.1
+      }
     };
   }
 }

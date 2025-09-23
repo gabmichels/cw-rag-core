@@ -487,40 +487,58 @@ async function handleDocumentDeletion(doc: any, options: PublishRouteOptions, re
 }
 
 async function publishDocument(doc: any, maskedText: string, options: PublishRouteOptions): Promise<number> {
-  // Smart chunking strategy - handle large documents by splitting on token boundaries
-  const maxTokensPerChunk = 1000; // Safe chunk size for embedding service
-  const chunks = await createSmartChunks(doc, maxTokensPerChunk);
+  // Adaptive chunking strategy - split large blocks intelligently
+  const maxCharsPerChunk = 1500; // Character limit to avoid 413 errors
+  const chunks = await createAdaptiveChunks(doc, maxCharsPerChunk);
 
   const points = [];
 
-  // Process chunks in smaller batches to avoid embedding service limits
-  const embeddingBatchSize = 10; // Process 10 chunks at a time
+  // Initialize embedding service once (optimization)
+  const { BgeSmallEnV15EmbeddingService } = await import('@cw-rag-core/retrieval');
+  const embeddingService = new BgeSmallEnV15EmbeddingService();
+  console.log(`📄 Processing document ${doc.meta.docId} with ${chunks.length} chunks`);
 
-  for (let i = 0; i < chunks.length; i += embeddingBatchSize) {
-    const chunkBatch = chunks.slice(i, i + embeddingBatchSize);
+  // Process chunks sequentially to avoid rate limits
+  for (let i = 0; i < chunks.length; i++) {
+    const chunk = chunks[i];
+    const pointId = generatePointId(doc.meta.tenant, doc.meta.docId, chunk.id);
+    const payload = createChunkPayload(doc, chunk.id, chunk.sectionPath);
 
-    for (const chunk of chunkBatch) {
-      const pointId = generatePointId(doc.meta.tenant, doc.meta.docId, chunk.id);
-      const payload = createChunkPayload(doc, chunk.id, chunk.sectionPath);
-
-      // TODO: Use real embedding service when available
-      // For now, use placeholder to avoid token limits
-      const vector = new Array(384).fill(0).map(() => Math.random() * 2 - 1);
-
-      // Future real embedding implementation:
-      // const vector = await embeddingService.embed(chunk.text);
-
-      points.push({
-        id: pointId,
-        vector,
-        payload: {
-          ...payload,
-          content: chunk.text,
-          chunkIndex: chunk.index,
-          totalChunks: chunks.length
-        }
-      });
+    // Generate embedding with size validation
+    console.log(`🔄 Generating embedding for chunk ${chunk.id} (${chunk.text.length} chars)`);
+    let vector;
+    try {
+      if (chunk.text.length > 2000) {
+        console.warn(`⚠️  Large chunk detected: ${chunk.text.length} chars, truncating...`);
+        const truncatedText = chunk.text.substring(0, 1800) + '...';
+        vector = await embeddingService.embed(truncatedText);
+      } else {
+        vector = await embeddingService.embed(chunk.text);
+      }
+      console.log(`✅ Embedding generated for chunk ${chunk.id}: ${vector.length} dimensions`);
+    } catch (error) {
+      console.error(`❌ Failed to generate embedding for chunk ${chunk.id}:`, error);
+      // Try with a smaller chunk if it fails
+      try {
+        console.log(`🔄 Retrying with smaller chunk...`);
+        const smallerText = chunk.text.substring(0, 800);
+        vector = await embeddingService.embed(smallerText);
+        console.log(`✅ Retry successful with truncated chunk`);
+      } catch (retryError) {
+        throw new Error(`Embedding generation failed for chunk ${chunk.id} even after retry: ${(retryError as Error).message}`);
+      }
     }
+
+    points.push({
+      id: pointId,
+      vector,
+      payload: {
+        ...payload,
+        content: chunk.text,
+        chunkIndex: i,
+        totalChunks: chunks.length
+      }
+    });
   }
 
   // Upsert points to Qdrant using the correct batch format
@@ -536,7 +554,88 @@ async function publishDocument(doc: any, maskedText: string, options: PublishRou
   return points.length;
 }
 
-// Smart chunking function that respects token limits
+// Adaptive chunking function that handles large blocks better
+async function createAdaptiveChunks(doc: any, maxCharsPerChunk: number): Promise<any[]> {
+  const chunks = [];
+
+  for (const [blockIndex, block] of doc.blocks.entries()) {
+    const text = block.text || block.html || '';
+
+    if (text.length <= maxCharsPerChunk) {
+      // Block fits in one chunk
+      chunks.push({
+        id: `chunk_${blockIndex}`,
+        text: text,
+        sectionPath: `block_${blockIndex}`,
+        index: chunks.length
+      });
+    } else {
+      // Split large block intelligently
+      const sentences = text.split(/[.!?]+\s+/);
+      let currentChunk = '';
+      let subChunkIndex = 0;
+
+      for (const sentence of sentences) {
+        if (currentChunk.length + sentence.length + 1 <= maxCharsPerChunk) {
+          currentChunk += (currentChunk ? '. ' : '') + sentence;
+        } else {
+          // Save current chunk if it has content
+          if (currentChunk.trim()) {
+            chunks.push({
+              id: `chunk_${blockIndex}_${subChunkIndex}`,
+              text: currentChunk.trim(),
+              sectionPath: `block_${blockIndex}/part_${subChunkIndex}`,
+              index: chunks.length
+            });
+            subChunkIndex++;
+          }
+
+          // Start new chunk with current sentence
+          if (sentence.length <= maxCharsPerChunk) {
+            currentChunk = sentence;
+          } else {
+            // Handle extremely long sentences by word splitting
+            const words = sentence.split(' ');
+            let wordChunk = '';
+
+            for (const word of words) {
+              if (wordChunk.length + word.length + 1 <= maxCharsPerChunk) {
+                wordChunk += (wordChunk ? ' ' : '') + word;
+              } else {
+                if (wordChunk.trim()) {
+                  chunks.push({
+                    id: `chunk_${blockIndex}_${subChunkIndex}`,
+                    text: wordChunk.trim(),
+                    sectionPath: `block_${blockIndex}/part_${subChunkIndex}`,
+                    index: chunks.length
+                  });
+                  subChunkIndex++;
+                }
+                wordChunk = word;
+              }
+            }
+
+            currentChunk = wordChunk;
+          }
+        }
+      }
+
+      // Don't forget the last chunk
+      if (currentChunk.trim()) {
+        chunks.push({
+          id: `chunk_${blockIndex}_${subChunkIndex}`,
+          text: currentChunk.trim(),
+          sectionPath: `block_${blockIndex}/part_${subChunkIndex}`,
+          index: chunks.length
+        });
+      }
+    }
+  }
+
+  return chunks;
+}
+
+// Smart chunking function that respects token limits (legacy)
 async function createSmartChunks(doc: any, maxTokensPerChunk: number): Promise<any[]> {
   const chunks = [];
 

@@ -153,7 +153,7 @@ export function hasDocumentAccess(
   const effectiveGroupIds = getEffectiveGroupIds(userContext);
 
   // RBAC Check: User must match at least one entry in the document's ACL
-  // The ACL can contain user IDs or group IDs.
+  // The ACL can contain user IDs, group IDs, or "public" for general access.
   const userHasAccess = docMetadata.acl.some((aclEntry: string) => {
     // Check if aclEntry is the user's ID
     if (aclEntry === userContext.id) {
@@ -161,6 +161,10 @@ export function hasDocumentAccess(
     }
     // Check if aclEntry is one of the user's effective group IDs (including inherited)
     if (effectiveGroupIds.includes(aclEntry)) {
+      return true;
+    }
+    // Check if aclEntry is "public" (accessible to all authenticated users)
+    if (aclEntry === 'public') {
       return true;
     }
     return false;
@@ -196,7 +200,8 @@ export function calculateLanguageRelevance(userLanguage?: string, docLanguage?: 
  */
 export function buildQdrantRBACFilter(userContext: UserContext): any {
   const effectiveGroupIds = getEffectiveGroupIds(userContext);
-  const allAclEntries = [userContext.id, ...effectiveGroupIds];
+  // Include "public" access for all authenticated users
+  const allAclEntries = [userContext.id, ...effectiveGroupIds, 'public'];
 
   const filter: any = {
     must: [

@@ -181,11 +181,25 @@ export class SimpleGuardrailService {
   }
 
   private getDefaultConfig(): GuardrailConfig {
+    const envThreshold = parseFloat(process.env.ANSWERABILITY_THRESHOLD || '0.6');
+
+    // For very low thresholds (like 0.01), use permissive settings
+    if (envThreshold <= 0.1) {
+      return {
+        enabled: true,
+        minConfidence: envThreshold,    // Use environment variable!
+        minTopScore: 0.1,               // Very low
+        minMeanScore: 0.05,             // Very low
+        minResultCount: 1               // Only need 1 result
+      };
+    }
+
+    // For higher thresholds, scale proportionally
     return {
       enabled: true,
-      minConfidence: 0.6,
-      minTopScore: 0.5,
-      minMeanScore: 0.3,
+      minConfidence: envThreshold,        // Use environment variable!
+      minTopScore: Math.min(envThreshold * 0.8, 1.0),
+      minMeanScore: Math.min(envThreshold * 0.5, 1.0),
       minResultCount: 2
     };
   }

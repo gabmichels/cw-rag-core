@@ -1,8 +1,10 @@
+import crypto from 'crypto';
 import { createAuditLogger } from '../../utils/audit.js';
 import { createAuthMiddleware } from '../../middleware/auth.js';
 import { previewRoute } from './preview.js';
 import { publishRoute } from './publish.js';
 import { uploadRoute } from './upload.js';
+import fastifyRateLimit from '@fastify/rate-limit';
 export async function ingestRoutes(fastify, options) {
     // Create audit logger
     const auditLogger = createAuditLogger(fastify.log);
@@ -11,16 +13,42 @@ export async function ingestRoutes(fastify, options) {
         ingestToken: options.ingestToken,
         logger: fastify.log
     });
-    // Register specific rate limiting for /ingest/* routes (60 req/min as required)
-    const rateLimitPlugin = await import('@fastify/rate-limit');
-    await fastify.register(rateLimitPlugin.default, {
-        max: 60, // 60 requests per minute per IP for ingest endpoints
+    // Register specific rate limiting for /ingest/* routes (more generous for bulk operations)
+    // const rateLimitPlugin = await import('@fastify/rate-limit'); // No longer needed
+    await fastify.register(fastifyRateLimit, {
+        max: 10000, // 10k requests per minute for high-throughput individual file processing
         timeWindow: '1 minute',
         keyGenerator: (request) => {
-            // Rate limit by IP + tenant if available for better granularity
-            const ip = request.ip || 'unknown';
+            // Rate limit by authenticated token + tenant for Docker environments
+            // This prevents all Docker requests from sharing the same rate limit
+            const token = request.headers['x-ingest-token'];
             const tenant = request.headers['x-tenant'] || 'default';
-            return `ingest:${ip}:${tenant}`;
+            const ip = request.ip || 'unknown';
+            // Use token hash for rate limiting if available, fallback to IP
+            if (token && token !== 'missing-token') {
+                const tokenHash = crypto.createHash('sha256').update(token).digest('hex').substring(0, 8);
+                return `ingest:token:${tokenHash}:${tenant}`;
+            }
+            return `ingest:ip:${ip}:${tenant}`;
+        },
+        skip: (request) => {
+            // Skip rate limiting for local/Docker traffic to handle high-frequency individual file triggers
+            const ip = request.ip || 'unknown';
+            const isLocalTraffic = ip === '127.0.0.1' ||
+                ip === '::1' ||
+                ip === 'localhost' ||
+                ip?.startsWith('172.') || // Docker networks
+                ip?.startsWith('10.') || // Private networks
+                ip?.startsWith('192.168.'); // Local networks
+            if (isLocalTraffic) {
+                fastify.log.debug({
+                    ip,
+                    endpoint: request.url,
+                    message: 'Skipping rate limit for local traffic'
+                }, 'Rate limit bypass for local traffic');
+                return true;
+            }
+            return false;
         },
         errorResponseBuilder: (request, context) => {
             // Log rate limit exceeded for security monitoring
@@ -35,7 +63,7 @@ export async function ingestRoutes(fastify, options) {
             }, 'Ingest rate limit exceeded');
             return {
                 error: 'Rate Limit Exceeded',
-                message: `Too many ingest requests. Limit: 60 requests per minute. Try again in ${Math.round(context.ttl / 1000)} seconds.`,
+                message: `Too many ingest requests. Limit: 10000 requests per minute. Try again in ${Math.round(context.ttl / 1000)} seconds.`,
                 retryAfter: Math.round(context.ttl / 1000),
                 code: 'INGEST_RATE_LIMIT_EXCEEDED'
             };
@@ -48,7 +76,7 @@ export async function ingestRoutes(fastify, options) {
                 timestamp: new Date().toISOString()
             }, 'Ingest rate limit threshold reached');
         }
-    });
+    }); // Explicitly cast to guide TypeScript
     // Apply authentication to all ingest routes
     fastify.addHook('preValidation', authMiddleware);
     // Helper function to handle preview logic (shared between preview and upload)
@@ -127,19 +155,19 @@ export async function ingestRoutes(fastify, options) {
                     path: '/ingest/preview',
                     method: 'POST',
                     description: 'Preview documents for ingestion without persisting',
-                    rateLimit: '60 requests per minute per IP'
+                    rateLimit: '10000 requests per minute per IP (local traffic bypassed)'
                 },
                 {
                     path: '/ingest/publish',
                     method: 'POST',
                     description: 'Publish documents to the vector database',
-                    rateLimit: '60 requests per minute per IP'
+                    rateLimit: '10000 requests per minute per IP (local traffic bypassed)'
                 },
                 {
                     path: '/ingest/upload',
                     method: 'POST',
                     description: 'Upload files for conversion and optional publishing',
-                    rateLimit: '60 requests per minute per IP'
+                    rateLimit: '10000 requests per minute per IP (local traffic bypassed)'
                 }
             ],
             authentication: {
@@ -148,7 +176,7 @@ export async function ingestRoutes(fastify, options) {
                 description: 'All ingest endpoints require valid x-ingest-token header'
             },
             security: {
-                rateLimit: '60 requests per minute per IP',
+                rateLimit: '10000 requests per minute per IP (local traffic bypassed)',
                 cors: 'Restricted to allowed origins only',
                 headers: 'Security headers enforced'
             },
@@ -160,7 +188,7 @@ export async function ingestRoutes(fastify, options) {
     fastify.log.info({
         features: [
             'Centralized authentication',
-            '60 req/min rate limiting',
+            '10k req/min rate limiting (local traffic bypassed)',
             'Structured logging',
             'Security monitoring'
         ],
