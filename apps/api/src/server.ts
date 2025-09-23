@@ -154,30 +154,8 @@ async function startServer() {
     allowedHeaders: ['Content-Type', 'Authorization', 'x-ingest-token', 'x-tenant']
   });
 
-  // Global rate limiting for all routes (basic protection)
-  await server.register(rateLimit, {
-    max: 1000, // 1000 requests per minute for general API usage
-    timeWindow: '1 minute',
-    keyGenerator: (request: FastifyRequest) => {
-      return (request as any).ip || 'unknown';
-    },
-    errorResponseBuilder: (request: FastifyRequest, context: any) => {
-      logger.warn('Global rate limit exceeded', {
-        event: 'rate_limit_exceeded',
-        type: 'global',
-        ip: (request as any).ip,
-        endpoint: (request as any).url,
-        timestamp: new Date().toISOString()
-      });
-
-      return {
-        error: 'Rate Limit Exceeded',
-        message: 'Too many requests. Please try again later.',
-        retryAfter: Math.round(context.ttl / 1000),
-        code: 'RATE_LIMIT_EXCEEDED'
-      };
-    }
-  });
+  // Note: Rate limiting is handled per-route to avoid conflicts
+  // Ingest routes: 60 req/min, Ask routes: have their own limits
 
   // Register routes
   server.register(healthzRoute);

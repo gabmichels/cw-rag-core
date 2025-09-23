@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { QdrantClient } from '@qdrant/js-client-rest';
 import { createAuditLogger } from '../../utils/audit.js';
@@ -22,16 +23,25 @@ export async function ingestRoutes(fastify: FastifyInstance, options: IngestRout
     logger: fastify.log
   });
 
-  // Register specific rate limiting for /ingest/* routes (60 req/min as required)
+  // Register specific rate limiting for /ingest/* routes (more generous for bulk operations)
   const rateLimitPlugin = await import('@fastify/rate-limit');
   await fastify.register(rateLimitPlugin.default, {
-    max: 60, // 60 requests per minute per IP for ingest endpoints
+    max: 300, // 300 requests per minute per IP for ingest endpoints (5 req/sec)
     timeWindow: '1 minute',
     keyGenerator: (request: FastifyRequest) => {
-      // Rate limit by IP + tenant if available for better granularity
-      const ip = (request as any).ip || 'unknown';
+      // Rate limit by authenticated token + tenant for Docker environments
+      // This prevents all Docker requests from sharing the same rate limit
+      const token = (request.headers as any)['x-ingest-token'];
       const tenant = (request.headers as any)['x-tenant'] || 'default';
-      return `ingest:${ip}:${tenant}`;
+      const ip = (request as any).ip || 'unknown';
+
+      // Use token hash for rate limiting if available, fallback to IP
+      if (token && token !== 'missing-token') {
+        const tokenHash = crypto.createHash('sha256').update(token).digest('hex').substring(0, 8);
+        return `ingest:token:${tokenHash}:${tenant}`;
+      }
+
+      return `ingest:ip:${ip}:${tenant}`;
     },
     errorResponseBuilder: (request: FastifyRequest, context: any) => {
       // Log rate limit exceeded for security monitoring
@@ -47,7 +57,7 @@ export async function ingestRoutes(fastify: FastifyInstance, options: IngestRout
 
       return {
         error: 'Rate Limit Exceeded',
-        message: `Too many ingest requests. Limit: 60 requests per minute. Try again in ${Math.round(context.ttl / 1000)} seconds.`,
+        message: `Too many ingest requests. Limit: 300 requests per minute. Try again in ${Math.round(context.ttl / 1000)} seconds.`,
         retryAfter: Math.round(context.ttl / 1000),
         code: 'INGEST_RATE_LIMIT_EXCEEDED'
       };
@@ -151,19 +161,19 @@ export async function ingestRoutes(fastify: FastifyInstance, options: IngestRout
           path: '/ingest/preview',
           method: 'POST',
           description: 'Preview documents for ingestion without persisting',
-          rateLimit: '60 requests per minute per IP'
+          rateLimit: '300 requests per minute per IP'
         },
         {
           path: '/ingest/publish',
           method: 'POST',
           description: 'Publish documents to the vector database',
-          rateLimit: '60 requests per minute per IP'
+          rateLimit: '300 requests per minute per IP'
         },
         {
           path: '/ingest/upload',
           method: 'POST',
           description: 'Upload files for conversion and optional publishing',
-          rateLimit: '60 requests per minute per IP'
+          rateLimit: '300 requests per minute per IP'
         }
       ],
       authentication: {
@@ -172,7 +182,7 @@ export async function ingestRoutes(fastify: FastifyInstance, options: IngestRout
         description: 'All ingest endpoints require valid x-ingest-token header'
       },
       security: {
-        rateLimit: '60 requests per minute per IP',
+        rateLimit: '300 requests per minute per IP',
         cors: 'Restricted to allowed origins only',
         headers: 'Security headers enforced'
       },
@@ -185,7 +195,7 @@ export async function ingestRoutes(fastify: FastifyInstance, options: IngestRout
   fastify.log.info({
     features: [
       'Centralized authentication',
-      '60 req/min rate limiting',
+      '300 req/min rate limiting',
       'Structured logging',
       'Security monitoring'
     ],

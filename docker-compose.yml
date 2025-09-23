@@ -30,7 +30,9 @@ services:
       - MODEL_ID=BAAI/bge-small-en-v1.5
       - REVISION=main
       - MAX_CONCURRENT_REQUESTS=512
-      - MAX_BATCH_TOKENS=16384
+      - MAX_BATCH_TOKENS=65536
+      - MAX_BATCH_REQUESTS=1024
+      - MAX_CLIENT_BATCH_SIZE=32
       - VECTOR_DIM=${VECTOR_DIM:-384}
     volumes:
       - embeddings_cache:/data

@@ -1,133 +1,14 @@
 {
-  "meta": {
-    "instanceId": "obsidian-zenithfall-workflow"
-  },
+  "name": "Zenithfall Obsidian RAG",
   "nodes": [
-    {
-      "parameters": {
-        "rule": {
-          "interval": [
-            {
-              "field": "cronExpression",
-              "expression": "0 */15 * * * *"
-            }
-          ]
-        }
-      },
-      "name": "Cron Trigger",
-      "type": "n8n-nodes-base.cron",
-      "typeVersion": 1,
-      "position": [200, 300],
-      "id": "cronTrigger1",
-      "notes": "Runs every 15 minutes for zenithfall vault sync\nConfigurable schedule for production deployment"
-    },
-    {
-      "parameters": {},
-      "name": "Manual Trigger",
-      "type": "n8n-nodes-base.manualTrigger",
-      "typeVersion": 1,
-      "position": [200, 200],
-      "id": "manualTrigger1",
-      "notes": "Manual trigger for testing and on-demand sync"
-    },
-    {
-      "parameters": {
-        "jsCode": "// Zenithfall-specific configuration\nconst config = {\n  obsidianVaultPath: 'C:\\\\Users\\\\gabmi\\\\OneDrive\\\\Documents\\\\Zenithfall',\n  tenantId: 'zenithfall',\n  batchSize: parseInt($env.BATCH_SIZE) || 5,\n  maxFiles: parseInt($env.MAX_FILES_PER_RUN) || 50,\n  fileExtensions: ['.md', '.markdown'],\n  excludePaths: ['.obsidian', '.trash', 'templates', 'Archive'],\n  incrementalSync: true,\n  acl: ['public'],\n  source: 'obsidian',\n  lang: 'en'\n};\n\n// Get last run state from workflow static data\nconst staticData = $workflow.staticData || {};\nconst lastRunTime = staticData.lastRunTime || null;\nconst currentRunTime = new Date().toISOString();\nconst fileHashes = staticData.fileHashes || {};\nconst previousFiles = staticData.previousFiles || [];\n\nconsole.log(`Zenithfall Obsidian Sync - Starting run at ${currentRunTime}`);\nconsole.log(`Last run: ${lastRunTime || 'Never'}`);\nconsole.log(`Previous file count: ${previousFiles.length}`);\nconsole.log(`Cached file hashes: ${Object.keys(fileHashes).length}`);\n\nreturn [{\n  config,\n  lastRunTime,\n  currentRunTime,\n  fileHashes,\n  previousFiles\n}];"
-      },
-      "name": "Initialize Zenithfall Config",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [400, 250],
-      "id": "initConfig1",
-      "notes": "Initialize zenithfall-specific configuration\nManages state tracking for idempotency and tombstone detection"
-    },
-    {
-      "parameters": {
-        "command": "powershell.exe -Command \"Get-ChildItem '{{ $json.config.obsidianVaultPath }}' -Recurse -Filter '*.md' | Select-Object FullName, LastWriteTime | ForEach-Object { Write-Output \\\"$($_.FullName)|$($_.LastWriteTime.ToString('yyyy-MM-ddTHH:mm:ss.fffZ'))\\\" }\""
-      },
-      "name": "Find Markdown Files with Metadata",
-      "type": "n8n-nodes-base.executeCommand",
-      "typeVersion": 1,
-      "position": [600, 250],
-      "id": "findFiles1",
-      "notes": "Find markdown files with modification times using PowerShell\nRequired for idempotency checking and change detection"
-    },
-    {
-      "parameters": {
-        "jsCode": "// Parse file list with metadata and apply idempotency logic\nconst fileListOutput = $input.first().json.stdout;\nconst config = $input.first().json.config;\nconst fileHashes = $input.first().json.fileHashes;\nconst crypto = require('crypto');\nconst fs = require('fs');\n\nif (!fileListOutput || fileListOutput.trim() === '') {\n  console.log('No markdown files found in vault');\n  return [];\n}\n\nconst fileLines = fileListOutput.trim().split('\\n').filter(line => line.trim());\nconsole.log(`Found ${fileLines.length} markdown files`);\n\nconst filesToProcess = [];\nconst currentFiles = [];\nconst updatedFileHashes = { ...fileHashes };\n\nfor (const line of fileLines) {\n  const [filePath, lastWriteTime] = line.split('|');\n  if (!filePath || !lastWriteTime) continue;\n\n  // Filter out excluded paths\n  if (config.excludePaths.some(excludePath => filePath.includes(`\\\\${excludePath}\\\\`))) {\n    continue;\n  }\n\n  currentFiles.push(filePath);\n\n  try {\n    // Calculate file hash for idempotency\n    const content = fs.readFileSync(filePath, 'utf8');\n    const fileHash = crypto.createHash('sha256').update(content).digest('hex');\n    const previousHash = fileHashes[filePath];\n    \n    // Check if file needs processing\n    if (previousHash && previousHash === fileHash) {\n      console.log(`SKIP: ${filePath} (unchanged)`);\n      updatedFileHashes[filePath] = fileHash;\n      continue; // Skip unchanged files\n    }\n\n    console.log(`PROCESS: ${filePath} (${previousHash ? 'modified' : 'new'})`);\n    \n    filesToProcess.push({\n      filePath,\n      lastWriteTime,\n      fileHash,\n      isNew: !previousHash,\n      config\n    });\n    \n    updatedFileHashes[filePath] = fileHash;\n    \n  } catch (error) {\n    console.error(`Error processing ${filePath}: ${error.message}`);\n  }\n}\n\nconsole.log(`Processing ${filesToProcess.length} files (${filesToProcess.filter(f => f.isNew).length} new, ${filesToProcess.filter(f => !f.isNew).length} modified)`);\n\n// Store updated state\n$workflow.staticData = {\n  ...$workflow.staticData,\n  currentFiles,\n  updatedFileHashes\n};\n\nreturn filesToProcess;"
-      },
-      "name": "Process with Idempotency",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [800, 250],
-      "id": "processFiles1",
-      "notes": "Apply idempotency logic using file content hashes\nSkips unchanged files to avoid unnecessary processing"
-    },
-    {
-      "parameters": {
-        "jsCode": "// Read and parse markdown file with zenithfall-specific formatting\nconst fs = require('fs');\nconst path = require('path');\nconst crypto = require('crypto');\n\nconst filePath = $json.filePath;\nconst config = $json.config;\nconst fileHash = $json.fileHash;\n\ntry {\n  const content = fs.readFileSync(filePath, 'utf8');\n  const stats = fs.statSync(filePath);\n  \n  // Parse frontmatter\n  const frontmatterRegex = /^---\\s*\\n([\\s\\S]*?)\\n---\\s*\\n([\\s\\S]*)$/;\n  const match = content.match(frontmatterRegex);\n  \n  let frontmatter = {};\n  let markdownContent = content;\n  \n  if (match) {\n    try {\n      const yamlContent = match[1];\n      const lines = yamlContent.split('\\n');\n      \n      for (const line of lines) {\n        const colonIndex = line.indexOf(':');\n        if (colonIndex > 0) {\n          const key = line.substring(0, colonIndex).trim();\n          const value = line.substring(colonIndex + 1).trim();\n          \n          if (value.startsWith('[') && value.endsWith(']')) {\n            frontmatter[key] = value.slice(1, -1).split(',').map(s => s.trim().replace(/^\"|\"$/g, ''));\n          } else {\n            frontmatter[key] = value.replace(/^\"|\"$/g, '');\n          }\n        }\n      }\n      \n      markdownContent = match[2];\n    } catch (yamlError) {\n      console.log(`Failed to parse frontmatter for ${filePath}:`, yamlError.message);\n    }\n  }\n  \n  // Generate docId as vault-relative forward-slash path (requirement)\n  const relativePath = path.relative(config.obsidianVaultPath, filePath);\n  const docId = relativePath.replace(/\\.(md|markdown)$/i, '').replace(/\\\\/g, '/');\n  \n  // Extract title\n  const title = frontmatter.title || \n                markdownContent.match(/^#\\s+(.+)$/m)?.[1] || \n                path.basename(filePath, path.extname(filePath));\n  \n  // Parse content into blocks\n  const blocks = [];\n  const sections = markdownContent.split(/\\n(?=#{1,6}\\s)/);\n  \n  for (const section of sections) {\n    const trimmed = section.trim();\n    if (trimmed) {\n      let blockType = 'text';\n      if (trimmed.includes('```')) {\n        blockType = 'code';\n      } else if (trimmed.includes('|') && trimmed.includes('---')) {\n        blockType = 'table';\n      }\n      \n      blocks.push({\n        type: blockType,\n        text: trimmed,\n        html: trimmed\n      });\n    }\n  }\n  \n  // Create NormalizedDoc with zenithfall-specific metadata\n  const normalizedDoc = {\n    meta: {\n      tenant: config.tenantId,\n      docId: docId,\n      source: config.source,\n      path: relativePath.replace(/\\\\/g, '/'),\n      title: title,\n      lang: config.lang,\n      version: frontmatter.version || '1.0',\n      sha256: fileHash,\n      acl: frontmatter.acl || frontmatter.tags || config.acl,\n      authors: frontmatter.authors || (frontmatter.author ? [frontmatter.author] : []),\n      tags: frontmatter.tags || [],\n      timestamp: new Date().toISOString(),\n      modifiedAt: stats.mtime.toISOString(),\n      deleted: false\n    },\n    blocks: blocks\n  };\n  \n  return [{\n    ...normalizedDoc,\n    _filePath: filePath,\n    _isNew: $json.isNew,\n    _processedAt: new Date().toISOString()\n  }];\n  \n} catch (error) {\n  return [{\n    _error: true,\n    _filePath: filePath,\n    _errorMessage: error.message,\n    _processedAt: new Date().toISOString()\n  }];\n}"
-      },
-      "name": "Read and Parse Zenithfall Docs",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [1000, 250],
-      "id": "parseMarkdown1",
-      "notes": "Parse markdown with zenithfall-specific configuration\nGenerates docId as vault-relative forward-slash path"
-    },
-    {
-      "parameters": {
-        "jsCode": "// Filter valid documents and create batches with error handling\nconst validDocs = $input.all().filter(item => !item.json._error);\nconst errorDocs = $input.all().filter(item => item.json._error);\n\nif (errorDocs.length > 0) {\n  console.log(`WARNING: Skipping ${errorDocs.length} files due to errors:`);\n  errorDocs.forEach(doc => {\n    console.log(`- ${doc.json._filePath}: ${doc.json._errorMessage}`);\n  });\n}\n\nif (validDocs.length === 0) {\n  console.log('No valid documents to process');\n  return [];\n}\n\nconst batchSize = validDocs[0].json.config?.batchSize || 5;\nconsole.log(`Creating batches of ${batchSize} documents from ${validDocs.length} valid docs`);\n\nconst batches = [];\nfor (let i = 0; i < validDocs.length; i += batchSize) {\n  const batchDocs = validDocs.slice(i, i + batchSize);\n  const batch = batchDocs.map(item => {\n    const { _filePath, _isNew, _processedAt, config, ...normalizedDoc } = item.json;\n    return normalizedDoc;\n  });\n  \n  batches.push({\n    batch: batch,\n    batchNumber: Math.floor(i / batchSize) + 1,\n    totalBatches: Math.ceil(validDocs.length / batchSize),\n    batchSize: batch.length,\n    newDocs: batchDocs.filter(item => item.json._isNew).length,\n    modifiedDocs: batchDocs.filter(item => !item.json._isNew).length\n  });\n}\n\nconsole.log(`Created ${batches.length} batches for processing`);\nreturn batches;"
-      },
-      "name": "Create Processing Batches",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [1200, 250],
-      "id": "createBatches1",
-      "notes": "Create processing batches with enhanced error handling\nTracks new vs modified documents for audit"
-    },
-    {
-      "parameters": {
-        "url": "={{ $env.ZENITHFALL_API_URL }}/ingest/preview",
-        "method": "POST",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "x-ingest-token",
-              "value": "={{ $credentials.zenithfallIngestToken.token }}"
-            },
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            }
-          ]
-        },
-        "sendBody": true,
-        "bodyContentType": "json",
-        "jsonBody": "={{ JSON.stringify($json.batch) }}",
-        "options": {
-          "timeout": 45000,
-          "retry": {
-            "enabled": true,
-            "maxTries": 3,
-            "waitBetween": 2000
-          }
-        }
-      },
-      "name": "Preview Zenithfall Docs",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4,
-      "position": [1400, 250],
-      "id": "previewDocs1",
-      "notes": "Preview documents with zenithfall credentials\nUses enhanced retry logic and longer timeout"
-    },
     {
       "parameters": {
         "conditions": {
           "options": {
             "caseSensitive": true,
             "leftValue": "",
-            "typeValidation": "strict"
+            "typeValidation": "strict",
+            "version": 1
           },
           "conditions": [
             {
@@ -138,86 +19,59 @@
                 "type": "boolean",
                 "operation": "equal"
               }
+            },
+            {
+              "id": "d7d4b571-802f-4d34-a984-aca35a930b19",
+              "leftValue": "={{ $json.wouldPublish }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
             }
           ],
-          "combinator": "and"
-        }
+          "combinator": "or"
+        },
+        "options": {}
       },
       "name": "Check Preview Result",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [1600, 250],
-      "id": "checkPreview1",
-      "notes": "Branch based on PII policy preview result\nTrue: Proceed to publish, False: Log and skip"
+      "position": [
+        -784,
+        1216
+      ],
+      "id": "e4695326-6f7e-493f-9d7a-3b43d712e7a9",
+      "notes": "Branch based on preview result"
     },
     {
       "parameters": {
-        "url": "={{ $env.ZENITHFALL_API_URL }}/ingest/publish",
-        "method": "POST",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "x-ingest-token",
-              "value": "={{ $credentials.zenithfallIngestToken.token }}"
-            },
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            }
-          ]
-        },
-        "sendBody": true,
-        "bodyContentType": "json",
-        "jsonBody": "={{ JSON.stringify($('Create Processing Batches').item.json.batch) }}",
-        "options": {
-          "timeout": 120000,
-          "retry": {
-            "enabled": true,
-            "maxTries": 5,
-            "waitBetween": 3000
-          }
-        }
-      },
-      "name": "Publish Zenithfall Docs",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4,
-      "position": [1800, 150],
-      "id": "publishDocs1",
-      "notes": "Publish approved documents to zenithfall tenant\nExtended timeout and retry logic for large batches"
-    },
-    {
-      "parameters": {
-        "jsCode": "// Log policy-blocked documents with enhanced details\nconst previewResult = $json;\nconst batchInfo = $('Create Processing Batches').item.json;\n\nconst logData = {\n  status: 'blocked',\n  tenant: 'zenithfall',\n  batchNumber: batchInfo.batchNumber,\n  totalBatches: batchInfo.totalBatches,\n  batchSize: batchInfo.batchSize,\n  newDocs: batchInfo.newDocs,\n  modifiedDocs: batchInfo.modifiedDocs,\n  wouldPublish: previewResult.wouldPublish,\n  findings: previewResult.findings || [],\n  errors: previewResult.errors || [],\n  timestamp: new Date().toISOString()\n};\n\nconsole.log(`BLOCKED: Zenithfall batch ${batchInfo.batchNumber}/${batchInfo.totalBatches}`);\nconsole.log(`- Documents: ${batchInfo.batchSize} (${batchInfo.newDocs} new, ${batchInfo.modifiedDocs} modified)`);\nconsole.log(`- Would publish: ${previewResult.wouldPublish}`);\nconsole.log(`- PII findings: ${JSON.stringify(previewResult.findings)}`);\n\nif (previewResult.errors && previewResult.errors.length > 0) {\n  console.log(`- Errors: ${previewResult.errors.join(', ')}`);\n}\n\nreturn [logData];"
+        "jsCode": "// Log policy block for rejected documents\nconst previewResult = $json;\nconst filePath = $('Initialize Config & Extract Event1').first().json.filePath;\n\nconsole.log(`BLOCKED: Document rejected by policy`);\nconsole.log(`- File: ${filePath}`);\nconsole.log(`- Would publish: ${previewResult.wouldPublish}`);\nconsole.log(`- Findings: ${JSON.stringify(previewResult.findings)}`);\n\nreturn [{\n  status: 'blocked',\n  filePath,\n  findings: previewResult.findings || [],\n  timestamp: new Date().toISOString()\n}];"
       },
       "name": "Log Policy Block",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1800, 350],
-      "id": "logBlock1",
-      "notes": "Enhanced logging for policy-blocked documents\nProvides detailed audit trail for compliance"
+      "position": [
+        -576,
+        1264
+      ],
+      "id": "2900fcab-2a3d-49b3-8836-c7510b89754a",
+      "notes": "Log when document is blocked by policy"
     },
     {
       "parameters": {
-        "jsCode": "// Log successful publication with comprehensive metrics\nconst publishResult = $json;\nconst batchInfo = $('Create Processing Batches').item.json;\n\nconst logData = {\n  status: 'published',\n  tenant: 'zenithfall',\n  batchNumber: batchInfo.batchNumber,\n  totalBatches: batchInfo.totalBatches,\n  batchSize: batchInfo.batchSize,\n  newDocs: batchInfo.newDocs,\n  modifiedDocs: batchInfo.modifiedDocs,\n  summary: publishResult.summary || {},\n  results: publishResult.results || [],\n  timestamp: new Date().toISOString()\n};\n\nconsole.log(`PUBLISHED: Zenithfall batch ${batchInfo.batchNumber}/${batchInfo.totalBatches}`);\nconsole.log(`- Input: ${batchInfo.batchSize} docs (${batchInfo.newDocs} new, ${batchInfo.modifiedDocs} modified)`);\n\nif (publishResult.summary) {\n  const s = publishResult.summary;\n  console.log(`- Published: ${s.published}, Updated: ${s.updated}, Blocked: ${s.blocked}, Errors: ${s.errors}`);\n}\n\n// Log individual document results\nif (publishResult.results) {\n  publishResult.results.forEach(result => {\n    const status = result.status;\n    const points = result.pointsUpserted ? ` (${result.pointsUpserted} points)` : '';\n    console.log(`  - ${result.docId}: ${status}${points}`);\n    if (result.message) {\n      console.log(`    ${result.message}`);\n    }\n  });\n}\n\nreturn [logData];"
+        "jsCode": "// Zenithfall-specific configuration\nconst config = {\n  obsidianVaultPath: $env.OBSIDIAN_VAULT_PATH || '/vault/Zenithfall',\n  tenantId: 'zenithfall',\n  fileExtensions: ['.md', '.markdown'],\n  excludePaths: ['.obsidian', '.trash', 'templates', 'Archive'],\n  acl: ['public'],\n  source: 'obsidian',\n  lang: 'en',\n  apiUrl: ($env.ZENITHFALL_API_URL || 'http://api:3000').trim(),\n  ingestToken: ($env.ZENITHFALL_INGEST_TOKEN || 'missing-token').trim()\n};\n\n// Get file info from trigger\nconst triggerData = $input.first().json;\nconst filePath = triggerData.path;\nconst eventType = triggerData.event; // 'add', 'change', or 'unlink'\n\nconsole.log(`=== ZENITHFALL FILE EVENT ===`);\nconsole.log(`Event: ${eventType}`);\nconsole.log(`File: ${filePath}`);\nconsole.log(`API URL: '${config.apiUrl}'`);\nconsole.log(`Ingest token configured: ${config.ingestToken ? 'Yes' : 'No'}`);\n\nreturn [{\n  config,\n  filePath,\n  eventType,\n  timestamp: new Date().toISOString()\n}];"
       },
-      "name": "Log Publish Success",
+      "name": "Initialize Config & Extract Event1",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [2000, 150],
-      "id": "logSuccess1",
-      "notes": "Comprehensive success logging with document-level details\nTracks both new and modified document processing"
-    },
-    {
-      "parameters": {
-        "jsCode": "// Enhanced tombstone detection and handling\nconst initData = $('Initialize Zenithfall Config').item.json;\nconst currentFiles = $workflow.staticData.currentFiles || [];\nconst previousFiles = initData.previousFiles || [];\nconst config = initData.config;\n\n// Find deleted files\nconst deletedFiles = previousFiles.filter(file => !currentFiles.includes(file));\n\nif (deletedFiles.length === 0) {\n  console.log('No deleted files detected');\n  return [];\n}\n\nconsole.log(`TOMBSTONES: Detected ${deletedFiles.length} deleted files`);\n\n// Create tombstone documents\nconst tombstones = deletedFiles.map(filePath => {\n  const path = require('path');\n  const relativePath = path.relative(config.obsidianVaultPath, filePath);\n  const docId = relativePath.replace(/\\.(md|markdown)$/i, '').replace(/\\\\/g, '/');\n  \n  console.log(`- Creating tombstone for: ${docId}`);\n  \n  return {\n    meta: {\n      tenant: config.tenantId,\n      docId: docId,\n      source: config.source,\n      path: relativePath.replace(/\\\\/g, '/'),\n      title: `[DELETED] ${path.basename(filePath, path.extname(filePath))}`,\n      lang: config.lang,\n      version: '1.0',\n      sha256: 'tombstone',\n      acl: ['system'],\n      authors: [],\n      tags: ['deleted', 'tombstone'],\n      timestamp: new Date().toISOString(),\n      modifiedAt: new Date().toISOString(),\n      deleted: true\n    },\n    blocks: []\n  };\n});\n\nreturn [{\n  tombstones: tombstones,\n  deletedCount: deletedFiles.length,\n  deletedFiles: deletedFiles\n}];"
-      },
-      "name": "Detect File Deletions",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [1200, 450],
-      "id": "detectDeletions1",
-      "notes": "Enhanced deletion detection with comprehensive tombstone creation\nTracks file paths for proper cleanup of vector embeddings"
+      "position": [
+        -2176,
+        1360
+      ],
+      "id": "4ed7d487-c609-4c4c-b32b-f8c77a5410e4",
+      "notes": "Initialize config and extract file event details from trigger"
     },
     {
       "parameters": {
@@ -225,39 +79,89 @@
           "options": {
             "caseSensitive": true,
             "leftValue": "",
-            "typeValidation": "strict"
+            "typeValidation": "strict",
+            "version": 1
           },
           "conditions": [
             {
-              "id": "has-deletions",
-              "leftValue": "={{ $json.deletedCount }}",
-              "rightValue": 0,
+              "id": "unlink-check",
+              "leftValue": "={{ $json.eventType }}",
+              "rightValue": "unlink",
               "operator": {
-                "type": "number",
-                "operation": "gt"
+                "type": "string",
+                "operation": "equals"
               }
             }
           ],
-          "combinator": "and"
-        }
+          "combinator": "or"
+        },
+        "options": {}
       },
-      "name": "Check for Deletions",
+      "name": "Check Event Type1",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [1400, 450],
-      "id": "checkDeletions1",
-      "notes": "Conditional tombstone processing\nOnly publishes tombstones when deletions are detected"
+      "position": [
+        -1984,
+        1360
+      ],
+      "id": "183983e2-7090-4595-9cef-c9a55bdabb1f",
+      "notes": "Branch based on event type\nTrue: File deleted (unlink), False: File added/changed"
     },
     {
       "parameters": {
-        "url": "={{ $env.ZENITHFALL_API_URL }}/ingest/publish",
+        "fileSelector": "={{ $json.filePath }}",
+        "options": {
+          "dataPropertyName": "data"
+        }
+      },
+      "name": "Read File Content1",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        -1856,
+        1152
+      ],
+      "id": "2090fedb-7204-4468-8d09-086ab0a78b04",
+      "notes": "Read the file content for processing"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Check if file should be processed and handle idempotency\n// Get data from previous nodes\nconst initData = $('Initialize Config & Extract Event1').first().json;\nconst filePath = initData.filePath;\nconst config = initData.config;\nconst fileContent = $json.data; // File content from Read File Content node\nconst crypto = require('crypto');\nconst path = require('path');\n\nconsole.log(`Checking file: ${filePath}`);\nconsole.log(`File content length: ${fileContent ? fileContent.length : 'undefined'}`);\n\n// Filter out excluded paths\nif (config.excludePaths.some(excludePath => filePath.includes(`\\\\${excludePath}\\\\`))) {\n  console.log(`SKIP: ${filePath} (excluded path)`);\n  return [{ _skip: true, reason: 'excluded_path', filePath }];\n}\n\n// Check file extension\nconst ext = path.extname(filePath).toLowerCase();\nif (!config.fileExtensions.includes(ext)) {\n  console.log(`SKIP: ${filePath} (not markdown)`);\n  return [{ _skip: true, reason: 'not_markdown', filePath }];\n}\n\n// Calculate file hash for idempotency\nconst fileHash = crypto.createHash('sha256').update(fileContent).digest('hex');\n\n// Get previous hash from static data\nconst staticData = $getWorkflowStaticData('global');\nconst fileHashes = staticData.fileHashes || {};\nconst previousHash = fileHashes[filePath];\n\nif (previousHash && previousHash === fileHash) {\n  console.log(`SKIP: ${filePath} (unchanged)`);\n  return [{ _skip: true, reason: 'unchanged', filePath }];\n}\n\nconsole.log(`PROCESS: ${filePath} (${previousHash ? 'modified' : 'new'})`);\n\n// Update hash in static data\nfileHashes[filePath] = fileHash;\nstaticData.fileHashes = fileHashes;\n\nreturn [{\n  filePath,\n  fileContent,\n  fileHash,\n  isNew: !previousHash,\n  config,\n  timestamp: new Date().toISOString()\n}];"
+      },
+      "name": "Check File & Idempotency1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1440,
+        1216
+      ],
+      "id": "0dcde7e3-7a0d-4806-97ed-3b21586b8254",
+      "notes": "Check if file should be processed and handle idempotency"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse markdown file and create normalized document\nconst path = require('path');\nconst filePath = $json.filePath;\nconst content = $json.fileContent;\nconst config = $json.config;\nconst fileHash = $json.fileHash;\n\ntry {\n  // Parse frontmatter\n  const frontmatterRegex = /^---\\s*\\n([\\s\\S]*?)\\n---\\s*\\n([\\s\\S]*)$/;\n  const match = content.match(frontmatterRegex);\n  \n  let frontmatter = {};\n  let markdownContent = content;\n  \n  if (match) {\n    try {\n      const yamlContent = match[1];\n      const lines = yamlContent.split('\\n');\n      \n      for (const line of lines) {\n        const colonIndex = line.indexOf(':');\n        if (colonIndex > 0) {\n          const key = line.substring(0, colonIndex).trim();\n          const value = line.substring(colonIndex + 1).trim();\n          \n          if (value.startsWith('[') && value.endsWith(']')) {\n            frontmatter[key] = value.slice(1, -1).split(',').map(s => s.trim().replace(/^\"|\"$/g, ''));\n          } else {\n            frontmatter[key] = value.replace(/^\"|\"$/g, '');\n          }\n        }\n      }\n      \n      markdownContent = match[2];\n    } catch (yamlError) {\n      console.log(`Failed to parse frontmatter for ${filePath}:`, yamlError.message);\n    }\n  }\n  \n  // Generate docId as vault-relative forward-slash path\n  const relativePath = path.relative(config.obsidianVaultPath, filePath);\n  const docId = relativePath.replace(/\\.(md|markdown)$/i, '').replace(/\\\\/g, '/');\n  \n  // Extract title\n  const title = frontmatter.title || \n                markdownContent.match(/^#\\s+(.+)$/m)?.[1] || \n                path.basename(filePath, path.extname(filePath));\n  \n  // Parse content into blocks\n  const blocks = [];\n  const sections = markdownContent.split(/\\n(?=#{1,6}\\s)/);\n  \n  for (const section of sections) {\n    const trimmed = section.trim();\n    if (trimmed) {\n      let blockType = 'text';\n      if (trimmed.includes('```')) {\n        blockType = 'code';\n      } else if (trimmed.includes('|') && trimmed.includes('---')) {\n        blockType = 'table';\n      }\n      \n      blocks.push({\n        type: blockType,\n        text: trimmed,\n        html: trimmed\n      });\n    }\n  }\n  \n  // Create NormalizedDoc\n  const normalizedDoc = {\n    meta: {\n      tenant: config.tenantId,\n      docId: docId,\n      source: config.source,\n      path: relativePath.replace(/\\\\/g, '/'),\n      title: title,\n      lang: config.lang,\n      version: frontmatter.version || '1.0',\n      sha256: fileHash,\n      acl: frontmatter.acl || frontmatter.tags || config.acl,\n      authors: frontmatter.authors || (frontmatter.author ? [frontmatter.author] : []),\n      tags: frontmatter.tags || [],\n      timestamp: new Date().toISOString(),\n      modifiedAt: new Date().toISOString(),\n      deleted: false\n    },\n    blocks: blocks\n  };\n  \n  console.log(`Parsed document: ${docId}`);\n  \n  return [normalizedDoc];\n  \n} catch (error) {\n  console.error(`Error parsing ${filePath}:`, error.message);\n  return [{\n    _error: true,\n    _filePath: filePath,\n    _errorMessage: error.message\n  }];\n}"
+      },
+      "name": "Parse Document1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1184,
+        1216
+      ],
+      "id": "785d7fc3-99c0-446b-b7c8-0f40d43f79ba",
+      "notes": "Parse markdown file into normalized document format"
+    },
+    {
+      "parameters": {
         "method": "POST",
+        "url": "={{ $('Initialize Config & Extract Event1').first().json.config.apiUrl + '/ingest/preview' }}",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             {
               "name": "x-ingest-token",
-              "value": "={{ $credentials.zenithfallIngestToken.token }}"
+              "value": "={{ $('Initialize Config & Extract Event1').first().json.config.ingestToken }}"
             },
             {
               "name": "Content-Type",
@@ -266,157 +170,163 @@
           ]
         },
         "sendBody": true,
-        "bodyContentType": "json",
-        "jsonBody": "={{ JSON.stringify($json.tombstones) }}",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify([$json]) }}",
         "options": {
-          "timeout": 60000,
-          "retry": {
-            "enabled": true,
-            "maxTries": 5,
-            "waitBetween": 2000
-          }
+          "timeout": 30000
         }
       },
-      "name": "Publish Tombstones",
+      "name": "Preview Document1",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4,
-      "position": [1600, 400],
-      "id": "publishTombstones1",
-      "notes": "Publish tombstone documents for vector cleanup\nEnsures deleted files are properly removed from search index"
+      "position": [
+        -976,
+        1216
+      ],
+      "id": "44f754d1-7f5b-43e5-8461-05f0f795dd99",
+      "notes": "Preview single document for PII policy compliance"
     },
     {
       "parameters": {
-        "jsCode": "// Update workflow state with comprehensive data persistence\nconst initData = $('Initialize Zenithfall Config').item.json;\nconst currentFiles = $workflow.staticData.currentFiles || [];\nconst updatedFileHashes = $workflow.staticData.updatedFileHashes || {};\n\n// Clean up file hashes for deleted files to prevent memory leaks\nconst cleanedFileHashes = {};\nfor (const [filePath, hash] of Object.entries(updatedFileHashes)) {\n  if (currentFiles.includes(filePath)) {\n    cleanedFileHashes[filePath] = hash;\n  }\n}\n\n// Update workflow static data\nconst updatedStaticData = {\n  lastRunTime: initData.currentRunTime,\n  previousFiles: currentFiles,\n  fileHashes: cleanedFileHashes,\n  lastRunSummary: {\n    timestamp: initData.currentRunTime,\n    filesProcessed: Object.keys($('Process with Idempotency').all()).length,\n    filesSkipped: currentFiles.length - Object.keys($('Process with Idempotency').all()).length,\n    totalFiles: currentFiles.length\n  }\n};\n\n$workflow.staticData = updatedStaticData;\n\nconsole.log('STATE UPDATE: Workflow state updated successfully');\nconsole.log(`- Files tracked: ${currentFiles.length}`);\nconsole.log(`- File hashes: ${Object.keys(cleanedFileHashes).length}`);\nconsole.log(`- Files processed this run: ${updatedStaticData.lastRunSummary.filesProcessed}`);\nconsole.log(`- Files skipped (unchanged): ${updatedStaticData.lastRunSummary.filesSkipped}`);\n\nreturn [{\n  status: 'state_updated',\n  timestamp: initData.currentRunTime,\n  summary: updatedStaticData.lastRunSummary\n}];"
+        "method": "POST",
+        "url": "={{ $('Initialize Config & Extract Event1').first().json.config.apiUrl + '/ingest/publish' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-ingest-token",
+              "value": "={{ $('Initialize Config & Extract Event1').first().json.config.ingestToken }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify([$('Parse Document1').first().json]) }}",
+        "options": {
+          "timeout": 60000
+        }
       },
-      "name": "Update Workflow State",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [2200, 250],
-      "id": "updateState1",
-      "notes": "Persist workflow state for idempotency and tombstone detection\nCleans up orphaned file hashes to prevent memory growth"
+      "name": "Publish Document1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        -576,
+        1120
+      ],
+      "id": "93b9a82e-bcd7-4bbc-99c1-49f3d55e7550",
+      "notes": "Publish approved document"
     },
     {
       "parameters": {
-        "jsCode": "// Comprehensive workflow execution summary with enhanced metrics\nconst publishResults = $('Log Publish Success').all();\nconst blockResults = $('Log Policy Block').all();\nconst tombstoneResult = $('Publish Tombstones').first();\nconst stateUpdate = $('Update Workflow State').first();\n\nconst summary = {\n  workflow: 'obsidian-zenithfall',\n  tenant: 'zenithfall',\n  timestamp: new Date().toISOString(),\n  execution: {\n    totalBatches: publishResults.length + blockResults.length,\n    publishedBatches: publishResults.length,\n    blockedBatches: blockResults.length\n  },\n  documents: {\n    total: 0,\n    published: 0,\n    updated: 0,\n    blocked: 0,\n    errors: 0,\n    skipped: stateUpdate?.json?.summary?.filesSkipped || 0\n  },\n  tombstones: {\n    created: tombstoneResult?.json ? $('Detect File Deletions').first().json.deletedCount : 0,\n    published: tombstoneResult ? 1 : 0\n  },\n  state: stateUpdate?.json?.summary || {}\n};\n\n// Aggregate document statistics\npublishResults.forEach(result => {\n  if (result.json.summary) {\n    const s = result.json.summary;\n    summary.documents.total += s.total || 0;\n    summary.documents.published += s.published || 0;\n    summary.documents.updated += s.updated || 0;\n    summary.documents.blocked += s.blocked || 0;\n    summary.documents.errors += s.errors || 0;\n  }\n});\n\nblockResults.forEach(result => {\n  summary.documents.blocked += result.json.batchSize || 0;\n});\n\n// Generate final report\nconsole.log('================================');\nconsole.log('ZENITHFALL OBSIDIAN SYNC COMPLETE');\nconsole.log('================================');\nconsole.log(`Tenant: ${summary.tenant}`);\nconsole.log(`Timestamp: ${summary.timestamp}`);\nconsole.log(`Batches: ${summary.execution.publishedBatches} published, ${summary.execution.blockedBatches} blocked`);\nconsole.log(`Documents: ${summary.documents.published} published, ${summary.documents.updated} updated, ${summary.documents.blocked} blocked, ${summary.documents.errors} errors, ${summary.documents.skipped} skipped`);\nconsole.log(`Tombstones: ${summary.tombstones.created} created`);\nconsole.log(`Files tracked: ${summary.state.totalFiles}`);\nconsole.log('================================');\n\nreturn [summary];"
+        "method": "POST",
+        "url": "={{ $('Initialize Config & Extract Event1').first().json.config.apiUrl + '/ingest/publish' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-ingest-token",
+              "value": "={{ $('Initialize Config & Extract Event1').first().json.config.ingestToken }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify([$json]) }}",
+        "options": {
+          "timeout": 30000
+        }
       },
-      "name": "Final Execution Summary",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [2400, 250],
-      "id": "finalSummary1",
-      "notes": "Comprehensive execution summary with tenant-specific metrics\nProvides detailed audit trail for monitoring and compliance"
+      "name": "Publish Tombstone1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        -1584,
+        1456
+      ],
+      "id": "7d8ff643-9c08-40da-925b-fa045777a324",
+      "notes": "Publish tombstone for vector cleanup"
     },
     {
       "parameters": {
-        "jsCode": "// Enhanced error handler with retry logic and alerting\nconst error = $json.error || $json;\nconst timestamp = new Date().toISOString();\nconst errorData = {\n  workflow: 'obsidian-zenithfall',\n  tenant: 'zenithfall',\n  timestamp,\n  error: {\n    message: error.message || JSON.stringify(error),\n    stack: error.stack || 'No stack trace available',\n    node: $node?.name || 'Unknown node',\n    context: {\n      lastSuccessfulRun: $workflow.staticData?.lastRunTime || 'Never',\n      filesBeingProcessed: $workflow.staticData?.currentFiles?.length || 0\n    }\n  }\n};\n\nconsole.error('========================================');\nconsole.error('ZENITHFALL OBSIDIAN SYNC ERROR');\nconsole.error('========================================');\nconsole.error(`Time: ${timestamp}`);\nconsole.error(`Node: ${errorData.error.node}`);\nconsole.error(`Error: ${errorData.error.message}`);\nconsole.error(`Last successful run: ${errorData.error.context.lastSuccessfulRun}`);\nconsole.error('========================================');\n\n// Store error in static data for monitoring\nconst staticData = $workflow.staticData || {};\nstaticData.lastError = errorData;\n$workflow.staticData = staticData;\n\n// TODO: Add alerting integration (Slack, email, etc.)\n// Example: await sendAlert('zenithfall-sync-error', errorData);\n\nreturn [errorData];"
+        "jsCode": "// Update workflow state and clean up file hashes\nconst staticData = $getWorkflowStaticData('global');\nconst fileHashes = staticData.fileHashes || {};\nconst initData = $('Initialize Config & Extract Event1').first().json;\nconst filePath = initData.filePath;\nconst eventType = initData.eventType;\n\nif (eventType === 'unlink') {\n  // Remove hash for deleted file\n  delete fileHashes[filePath];\n  console.log(`Removed hash for deleted file: ${filePath}`);\n} else {\n  console.log(`Updated hash for file: ${filePath}`);\n}\n\n// Update static data\nstaticData.fileHashes = fileHashes;\nstaticData.lastRunTime = new Date().toISOString();\n\nconsole.log(`Workflow completed for ${eventType} event on ${filePath}`);\n\nreturn [{\n  status: 'completed',\n  eventType,\n  filePath,\n  timestamp: new Date().toISOString()\n}];"
       },
-      "name": "Enhanced Error Handler",
+      "name": "Update State1",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [2400, 450],
-      "id": "errorHandler1",
-      "notes": "Enhanced error handling with context preservation\nStores error state for monitoring and provides alerting hooks"
+      "position": [
+        -336,
+        1376
+      ],
+      "id": "ff6f3fcc-370c-48e2-bcf0-d858cabffaa6",
+      "notes": "Update workflow state and clean up file tracking"
+    },
+    {
+      "parameters": {
+        "triggerOn": "folder",
+        "path": "/vault/Zenithfall",
+        "events": [
+          "change",
+          "add",
+          "unlink"
+        ],
+        "options": {
+          "usePolling": true
+        }
+      },
+      "name": "Local File Trigger",
+      "type": "n8n-nodes-base.localFileTrigger",
+      "typeVersion": 1,
+      "position": [
+        -2400,
+        1360
+      ],
+      "id": "745dd154-9570-4103-8706-942228124825",
+      "notes": "Triggers on file changes in the specified local folder\nWatches for file creation, modification, and deletion"
+    },
+    {
+      "parameters": {
+        "operation": "text",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        -1696,
+        1152
+      ],
+      "id": "bcc0f0a3-4b3d-4233-842d-b51bf27686c4",
+      "name": "Extract from File"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Create tombstone for deleted file\nconst path = require('path');\nconst crypto = require('crypto');\n\n// Get data from Initialize Config & Extract Event node\nconst initData = $input.first().json;\nconst filePath = initData.filePath;\nconst config = initData.config;\n\nconst relativePath = path.relative(config.obsidianVaultPath, filePath);\nconst docId = relativePath.replace(/\\.(md|markdown)$/i, '').replace(/\\\\/g, '/');\n\nconsole.log(`Creating tombstone for deleted file: ${docId}`);\n\n// Generate proper SHA256 hash for tombstone (hash of deletion info)\nconst deletionContent = `DELETED:${config.tenantId}:${docId}:${new Date().toISOString()}`;\nconst sha256 = crypto.createHash('sha256').update(deletionContent).digest('hex');\n\nconst tombstone = {\n  meta: {\n    tenant: config.tenantId,\n    docId: docId,\n    source: config.source,\n    path: relativePath.replace(/\\\\/g, '/'),\n    title: `[DELETED] ${path.basename(filePath, path.extname(filePath))}`,\n    lang: config.lang,\n    version: '1.0',\n    sha256: sha256,\n    acl: ['system'],\n    authors: [],\n    tags: ['deleted', 'tombstone'],\n    timestamp: new Date().toISOString(),\n    modifiedAt: new Date().toISOString(),\n    deleted: true\n  },\n  blocks: []\n};\n\n// Clean up file hash from static data\nconst staticData = $getWorkflowStaticData('global');\nif (staticData.fileHashes && staticData.fileHashes[filePath]) {\n  delete staticData.fileHashes[filePath];\n  console.log(`Removed file hash for deleted file: ${filePath}`);\n}\n\nreturn [tombstone];"
+      },
+      "name": "Create Tombstone2",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1776,
+        1456
+      ],
+      "id": "257934aa-343c-4185-a886-d9b8b48e8d81",
+      "notes": "Create tombstone document for deleted file"
     }
   ],
+  "pinData": {},
   "connections": {
-    "Manual Trigger": {
-      "main": [
-        [
-          {
-            "node": "Initialize Zenithfall Config",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Cron Trigger": {
-      "main": [
-        [
-          {
-            "node": "Initialize Zenithfall Config",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Initialize Zenithfall Config": {
-      "main": [
-        [
-          {
-            "node": "Find Markdown Files with Metadata",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Find Markdown Files with Metadata": {
-      "main": [
-        [
-          {
-            "node": "Process with Idempotency",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Process with Idempotency": {
-      "main": [
-        [
-          {
-            "node": "Read and Parse Zenithfall Docs",
-            "type": "main",
-            "index": 0
-          },
-          {
-            "node": "Detect File Deletions",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Read and Parse Zenithfall Docs": {
-      "main": [
-        [
-          {
-            "node": "Create Processing Batches",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Create Processing Batches": {
-      "main": [
-        [
-          {
-            "node": "Preview Zenithfall Docs",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Preview Zenithfall Docs": {
-      "main": [
-        [
-          {
-            "node": "Check Preview Result",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "Check Preview Result": {
       "main": [
         [
           {
-            "node": "Publish Zenithfall Docs",
+            "node": "Publish Document1",
             "type": "main",
             "index": 0
           }
@@ -430,84 +340,139 @@
         ]
       ]
     },
-    "Publish Zenithfall Docs": {
-      "main": [
-        [
-          {
-            "node": "Log Publish Success",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "Log Policy Block": {
       "main": [
         [
           {
-            "node": "Update Workflow State",
+            "node": "Update State1",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Log Publish Success": {
+    "Initialize Config & Extract Event1": {
       "main": [
         [
           {
-            "node": "Update Workflow State",
+            "node": "Check Event Type1",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Detect File Deletions": {
+    "Check Event Type1": {
       "main": [
         [
           {
-            "node": "Check for Deletions",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Check for Deletions": {
-      "main": [
-        [
-          {
-            "node": "Publish Tombstones",
+            "node": "Create Tombstone2",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "Update Workflow State",
+            "node": "Read File Content1",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Publish Tombstones": {
+    "Read File Content1": {
       "main": [
         [
           {
-            "node": "Update Workflow State",
+            "node": "Extract from File",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Update Workflow State": {
+    "Check File & Idempotency1": {
       "main": [
         [
           {
-            "node": "Final Execution Summary",
+            "node": "Parse Document1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Document1": {
+      "main": [
+        [
+          {
+            "node": "Preview Document1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preview Document1": {
+      "main": [
+        [
+          {
+            "node": "Check Preview Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Publish Document1": {
+      "main": [
+        [
+          {
+            "node": "Update State1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Publish Tombstone1": {
+      "main": [
+        [
+          {
+            "node": "Update State1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Local File Trigger": {
+      "main": [
+        [
+          {
+            "node": "Initialize Config & Extract Event1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract from File": {
+      "main": [
+        [
+          {
+            "node": "Check File & Idempotency1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Tombstone2": {
+      "main": [
+        [
+          {
+            "node": "Publish Tombstone1",
             "type": "main",
             "index": 0
           }
@@ -515,39 +480,33 @@
       ]
     }
   },
-  "pinData": {},
+  "active": false,
   "settings": {
-    "executionOrder": "v1",
-    "saveManualExecutions": true,
-    "callerPolicy": "workflowsFromSameOwner",
-    "errorWorkflow": "errorHandler1"
+    "executionOrder": "v1"
   },
-  "staticData": {},
+  "versionId": "c8991bae-30a2-497a-8036-41a000bc1cad",
+  "meta": {
+    "instanceId": "560b438390dee1f3268219b2a8ca0b8d4e15ec412dd27c0fc3ee60cc31cb05bc"
+  },
+  "id": "MT1tHbTar4rQavpA",
   "tags": [
     {
-      "createdAt": "2024-01-01T00:00:00.000Z",
-      "updatedAt": "2024-01-01T00:00:00.000Z",
-      "id": "zenithfall",
-      "name": "zenithfall"
-    },
-    {
-      "createdAt": "2024-01-01T00:00:00.000Z",
-      "updatedAt": "2024-01-01T00:00:00.000Z",
-      "id": "obsidian",
+      "createdAt": "2025-09-22T21:58:28.243Z",
+      "updatedAt": "2025-09-22T21:58:28.243Z",
+      "id": "RMcToQ0NhUjkJnqc",
       "name": "obsidian"
     },
     {
-      "createdAt": "2024-01-01T00:00:00.000Z",
-      "updatedAt": "2024-01-01T00:00:00.000Z",
-      "id": "ingestion",
+      "createdAt": "2025-09-22T21:58:28.272Z",
+      "updatedAt": "2025-09-22T21:58:28.272Z",
+      "id": "2dznyA0fVDxsVeR1",
+      "name": "zenithfall"
+    },
+    {
+      "createdAt": "2025-09-22T21:58:28.243Z",
+      "updatedAt": "2025-09-22T21:58:28.243Z",
+      "id": "2M6gxZTzgxgatZKE",
       "name": "ingestion"
     }
-  ],
-  "triggerCount": 2,
-  "updatedAt": "2024-01-01T00:00:00.000Z",
-  "versionId": "obsidian-zenithfall-v1.0",
-  "name": "Obsidian Zenithfall Sync",
-  "active": false,
-  "id": "obsidian-zenithfall",
-  "createdAt": "2024-01-01T00:00:00.000Z"
+  ]
 }

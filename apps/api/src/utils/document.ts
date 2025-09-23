@@ -91,14 +91,23 @@ export function applyPIIRedactionToDocument(doc: NormalizedDoc, maskedText: stri
 }
 
 /**
- * Generate a unique point ID for Qdrant
+ * Generate a unique point ID for Qdrant (UUID format)
  */
 export function generatePointId(tenant: string, docId: string, chunkId: string): string {
-  return crypto
+  // Generate a deterministic UUID v5 from the input
+  const hash = crypto
     .createHash('sha256')
     .update(`${tenant}:${docId}:${chunkId}`)
-    .digest('hex')
-    .substring(0, 16);
+    .digest('hex');
+
+  // Format as UUID v4 (with proper dashes)
+  return [
+    hash.substring(0, 8),
+    hash.substring(8, 12),
+    hash.substring(12, 16),
+    hash.substring(16, 20),
+    hash.substring(20, 32)
+  ].join('-');
 }
 
 /**
