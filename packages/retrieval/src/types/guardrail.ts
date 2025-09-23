@@ -11,6 +11,8 @@ export interface AnswerabilityScore {
   reasoning: string;
   /** Computation time in milliseconds */
   computationTime: number;
+  /** Source-aware confidence tracking result */
+  sourceAwareConfidence?: any; // Will be typed properly when imported
 }
 
 export interface ScoreStatistics {

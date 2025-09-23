@@ -11,8 +11,14 @@ import {
   DEFAULT_IDK_TEMPLATES
 } from '../types/guardrail.js';
 import { HybridSearchResult, SearchPerformanceMetrics } from '../types/hybrid.js';
+import { VectorSearchResult } from '../types/vector.js';
 import { RerankerResult } from '../types/reranker.js';
 import { UserContext } from '@cw-rag-core/shared';
+import {
+  SourceAwareConfidenceService,
+  SourceAwareConfidenceResult,
+  createSourceAwareConfidenceService
+} from './source-aware-confidence.js';
 
 export interface AnswerabilityGuardrailService {
   /**
@@ -55,9 +61,11 @@ export interface AnswerabilityGuardrailService {
 
 export class AnswerabilityGuardrailServiceImpl implements AnswerabilityGuardrailService {
   private tenantConfigs = new Map<string, TenantGuardrailConfig>();
+  private sourceAwareConfidenceService: SourceAwareConfidenceService;
 
   constructor() {
     this.initializeDefaultConfigs();
+    this.sourceAwareConfidenceService = createSourceAwareConfidenceService();
   }
 
   async evaluateAnswerability(
@@ -135,20 +143,48 @@ export class AnswerabilityGuardrailServiceImpl implements AnswerabilityGuardrail
         },
         isAnswerable: false,
         reasoning: 'No retrieval results found',
-        computationTime: performance.now() - startTime
+        computationTime: performance.now() - startTime,
+        sourceAwareConfidence: undefined
       };
     }
 
-    // Extract scores for analysis
+    // Extract vector results from hybrid results to track source quality
+    const vectorResults: VectorSearchResult[] = results
+      .filter(r => r.vectorScore !== undefined)
+      .map(r => ({
+        id: r.id,
+        vector: [], // Empty vector array as we only need score tracking
+        score: r.vectorScore!,
+        payload: r.payload
+      }));
+
+    // Extract keyword results
+    const keywordResults = results
+      .filter(r => r.keywordScore !== undefined)
+      .map(r => ({
+        id: r.id,
+        score: r.keywordScore!,
+        payload: r.payload
+      }));
+
+    // Calculate source-aware confidence
+    const sourceAwareResult = this.sourceAwareConfidenceService.calculateSourceAwareConfidence(
+      vectorResults,
+      keywordResults,
+      results,
+      rerankerResults
+    );
+
+    // Extract scores for legacy analysis
     const scores = results.map(r => r.fusionScore || r.score || 0);
     const vectorScores = results.map(r => r.vectorScore || 0).filter(s => s > 0);
     const keywordScores = results.map(r => r.keywordScore || 0).filter(s => s > 0);
     const rerankerScores = rerankerResults?.map(r => r.rerankerScore) || [];
 
-    // Calculate score statistics
+    // Calculate score statistics (legacy)
     const scoreStats = this.calculateScoreStatistics(scores);
 
-    // Calculate algorithm-specific scores
+    // Calculate algorithm-specific scores (enhanced with source-aware data)
     const algorithmScores: AlgorithmScores = {
       statistical: this.calculateStatisticalScore(scoreStats),
       threshold: this.calculateThresholdScore(scores),
@@ -157,16 +193,18 @@ export class AnswerabilityGuardrailServiceImpl implements AnswerabilityGuardrail
         this.calculateRerankerConfidenceScore(rerankerScores) : undefined
     };
 
-    // Calculate ensemble confidence score
-    const confidence = this.calculateEnsembleConfidence(algorithmScores);
+    // Use source-aware confidence as primary confidence metric
+    const confidence = sourceAwareResult.finalConfidence;
 
     return {
       confidence,
       scoreStats,
       algorithmScores,
       isAnswerable: confidence > 0.5, // Default threshold, will be overridden by tenant config
-      reasoning: this.generateScoreReasoning(scoreStats, algorithmScores),
-      computationTime: performance.now() - startTime
+      reasoning: this.generateScoreReasoning(scoreStats, algorithmScores) +
+                ` Source-aware: ${sourceAwareResult.explanation}`,
+      computationTime: performance.now() - startTime,
+      sourceAwareConfidence: sourceAwareResult
     };
   }
 

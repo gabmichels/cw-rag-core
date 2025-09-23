@@ -14,5 +14,6 @@ export * from './services/mock-reranker.js';
 export * from './services/http-reranker.js';
 export * from './services/answerability-guardrail.js';
 export * from './services/guardrail-audit.js';
+export * from './services/source-aware-confidence.js';
 export * from './services/guardrail-config.js';
 export * from './services/guarded-retrieval.js';
