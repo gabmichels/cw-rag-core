@@ -6,6 +6,7 @@ import { createAuthMiddleware } from '../../middleware/auth.js';
 import { previewRoute } from './preview.js';
 import { publishRoute } from './publish.js';
 import { uploadRoute } from './upload.js';
+import fastifyRateLimit, { RateLimitPluginOptions } from '@fastify/rate-limit';
 
 interface IngestRouteOptions {
   qdrantClient: QdrantClient;
@@ -24,9 +25,9 @@ export async function ingestRoutes(fastify: FastifyInstance, options: IngestRout
   });
 
   // Register specific rate limiting for /ingest/* routes (more generous for bulk operations)
-  const rateLimitPlugin = await import('@fastify/rate-limit');
-  await fastify.register(rateLimitPlugin.default, {
-    max: 300, // 300 requests per minute per IP for ingest endpoints (5 req/sec)
+  // const rateLimitPlugin = await import('@fastify/rate-limit'); // No longer needed
+  await fastify.register(fastifyRateLimit, {
+    max: 10000, // 10k requests per minute for high-throughput individual file processing
     timeWindow: '1 minute',
     keyGenerator: (request: FastifyRequest) => {
       // Rate limit by authenticated token + tenant for Docker environments
@@ -43,6 +44,27 @@ export async function ingestRoutes(fastify: FastifyInstance, options: IngestRout
 
       return `ingest:ip:${ip}:${tenant}`;
     },
+    skip: (request: FastifyRequest) => {
+      // Skip rate limiting for local/Docker traffic to handle high-frequency individual file triggers
+      const ip = (request as any).ip || 'unknown';
+      const isLocalTraffic = ip === '127.0.0.1' ||
+                           ip === '::1' ||
+                           ip === 'localhost' ||
+                           ip?.startsWith('172.') ||  // Docker networks
+                           ip?.startsWith('10.') ||   // Private networks
+                           ip?.startsWith('192.168.'); // Local networks
+
+      if (isLocalTraffic) {
+        fastify.log.debug({
+          ip,
+          endpoint: (request as any).url,
+          message: 'Skipping rate limit for local traffic'
+        }, 'Rate limit bypass for local traffic');
+        return true;
+      }
+
+      return false;
+    },
     errorResponseBuilder: (request: FastifyRequest, context: any) => {
       // Log rate limit exceeded for security monitoring
       fastify.log.warn({
@@ -57,7 +79,7 @@ export async function ingestRoutes(fastify: FastifyInstance, options: IngestRout
 
       return {
         error: 'Rate Limit Exceeded',
-        message: `Too many ingest requests. Limit: 300 requests per minute. Try again in ${Math.round(context.ttl / 1000)} seconds.`,
+        message: `Too many ingest requests. Limit: 10000 requests per minute. Try again in ${Math.round(context.ttl / 1000)} seconds.`,
         retryAfter: Math.round(context.ttl / 1000),
         code: 'INGEST_RATE_LIMIT_EXCEEDED'
       };
@@ -70,7 +92,7 @@ export async function ingestRoutes(fastify: FastifyInstance, options: IngestRout
         timestamp: new Date().toISOString()
       }, 'Ingest rate limit threshold reached');
     }
-  });
+  } as RateLimitPluginOptions); // Explicitly cast to guide TypeScript
 
   // Apply authentication to all ingest routes
   fastify.addHook('preValidation', authMiddleware);
@@ -161,19 +183,19 @@ export async function ingestRoutes(fastify: FastifyInstance, options: IngestRout
           path: '/ingest/preview',
           method: 'POST',
           description: 'Preview documents for ingestion without persisting',
-          rateLimit: '300 requests per minute per IP'
+          rateLimit: '10000 requests per minute per IP (local traffic bypassed)'
         },
         {
           path: '/ingest/publish',
           method: 'POST',
           description: 'Publish documents to the vector database',
-          rateLimit: '300 requests per minute per IP'
+          rateLimit: '10000 requests per minute per IP (local traffic bypassed)'
         },
         {
           path: '/ingest/upload',
           method: 'POST',
           description: 'Upload files for conversion and optional publishing',
-          rateLimit: '300 requests per minute per IP'
+          rateLimit: '10000 requests per minute per IP (local traffic bypassed)'
         }
       ],
       authentication: {
@@ -182,7 +204,7 @@ export async function ingestRoutes(fastify: FastifyInstance, options: IngestRout
         description: 'All ingest endpoints require valid x-ingest-token header'
       },
       security: {
-        rateLimit: '300 requests per minute per IP',
+        rateLimit: '10000 requests per minute per IP (local traffic bypassed)',
         cors: 'Restricted to allowed origins only',
         headers: 'Security headers enforced'
       },
@@ -195,7 +217,7 @@ export async function ingestRoutes(fastify: FastifyInstance, options: IngestRout
   fastify.log.info({
     features: [
       'Centralized authentication',
-      '300 req/min rate limiting',
+      '10k req/min rate limiting (local traffic bypassed)',
       'Structured logging',
       'Security monitoring'
     ],

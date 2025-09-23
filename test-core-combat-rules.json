@@ -1,0 +1,14 @@
+[{
+  "meta": {
+    "tenant": "zenithfall",
+    "docId": "core-combat-rules",
+    "source": "manual",
+    "sha256": "test123",
+    "acl": ["public"],
+    "timestamp": "2025-09-23T17:00:00.000Z"
+  },
+  "blocks": [{
+    "type": "text",
+    "text": "Core Combat Rules: In Zenithfall, combat follows a turn-based system where each character can perform one action per turn. Players roll initiative to determine turn order. Attack rolls use 1d20 + ability modifier + proficiency bonus. Damage is calculated based on weapon type and character strength. Critical hits occur on natural 20s and double the damage dice. Spellcasting requires spell slots and concentration checks for ongoing effects."
+  }]
+}]

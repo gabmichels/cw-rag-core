@@ -1,126 +1,170 @@
-# PHASE 2.1 - High-Throughput Ingestion & Queue Management
+# PHASE 2.1 - High-Throughput Individual File Processing & Request Coordination
 
 ## 🎯 **Objective**
-Implement robust, high-throughput document ingestion system capable of handling tenant onboarding scenarios with thousands of files without data loss or artificial rate limiting.
+Implement robust, high-throughput document ingestion system for individual file trigger architecture capable of handling hundreds of concurrent file changes without overwhelming the API or losing data.
 
-## 🚨 **Current Critical Issues**
-- **Data Loss Risk**: Failed batches permanently lost (no retry queue)
-- **Low Throughput**: 50 files per 15-min run = 200 files/hour max
-- **Memory-Only State**: Workflow crash = total data loss
-- **No Failure Recovery**: Rate limit hits = remaining batches discarded
-- **Onboarding Bottleneck**: 5000 files = 25+ hours to ingest
+## 🚨 **Updated Critical Issues (Individual File Trigger Architecture)**
+- **API Overwhelm Risk**: 250 file changes = 500 concurrent API calls (2 per file)
+- **Rate Limit Bottleneck**: 10k/min API limit can be hit with bulk file operations
+- **Workflow Scalability**: Each file change spawns separate n8n workflow execution
+- **Resource Exhaustion**: High concurrent workflow executions = memory/CPU stress
+- **Request Coordination**: No coordination between concurrent individual workflows
+- **Data Consistency**: Concurrent updates to shared static data can cause corruption
 
 ## 📋 **Phase 2.1 Implementation Tasks**
 
-### **1. High-Throughput N8N Workflow Enhancement**
+### **1. Individual File Processing Architecture Optimization**
 **Priority: CRITICAL** 🔴
 
-#### **1.1 Remove Artificial Limits**
+#### **1.1 API Request Coordination & Throttling (IMPLEMENTED)**
 ```javascript
-// Current restrictive limits:
-maxFiles: 50,              // REMOVE - Process all available
-batchSize: 5,              // INCREASE to 25-50 for efficiency
-maxBatchesPerRun: 10,      // INCREASE to 100+ for throughput
+// IMPLEMENTED: Request throttling in n8n workflow
+const requestTracker = staticData.requestTracker || { requests: [], windowMs: 60000 };
+const maxRequestsPerMinute = 4000; // Conservative under 10k API limit
 
-// New high-throughput configuration:
-maxFiles: 999999,          // No artificial file limit
-batchSize: 25,             // Larger batches = fewer API calls
-maxBatchesPerRun: 200,     // Process 5000 files per run
-concurrentBatches: 5,      // Parallel processing
+// Throttle when approaching limits
+if (requestTracker.requests.length >= maxRequestsPerMinute) {
+  await new Promise(resolve => setTimeout(resolve, waitTime));
+}
+
+// Track API calls per workflow execution
+requestTracker.requests.push(now, now + 100); // preview + publish
 ```
 
-#### **1.2 Implement Persistent Processing Queue**
+#### **1.2 API Rate Limit Bypass for Local Traffic (IMPLEMENTED)**
+```typescript
+// IMPLEMENTED: Skip rate limits for Docker/local traffic
+skip: (request: FastifyRequest) => {
+  const ip = (request as any).ip || 'unknown';
+  return ip === '127.0.0.1' || ip?.startsWith('172.') || ip?.startsWith('10.');
+},
+max: 10000, // Increased from 300 to 10k requests/minute
+```
+
+#### **1.3 Shared State Management & Data Consistency**
 ```javascript
-// Workflow Static Data Structure:
-$workflow.staticData = {
-  processingQueue: {
-    pending: [],           // Files waiting to be processed
-    processing: [],        // Currently being processed
-    failed: [],            // Failed batches for retry
-    completed: []          // Successfully processed (for audit)
-  },
-  retryManager: {
-    maxRetries: 5,
-    retryDelay: 2000,      // Start with 2 seconds
-    exponentialBackoff: true
-  },
-  metrics: {
-    totalFiles: 0,
-    processedFiles: 0,
-    failedFiles: 0,
-    avgProcessingTime: 0
+// CRITICAL: Implement atomic operations for shared static data
+const atomicUpdateFileHashes = (filePath, newHash) => {
+  const staticData = $getWorkflowStaticData('global');
+  const lockKey = `lock:${filePath}`;
+
+  // Simple file-level locking to prevent corruption
+  if (staticData[lockKey]) {
+    console.log(`File ${filePath} is locked, skipping update`);
+    return false;
   }
-}
+
+  staticData[lockKey] = Date.now();
+  staticData.fileHashes = staticData.fileHashes || {};
+  staticData.fileHashes[filePath] = newHash;
+  delete staticData[lockKey];
+
+  return true;
+};
 ```
 
-#### **1.3 Add Batch-Level Retry Logic**
+#### **1.4 Workflow Execution Monitoring & Circuit Breaker**
 ```javascript
-// Retry failed batches with exponential backoff
-function addToRetryQueue(batch, error, attempt = 1) {
-  const retryDelay = Math.min(2000 * Math.pow(2, attempt-1), 30000); // Max 30s
-  const nextRetry = Date.now() + retryDelay;
+// Monitor concurrent workflow executions
+const executionTracker = {
+  activeWorkflows: new Set(),
+  maxConcurrent: 50,
 
-  $workflow.staticData.processingQueue.failed.push({
-    batch: batch,
-    error: error.message,
-    attempt: attempt,
-    nextRetry: nextRetry,
-    originalTimestamp: new Date().toISOString()
-  });
-}
+  canExecute(workflowId) {
+    return this.activeWorkflows.size < this.maxConcurrent;
+  },
+
+  register(workflowId) {
+    this.activeWorkflows.add(workflowId);
+  },
+
+  complete(workflowId) {
+    this.activeWorkflows.delete(workflowId);
+  }
+};
 ```
 
-### **2. API Rate Limiting Optimization**
+### **2. API Optimization for Individual File Processing**
 **Priority: HIGH** 🟡
 
-#### **2.1 Remove Local Rate Limits for High-Throughput**
+#### **2.1 Enhanced Rate Limiting (COMPLETED)**
 ```typescript
-// apps/api/src/routes/ingest/index.ts
+// COMPLETED: Updated rate limits for individual file processing
 await fastify.register(rateLimitPlugin.default, {
-  max: 10000,              // 10k requests per minute for local processing
+  max: 10000,              // 10k requests per minute for high-throughput
   timeWindow: '1 minute',
-  // Skip rate limiting for localhost/Docker internal traffic
   skip: (request: FastifyRequest) => {
+    // Skip rate limiting for local/Docker traffic
     const ip = (request as any).ip;
-    return ip === '127.0.0.1' ||
-           ip === '::1' ||
-           ip?.startsWith('172.') ||  // Docker networks
-           ip?.startsWith('10.');     // Private networks
+    return ip === '127.0.0.1' || ip?.startsWith('172.') || ip?.startsWith('10.');
   }
 });
 ```
 
-#### **2.2 Add Bulk Ingestion Endpoint**
+#### **2.2 Request Batching & Coalescing (NEW REQUIREMENT)**
 ```typescript
-// New endpoint: POST /ingest/bulk
-// Accepts arrays of 100+ documents for efficient processing
-fastify.post('/bulk', {
+// NEW: Implement request coalescing for rapid file changes
+class RequestCoalescer {
+  private pendingRequests = new Map<string, {
+    document: NormalizedDoc,
+    timestamp: number,
+    resolve: Function,
+    reject: Function
+  }>();
+
+  private batchTimeout = 500; // 500ms window for coalescing
+
+  async submitDocument(doc: NormalizedDoc): Promise<void> {
+    const key = `${doc.meta.tenant}:${doc.meta.docId}`;
+
+    // Cancel previous request for same document
+    if (this.pendingRequests.has(key)) {
+      const existing = this.pendingRequests.get(key);
+      existing.resolve({ status: 'superseded' });
+    }
+
+    return new Promise((resolve, reject) => {
+      this.pendingRequests.set(key, {
+        document: doc,
+        timestamp: Date.now(),
+        resolve,
+        reject
+      });
+
+      // Process batch after timeout
+      setTimeout(() => this.processBatch(), this.batchTimeout);
+    });
+  }
+
+  private async processBatch() {
+    const batch = Array.from(this.pendingRequests.values())
+      .map(req => req.document);
+
+    if (batch.length > 0) {
+      await this.bulkProcess(batch);
+      this.pendingRequests.clear();
+    }
+  }
+}
+```
+
+#### **2.3 Bulk Processing Optimization**
+```typescript
+// Enhanced bulk endpoint for coalesced requests
+fastify.post('/ingest/batch', {
   schema: {
     body: {
       type: 'object',
       properties: {
         documents: {
           type: 'array',
-          maxItems: 1000,    // Process up to 1000 docs per request
+          maxItems: 500,    // Reasonable batch size for individual file triggers
           items: NormalizedDocSchema
         },
-        tenant: { type: 'string' },
+        coalesced: { type: 'boolean' }, // Flag for coalesced requests
         priority: { type: 'string', enum: ['low', 'normal', 'high'] }
       }
     }
-  },
-  handler: async (request, reply) => {
-    // Parallel processing with configurable concurrency
-    const results = await Promise.allSettled(
-      chunk(documents, 50).map(batch => processBatch(batch))
-    );
-
-    return {
-      total: documents.length,
-      processed: results.filter(r => r.status === 'fulfilled').length,
-      failed: results.filter(r => r.status === 'rejected').length,
-      errors: results.filter(r => r.status === 'rejected').map(r => r.reason)
-    };
   }
 });
 ```
@@ -266,45 +310,47 @@ const failureTests = [
 ];
 ```
 
-## 🎯 **Success Metrics**
+## 🎯 **Success Metrics (Individual File Architecture)**
 
 ### **Performance Targets**
-- **Throughput**: 1000+ files per hour
-- **Reliability**: 99%+ success rate
-- **Recovery**: Zero data loss on failures
-- **Onboarding**: 5000 files < 2 hours
+- **Individual File Latency**: < 2 seconds per file (preview + publish)
+- **Concurrent Handling**: 100+ simultaneous file changes without blocking
+- **API Efficiency**: 95%+ request success rate under load
+- **Resource Usage**: < 80% memory/CPU during bulk operations
 
 ### **Operational Metrics**
-- Queue depth < 1000 files
-- Error rate < 1%
-- Memory usage < 80%
-- Processing latency < 30s per batch
+- **Request Queue Depth**: < 100 pending API calls
+- **Workflow Execution Time**: < 10 seconds per file
+- **Static Data Corruption**: 0% incidents
+- **Rate Limit Hits**: < 1% for local traffic
+- **Coalescing Efficiency**: 90%+ duplicate requests eliminated
 
-## 🚀 **Implementation Timeline**
+## 🚀 **Implementation Timeline (Individual File Architecture)**
 
-### **Week 1: Core Queue System**
-- [ ] Remove artificial file limits
-- [ ] Implement persistent queue in workflow static data
-- [ ] Add batch retry logic with exponential backoff
-- [ ] Increase batch sizes and concurrency
+### **Week 1: Core Individual File Processing (PARTIALLY COMPLETED)**
+- [x] Enhanced API rate limits for local traffic (10k/min)
+- [x] Request throttling in n8n workflow
+- [x] Proper tombstone SHA256 generation
+- [ ] Atomic static data operations to prevent corruption
+- [ ] Workflow execution monitoring and circuit breaker
 
-### **Week 2: API Optimization**
-- [ ] Remove rate limits for local/Docker traffic
-- [ ] Implement bulk ingestion endpoint
-- [ ] Add parallel batch processing
-- [ ] Optimize Qdrant upsert operations
+### **Week 2: Request Optimization & Coalescing**
+- [ ] Implement request coalescing for rapid file changes
+- [ ] Add bulk processing endpoint for coalesced requests
+- [ ] Optimize concurrent workflow execution limits
+- [ ] Add workflow-level locking mechanisms
 
-### **Week 3: Monitoring & Testing**
-- [ ] Implement queue health monitoring
-- [ ] Add progress tracking for onboarding
-- [ ] Create load testing scenarios
-- [ ] Validate failure recovery mechanisms
+### **Week 3: Monitoring & Load Testing**
+- [ ] Individual file processing performance monitoring
+- [ ] Concurrent workflow execution tracking
+- [ ] Load testing with 100+ simultaneous file changes
+- [ ] Static data integrity validation
 
-### **Week 4: Production Hardening**
-- [ ] Add alerting for queue issues
-- [ ] Implement graceful degradation
-- [ ] Performance tuning and optimization
-- [ ] Documentation and runbooks
+### **Week 4: Production Hardening & Scaling**
+- [ ] Horizontal scaling: Multiple n8n worker instances
+- [ ] Enhanced error handling for concurrent operations
+- [ ] Performance tuning for high-frequency file operations
+- [ ] Documentation for individual file trigger architecture
 
 ## 🔧 **Technical Notes**
 
@@ -323,11 +369,31 @@ const failureTests = [
 - Vertical scaling: Increased container resources
 - Database scaling: Qdrant cluster for large volumes
 
-## 🎯 **Definition of Done**
+## 🎯 **Definition of Done (Individual File Architecture)**
 
-✅ **System can ingest 5000 files in under 2 hours**
-✅ **Zero data loss on workflow failures**
-✅ **Automatic retry of failed batches**
-✅ **Real-time progress tracking**
-✅ **Load tested with 10k+ files**
-✅ **Comprehensive error monitoring**
+✅ **System can handle 100+ concurrent file changes without blocking**
+✅ **Individual file processing completes in < 2 seconds**
+✅ **Zero static data corruption under concurrent access**
+✅ **API rate limits effectively bypass local traffic**
+✅ **Request coalescing eliminates 90%+ duplicate operations**
+✅ **Load tested with rapid bulk file changes (500+ files in 1 minute)**
+✅ **Comprehensive monitoring for concurrent workflow executions**
+
+## 🔄 **Architecture Migration Notes**
+
+### **Key Changes Made:**
+1. **CRON → File Trigger**: Moved from scheduled batch processing to real-time individual file triggers
+2. **Batch → Individual**: Each file change now spawns separate workflow execution
+3. **Centralized → Distributed**: Processing logic distributed across many concurrent workflows
+
+### **New Challenges Addressed:**
+1. **API Overwhelm**: 10k/min rate limits + local traffic bypass + request throttling
+2. **Concurrent State**: Atomic operations needed for shared static data
+3. **Resource Management**: Circuit breaker for workflow execution limits
+4. **Request Efficiency**: Coalescing for rapid successive changes to same file
+
+### **Performance Implications:**
+- **Latency**: Much lower (real-time vs 15-min cycles)
+- **Throughput**: Higher potential but needs coordination
+- **Scalability**: Horizontal scaling via multiple n8n workers
+- **Complexity**: Higher due to concurrency management

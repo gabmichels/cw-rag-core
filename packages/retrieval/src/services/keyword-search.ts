@@ -25,23 +25,29 @@ export class QdrantKeywordSearchService implements KeywordSearchService {
     filter?: Record<string, any>
   ): Promise<KeywordSearchResult[]> {
     try {
-      // Use Qdrant's scroll with text filter for BM25-style keyword search
-      // This leverages the full-text index on the content field
+      // Use Qdrant's scroll with proper keyword search
+      // Break query into individual terms and search for any of them
+      const queryTerms = query.toLowerCase().split(/\s+/).filter(term => term.length > 2);
+      console.log('Query terms for keyword search:', queryTerms);
+
       const searchFilter: any = {
-        must: [
-          {
-            key: 'content',
-            match: {
-              text: query
-            }
+        should: queryTerms.map(term => ({
+          key: 'content',
+          match: {
+            text: term
           }
-        ]
+        })),
+        must: []
       };
 
-      // Add additional filters if provided
+      // Add additional filters if provided (RBAC filters)
       if (filter && Object.keys(filter).length > 0) {
-        searchFilter.must.push(...this.buildFilterConditions(filter));
+        this.mergeFilterConditions(searchFilter, filter);
       }
+
+      console.log('Keyword search - filter:', JSON.stringify(searchFilter, null, 2));
+      console.log('Keyword search - query:', query);
+      console.log('Keyword search - limit:', limit);
 
       const scrollResult = await this.qdrantClient.scroll(collectionName, {
         filter: searchFilter,
@@ -50,7 +56,9 @@ export class QdrantKeywordSearchService implements KeywordSearchService {
         with_vector: false // We don't need vectors for keyword search
       });
 
-      return scrollResult.points.map((point: any) => ({
+      console.log('Keyword search scroll results count:', scrollResult.points?.length || 0);
+
+      const results = scrollResult.points.map((point: any) => ({
         id: point.id.toString(),
         score: this.calculateBM25Score(query, point.payload?.content || ''),
         payload: point.payload || {},
@@ -59,9 +67,51 @@ export class QdrantKeywordSearchService implements KeywordSearchService {
       .sort((a: KeywordSearchResult, b: KeywordSearchResult) => b.score - a.score) // Sort by BM25 score descending
       .slice(0, limit);
 
+      console.log('Keyword search final results count:', results.length);
+      results.forEach((result: any, i: number) => {
+        const content = result.content;
+        const contentPreview = typeof content === 'string' ? content.substring(0, 100) : String(content || '').substring(0, 100);
+        console.log(`Keyword Result ${i + 1}: score=${result.score}, docId=${result.payload?.docId}, content preview=${contentPreview}...`);
+      });
+
+      return results;
+
     } catch (error) {
       console.error('Keyword search failed:', error);
       throw new Error(`Keyword search failed: ${(error as Error).message}`);
+    }
+  }
+
+  private mergeFilterConditions(baseFilter: any, additionalFilter: Record<string, any>): void {
+    // If the additional filter has a complex structure (RBAC filter), merge properly
+    if (additionalFilter.must && Array.isArray(additionalFilter.must)) {
+      // Merge must conditions
+      baseFilter.must.push(...additionalFilter.must);
+    }
+
+    if (additionalFilter.should && Array.isArray(additionalFilter.should)) {
+      // Add should conditions (for language preferences, etc.)
+      if (!baseFilter.should) {
+        baseFilter.should = [];
+      }
+      baseFilter.should.push(...additionalFilter.should);
+    }
+
+    // Handle simple key-value filters
+    for (const [key, value] of Object.entries(additionalFilter)) {
+      if (key !== 'must' && key !== 'should') {
+        if (Array.isArray(value)) {
+          baseFilter.must.push({
+            key,
+            match: { any: value }
+          });
+        } else {
+          baseFilter.must.push({
+            key,
+            match: { value }
+          });
+        }
+      }
     }
   }
 

@@ -17,6 +17,7 @@ interface AskPageState {
   error: string | null;
   showRawChunks: boolean;
   selectedCitationId?: string;
+  docId: string; // Add docId to state
 }
 
 export default function AskPage() {
@@ -27,6 +28,7 @@ export default function AskPage() {
     error: null,
     showRawChunks: false,
     selectedCitationId: undefined,
+    docId: '', // Default value for docId
   });
 
   const handleSearch = async (query: string) => {
@@ -44,10 +46,11 @@ export default function AskPage() {
         query: query.trim(),
         userContext: {
           id: 'anonymous',
-          tenantId: '550e8400-e29b-41d4-a716-446655440000',
-          groupIds: ['user'],
+          tenantId: 'zenithfall', // Updated tenantId
+          groupIds: ['public'], // Updated groupIds
         },
         k: 10,
+        ...(state.docId.trim() && { docId: state.docId.trim() }),
       };
 
       const response = await fetch('/api/ask', {
@@ -90,6 +93,21 @@ export default function AskPage() {
         <p className="text-gray-600">
           Get answers from your knowledge base with citations and freshness indicators
         </p>
+      </div>
+
+      {/* Document ID Input */}
+      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+        <label htmlFor="docId" className="block text-sm font-medium text-gray-700">
+          Document ID (Optional, for specific document queries)
+        </label>
+        <input
+          type="text"
+          id="docId"
+          className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm p-2"
+          value={state.docId}
+          onChange={(e) => setState(prev => ({ ...prev, docId: e.target.value }))}
+          placeholder="e.g., my-specific-document-id"
+        />
       </div>
 
       {/* Question Input */}

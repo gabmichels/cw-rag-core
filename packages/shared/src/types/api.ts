@@ -26,6 +26,7 @@ export interface AskRequest {
   userContext: UserContext;
   k?: number; // Number of documents to retrieve
   filter?: Record<string, any>; // Metadata filter for RAG
+  docId?: string; // Optional document ID to filter search results to a specific document
 
   // Hybrid search configuration
   hybridSearch?: {

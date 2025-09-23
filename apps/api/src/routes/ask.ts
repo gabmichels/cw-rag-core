@@ -45,12 +45,35 @@ class EnhancedQdrantService implements VectorSearchService {
   ) {}
 
   async search(collectionName: string, params: any): Promise<any[]> {
+    console.log('Vector search - filter:', JSON.stringify(params.filter, null, 2));
+    console.log('Vector search - limit:', params.limit);
+
     const results = await this.qdrantClient.search(this.collectionName, {
       vector: params.queryVector,
       limit: params.limit,
       filter: params.filter,
       with_payload: true
     });
+
+    console.log('Vector search results count:', results.length);
+    const targetPointId = 'a3d5597a-1d56-b174-03e0-fc7f2722b64e';
+    let targetFound = false;
+
+    results.forEach((result, i) => {
+      const content = result.payload?.content;
+      const contentPreview = typeof content === 'string' ? content.substring(0, 100) : String(content || '').substring(0, 100);
+      const isTarget = result.id === targetPointId;
+      if (isTarget) {
+        targetFound = true;
+        console.log(`🎯 TARGET FOUND! Result ${i + 1}: score=${result.score}, id=${result.id}, docId=${result.payload?.docId}, content preview=${contentPreview}...`);
+      } else {
+        console.log(`Result ${i + 1}: score=${result.score}, id=${result.id}, docId=${result.payload?.docId}, content preview=${contentPreview}...`);
+      }
+    });
+
+    if (!targetFound) {
+      console.log(`❌ TARGET POINT ${targetPointId} NOT FOUND in top ${results.length} results!`);
+    }
 
     return results.map(result => ({
       id: result.id,
@@ -62,10 +85,15 @@ class EnhancedQdrantService implements VectorSearchService {
 
   // Add scroll method for keyword search compatibility
   async scroll(collectionName: string, params: any): Promise<any> {
-    // Use existing search functionality as fallback for scroll
-    return {
-      points: await this.search(collectionName, params)
-    };
+    // For keyword search, use Qdrant's scroll API directly without vectors
+    const scrollResult = await this.qdrantClient.scroll(this.collectionName, {
+      filter: params.filter,
+      limit: params.limit,
+      with_payload: params.with_payload !== false,
+      with_vector: params.with_vector === true
+    });
+
+    return scrollResult;
   }
 
   // Add discover method for semantic keyword search
@@ -159,12 +187,13 @@ export async function askRoute(fastify: FastifyInstance, options: AskRouteOption
             properties: {
               id: { type: 'string' },
               groupIds: { type: 'array', items: { type: 'string' } },
-              tenantId: { type: 'string', format: 'uuid' },
+              tenantId: { type: 'string' },
             },
             required: ['id', 'groupIds', 'tenantId'],
           },
           k: { type: 'integer', minimum: 1 },
           filter: { type: 'object' },
+          docId: { type: 'string' },
           hybridSearch: {
             type: 'object',
             properties: {
@@ -368,6 +397,7 @@ export async function askRoute(fastify: FastifyInstance, options: AskRouteOption
         userContext,
         k,
         filter,
+        docId,
         hybridSearch,
         reranker,
         synthesis,
@@ -418,6 +448,30 @@ export async function askRoute(fastify: FastifyInstance, options: AskRouteOption
 
         const processRequest = async () => {
           // Prepare hybrid search request with enhanced configuration
+          let enhancedFilter = filter ? { ...filter } : undefined;
+
+          // Add docId filter in Qdrant format if provided
+          if (docId) {
+            const docIdFilter = {
+              key: "docId",
+              match: { value: docId }
+            };
+
+            if (enhancedFilter) {
+              // If there's already a filter, add docId to existing must conditions
+              if (enhancedFilter.must) {
+                enhancedFilter.must.push(docIdFilter);
+              } else {
+                enhancedFilter.must = [docIdFilter];
+              }
+            } else {
+              // If no existing filter, create new filter with just docId
+              enhancedFilter = {
+                must: [docIdFilter]
+              };
+            }
+          }
+
           const hybridSearchRequest: HybridSearchRequest = {
             query,
             limit: k || 10,
@@ -425,7 +479,7 @@ export async function askRoute(fastify: FastifyInstance, options: AskRouteOption
             keywordWeight: hybridSearch?.keywordWeight ?? 0.3,
             rrfK: hybridSearch?.rrfK ?? 60,
             enableKeywordSearch: hybridSearch?.enableKeywordSearch ?? true,
-            filter,
+            filter: enhancedFilter,
             tenantId: userContext.tenantId
           };
 

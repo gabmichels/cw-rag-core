@@ -126,28 +126,14 @@
     },
     {
       "parameters": {
-        "jsCode": "// Check if file should be processed and handle idempotency\n// Get data from previous nodes\nconst initData = $('Initialize Config & Extract Event1').first().json;\nconst filePath = initData.filePath;\nconst config = initData.config;\nconst fileContent = $json.data; // File content from Read File Content node\nconst crypto = require('crypto');\nconst path = require('path');\n\nconsole.log(`Checking file: ${filePath}`);\nconsole.log(`File content length: ${fileContent ? fileContent.length : 'undefined'}`);\n\n// Filter out excluded paths\nif (config.excludePaths.some(excludePath => filePath.includes(`\\\\${excludePath}\\\\`))) {\n  console.log(`SKIP: ${filePath} (excluded path)`);\n  return [{ _skip: true, reason: 'excluded_path', filePath }];\n}\n\n// Check file extension\nconst ext = path.extname(filePath).toLowerCase();\nif (!config.fileExtensions.includes(ext)) {\n  console.log(`SKIP: ${filePath} (not markdown)`);\n  return [{ _skip: true, reason: 'not_markdown', filePath }];\n}\n\n// Calculate file hash for idempotency\nconst fileHash = crypto.createHash('sha256').update(fileContent).digest('hex');\n\n// Get previous hash from static data\nconst staticData = $getWorkflowStaticData('global');\nconst fileHashes = staticData.fileHashes || {};\nconst previousHash = fileHashes[filePath];\n\nif (previousHash && previousHash === fileHash) {\n  console.log(`SKIP: ${filePath} (unchanged)`);\n  return [{ _skip: true, reason: 'unchanged', filePath }];\n}\n\nconsole.log(`PROCESS: ${filePath} (${previousHash ? 'modified' : 'new'})`);\n\n// Update hash in static data\nfileHashes[filePath] = fileHash;\nstaticData.fileHashes = fileHashes;\n\nreturn [{\n  filePath,\n  fileContent,\n  fileHash,\n  isNew: !previousHash,\n  config,\n  timestamp: new Date().toISOString()\n}];"
-      },
-      "name": "Check File & Idempotency1",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        -1440,
-        1216
-      ],
-      "id": "0dcde7e3-7a0d-4806-97ed-3b21586b8254",
-      "notes": "Check if file should be processed and handle idempotency"
-    },
-    {
-      "parameters": {
         "jsCode": "// Parse markdown file and create normalized document\nconst path = require('path');\nconst filePath = $json.filePath;\nconst content = $json.fileContent;\nconst config = $json.config;\nconst fileHash = $json.fileHash;\n\ntry {\n  // Parse frontmatter\n  const frontmatterRegex = /^---\\s*\\n([\\s\\S]*?)\\n---\\s*\\n([\\s\\S]*)$/;\n  const match = content.match(frontmatterRegex);\n  \n  let frontmatter = {};\n  let markdownContent = content;\n  \n  if (match) {\n    try {\n      const yamlContent = match[1];\n      const lines = yamlContent.split('\\n');\n      \n      for (const line of lines) {\n        const colonIndex = line.indexOf(':');\n        if (colonIndex > 0) {\n          const key = line.substring(0, colonIndex).trim();\n          const value = line.substring(colonIndex + 1).trim();\n          \n          if (value.startsWith('[') && value.endsWith(']')) {\n            frontmatter[key] = value.slice(1, -1).split(',').map(s => s.trim().replace(/^\"|\"$/g, ''));\n          } else {\n            frontmatter[key] = value.replace(/^\"|\"$/g, '');\n          }\n        }\n      }\n      \n      markdownContent = match[2];\n    } catch (yamlError) {\n      console.log(`Failed to parse frontmatter for ${filePath}:`, yamlError.message);\n    }\n  }\n  \n  // Generate docId as vault-relative forward-slash path\n  const relativePath = path.relative(config.obsidianVaultPath, filePath);\n  const docId = relativePath.replace(/\\.(md|markdown)$/i, '').replace(/\\\\/g, '/');\n  \n  // Extract title\n  const title = frontmatter.title || \n                markdownContent.match(/^#\\s+(.+)$/m)?.[1] || \n                path.basename(filePath, path.extname(filePath));\n  \n  // Parse content into blocks\n  const blocks = [];\n  const sections = markdownContent.split(/\\n(?=#{1,6}\\s)/);\n  \n  for (const section of sections) {\n    const trimmed = section.trim();\n    if (trimmed) {\n      let blockType = 'text';\n      if (trimmed.includes('```')) {\n        blockType = 'code';\n      } else if (trimmed.includes('|') && trimmed.includes('---')) {\n        blockType = 'table';\n      }\n      \n      blocks.push({\n        type: blockType,\n        text: trimmed,\n        html: trimmed\n      });\n    }\n  }\n  \n  // Create NormalizedDoc\n  const normalizedDoc = {\n    meta: {\n      tenant: config.tenantId,\n      docId: docId,\n      source: config.source,\n      path: relativePath.replace(/\\\\/g, '/'),\n      title: title,\n      lang: config.lang,\n      version: frontmatter.version || '1.0',\n      sha256: fileHash,\n      acl: frontmatter.acl || frontmatter.tags || config.acl,\n      authors: frontmatter.authors || (frontmatter.author ? [frontmatter.author] : []),\n      tags: frontmatter.tags || [],\n      timestamp: new Date().toISOString(),\n      modifiedAt: new Date().toISOString(),\n      deleted: false\n    },\n    blocks: blocks\n  };\n  \n  console.log(`Parsed document: ${docId}`);\n  \n  return [normalizedDoc];\n  \n} catch (error) {\n  console.error(`Error parsing ${filePath}:`, error.message);\n  return [{\n    _error: true,\n    _filePath: filePath,\n    _errorMessage: error.message\n  }];\n}"
       },
       "name": "Parse Document1",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -1184,
-        1216
+        -1136,
+        1232
       ],
       "id": "785d7fc3-99c0-446b-b7c8-0f40d43f79ba",
       "notes": "Parse markdown file into normalized document format"
@@ -318,6 +304,35 @@
       ],
       "id": "257934aa-343c-4185-a886-d9b8b48e8d81",
       "notes": "Create tombstone document for deleted file"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Check if file should be processed and handle idempotency\n// Get data from previous nodes\nconst initData = $input.first().json;\nconst filePath = initData.filePath;\nconst config = initData.config;\nconst fileContent = initData.data; // File content from Read File Content node\nconst crypto = require('crypto');\nconst path = require('path');\n\nconsole.log(`Checking file: ${filePath}`);\nconsole.log(`File content length: ${fileContent ? fileContent.length : 'undefined'}`);\n\n// Filter out excluded paths\nif (config.excludePaths.some(excludePath => filePath.includes(`\\\\${excludePath}\\\\`))) {\n  console.log(`SKIP: ${filePath} (excluded path)`);\n  return [{ _skip: true, reason: 'excluded_path', filePath }];\n}\n\n// Check file extension\nconst ext = path.extname(filePath).toLowerCase();\nif (!config.fileExtensions.includes(ext)) {\n  console.log(`SKIP: ${filePath} (not markdown)`);\n  return [{ _skip: true, reason: 'not_markdown', filePath }];\n}\n\n// Calculate file hash for idempotency\nconst fileHash = crypto.createHash('sha256').update(fileContent).digest('hex');\n\n// Get previous hash from static data\nconst staticData = $getWorkflowStaticData('global');\nconst fileHashes = staticData.fileHashes || {};\nconst previousHash = fileHashes[filePath];\n\nif (previousHash && previousHash === fileHash) {\n  console.log(`SKIP: ${filePath} (unchanged)`);\n  return [{ _skip: true, reason: 'unchanged', filePath }];\n}\n\nconsole.log(`PROCESS: ${filePath} (${previousHash ? 'modified' : 'new'})`);\n\n// Update hash in static data\nfileHashes[filePath] = fileHash;\nstaticData.fileHashes = fileHashes;\n\nreturn [{\n  filePath,\n  fileContent,\n  fileHash,\n  isNew: !previousHash,\n  config,\n  timestamp: new Date().toISOString()\n}];"
+      },
+      "name": "Check File & Idempotency1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1312,
+        1216
+      ],
+      "id": "0dcde7e3-7a0d-4806-97ed-3b21586b8254",
+      "notes": "Check if file should be processed and handle idempotency"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -1504,
+        1216
+      ],
+      "id": "24eccc62-8fbc-49c0-93a2-5b9d3c89e4f9",
+      "name": "Merge"
     }
   ],
   "pinData": {},
@@ -376,6 +391,11 @@
             "node": "Read File Content1",
             "type": "main",
             "index": 0
+          },
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
           }
         ]
       ]
@@ -385,17 +405,6 @@
         [
           {
             "node": "Extract from File",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Check File & Idempotency1": {
-      "main": [
-        [
-          {
-            "node": "Parse Document1",
             "type": "main",
             "index": 0
           }
@@ -461,7 +470,7 @@
       "main": [
         [
           {
-            "node": "Check File & Idempotency1",
+            "node": "Merge",
             "type": "main",
             "index": 0
           }
@@ -478,13 +487,35 @@
           }
         ]
       ]
+    },
+    "Check File & Idempotency1": {
+      "main": [
+        [
+          {
+            "node": "Parse Document1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Check File & Idempotency1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "active": false,
   "settings": {
     "executionOrder": "v1"
   },
-  "versionId": "c8991bae-30a2-497a-8036-41a000bc1cad",
+  "versionId": "fee1d9ce-f1db-4385-9543-86c0aa3a56be",
   "meta": {
     "instanceId": "560b438390dee1f3268219b2a8ca0b8d4e15ec412dd27c0fc3ee60cc31cb05bc"
   },

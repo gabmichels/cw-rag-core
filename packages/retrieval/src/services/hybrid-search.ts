@@ -154,8 +154,9 @@ export class HybridSearchServiceImpl implements HybridSearchService {
       await this.getTenantConfig(request.tenantId) :
       this.getDefaultConfig();
 
-    // Determine if keyword search should be enabled
-    const keywordSearchEnabled = request.enableKeywordSearch ?? tenantConfig.keywordSearchEnabled;
+    // Temporarily disable keyword search to test vector-only
+    const keywordSearchEnabled = false; // Force vector-only search
+    console.log('FORCED VECTOR-ONLY SEARCH FOR DEBUGGING');
 
     // Build enhanced RBAC filter
     const rbacFilter = buildQdrantRBACFilter(userContext);
@@ -426,17 +427,34 @@ export class HybridSearchServiceImpl implements HybridSearchService {
   }
 
   private addAdditionalFilters(rbacFilter: any, additionalFilter: Record<string, any>): void {
+    // If the additional filter has a complex structure (already properly formatted), merge it
+    if (additionalFilter.must && Array.isArray(additionalFilter.must)) {
+      // Merge must conditions from properly structured filter
+      rbacFilter.must.push(...additionalFilter.must);
+    }
+
+    if (additionalFilter.should && Array.isArray(additionalFilter.should)) {
+      // Add should conditions (for language preferences, etc.)
+      if (!rbacFilter.should) {
+        rbacFilter.should = [];
+      }
+      rbacFilter.should.push(...additionalFilter.should);
+    }
+
+    // Handle simple key-value filters (for backward compatibility)
     for (const [key, value] of Object.entries(additionalFilter)) {
-      if (Array.isArray(value)) {
-        rbacFilter.must.push({
-          key,
-          match: { any: value }
-        });
-      } else {
-        rbacFilter.must.push({
-          key,
-          match: { value }
-        });
+      if (key !== 'must' && key !== 'should') {
+        if (Array.isArray(value)) {
+          rbacFilter.must.push({
+            key,
+            match: { any: value }
+          });
+        } else {
+          rbacFilter.must.push({
+            key,
+            match: { value }
+          });
+        }
       }
     }
   }
