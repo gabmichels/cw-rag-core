@@ -16,7 +16,7 @@
       },
       "name": "Cron Trigger",
       "type": "n8n-nodes-base.cron",
-      "typeVersion": 2,
+      "typeVersion": 1,
       "position": [200, 300],
       "id": "cronTrigger1",
       "notes": "Runs every 15 minutes for zenithfall vault sync\nConfigurable schedule for production deployment"
@@ -25,7 +25,7 @@
       "parameters": {},
       "name": "Manual Trigger",
       "type": "n8n-nodes-base.manualTrigger",
-      "typeVersion": 2,
+      "typeVersion": 1,
       "position": [200, 200],
       "id": "manualTrigger1",
       "notes": "Manual trigger for testing and on-demand sync"
@@ -47,7 +47,7 @@
       },
       "name": "Find Markdown Files with Metadata",
       "type": "n8n-nodes-base.executeCommand",
-      "typeVersion": 2,
+      "typeVersion": 1,
       "position": [600, 250],
       "id": "findFiles1",
       "notes": "Find markdown files with modification times using PowerShell\nRequired for idempotency checking and change detection"
@@ -87,7 +87,7 @@
     },
     {
       "parameters": {
-        "url": "={{ $env.API_URL }}/ingest/preview",
+        "url": "={{ $env.ZENITHFALL_API_URL }}/ingest/preview",
         "method": "POST",
         "sendHeaders": true,
         "headerParameters": {
@@ -152,7 +152,7 @@
     },
     {
       "parameters": {
-        "url": "={{ $env.API_URL }}/ingest/publish",
+        "url": "={{ $env.ZENITHFALL_API_URL }}/ingest/publish",
         "method": "POST",
         "sendHeaders": true,
         "headerParameters": {
@@ -250,7 +250,7 @@
     },
     {
       "parameters": {
-        "url": "={{ $env.API_URL }}/ingest/publish",
+        "url": "={{ $env.ZENITHFALL_API_URL }}/ingest/publish",
         "method": "POST",
         "sendHeaders": true,
         "headerParameters": {
@@ -520,7 +520,7 @@
     "executionOrder": "v1",
     "saveManualExecutions": true,
     "callerPolicy": "workflowsFromSameOwner",
-    "errorWorkflow": "Enhanced Error Handler"
+    "errorWorkflow": "errorHandler1"
   },
   "staticData": {},
   "tags": [

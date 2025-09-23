@@ -542,7 +542,7 @@
     "executionOrder": "v1",
     "saveManualExecutions": true,
     "callerPolicy": "workflowsFromSameOwner",
-    "errorWorkflow": "Enhanced Error Handler"
+    "errorWorkflow": "errorHandler1"
   },
   "staticData": {},
   "tags": [
