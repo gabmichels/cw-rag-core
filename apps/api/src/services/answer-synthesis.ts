@@ -6,10 +6,12 @@ import {
   AnswerSynthesisError,
   AnswerQualityMetrics,
   CitationMap,
-  StreamingSynthesisResponse
+  StreamingSynthesisResponse,
+  SynthesisMetadata
 } from '../types/synthesis.js';
 import { CitationService, createCitationService } from './citation.js';
 import { LLMClientFactory, createLLMClientFactory } from './llm-client.js';
+import { createStreamingEventHandler, StreamingEventHandler } from './streaming-event-handler.js';
 
 export interface AnswerSynthesisService {
   /**
@@ -38,6 +40,7 @@ export interface AnswerSynthesisService {
 export class AnswerSynthesisServiceImpl implements AnswerSynthesisService {
   private lastQualityMetrics: AnswerQualityMetrics | null = null;
   private guardrailService: AnswerabilityGuardrailService;
+  private streamingEventHandler: StreamingEventHandler;
 
   constructor(
     private llmClientFactory: LLMClientFactory,
@@ -45,6 +48,7 @@ export class AnswerSynthesisServiceImpl implements AnswerSynthesisService {
     private maxContextLength: number = 8000
   ) {
     this.guardrailService = createAnswerabilityGuardrailService();
+    this.streamingEventHandler = createStreamingEventHandler();
   }
 
   async synthesizeAnswer(request: SynthesisRequest): Promise<SynthesisResponse> {
@@ -321,9 +325,12 @@ export class AnswerSynthesisServiceImpl implements AnswerSynthesisService {
       }
 
       let fullAnswer = '';
-      const totalTokens = 0;
+      let totalTokens = 0;
+      let totalChunks = 0;
+      let completionReason = 'stop';
+      let llmProvider = llmClient.getConfig().provider;
 
-      // Generate streaming answer
+      // Generate streaming answer with enhanced event tracking
       for await (const chunk of llmClient.generateStreamingCompletion(
         request.query,
         contextResult.context,
@@ -336,10 +343,16 @@ export class AnswerSynthesisServiceImpl implements AnswerSynthesisService {
       )) {
         if (chunk.type === 'chunk' && typeof chunk.data === 'string') {
           fullAnswer += chunk.data;
+          totalChunks++;
           yield {
             type: 'chunk',
             data: chunk.data
           };
+        } else if (chunk.type === 'completion' && chunk.data) {
+          // Handle completion event from LLM client
+          totalTokens = chunk.data.totalTokens || totalTokens;
+          completionReason = chunk.data.completionReason || completionReason;
+          // Don't yield completion event directly - we'll handle it in ResponseCompletedEvent
         } else if (chunk.type === 'error') {
           yield chunk;
           return;
@@ -385,17 +398,41 @@ export class AnswerSynthesisServiceImpl implements AnswerSynthesisService {
       };
 
       // Emit metadata
+      const synthesisMetadata: SynthesisMetadata = {
+        tokensUsed: totalTokens,
+        synthesisTime,
+        // Use guardrail decision's confidence here for consistency with the overall decision
+        confidence: guardrailDecision.score.confidence,
+        modelUsed: llmClient.getConfig().model,
+        contextTruncated: contextResult.contextTruncated,
+        freshnessStats
+      };
+
       yield {
         type: 'metadata',
-        data: {
-          tokensUsed: totalTokens,
-          synthesisTime,
-          // Use guardrail decision's confidence here for consistency with the overall decision
-          confidence: guardrailDecision.score.confidence,
-          modelUsed: llmClient.getConfig().model,
-          contextTruncated: contextResult.contextTruncated,
-          freshnessStats
+        data: synthesisMetadata
+      };
+
+      // Emit ResponseCompletedEvent before done
+      const responseCompletedEvent = this.streamingEventHandler.handleResponseCompleted(
+        llmProvider,
+        {
+          totalChunks,
+          totalTokens,
+          responseTime: synthesisTime,
+          completionReason,
+          success: true
+        },
+        {
+          citations,
+          synthesisMetadata,
+          qualityMetrics: this.lastQualityMetrics
         }
+      );
+
+      yield {
+        type: 'response_completed',
+        data: responseCompletedEvent.data
       };
 
       yield {

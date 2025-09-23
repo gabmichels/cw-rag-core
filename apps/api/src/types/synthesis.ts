@@ -14,6 +14,12 @@ export interface LLMConfig {
   baseURL?: string; // For Azure OpenAI or vLLM
   streaming?: boolean; // For streaming support
   timeoutMs?: number; // Request timeout in milliseconds
+  streamingOptions?: {
+    bufferSize?: number;
+    flushInterval?: number;
+    enableProviderEvents?: boolean;
+    enableCompletionEvents?: boolean;
+  };
 }
 
 export interface TenantLLMConfig {
@@ -67,11 +73,66 @@ export interface SynthesisResponse {
   freshnessStats?: FreshnessStats;
 }
 
-// Streaming response types
-export interface StreamingSynthesisResponse {
-  type: 'chunk' | 'citations' | 'metadata' | 'error' | 'done';
-  data: string | CitationMap | SynthesisMetadata | Error | null;
+// Enhanced streaming event types
+export interface BaseStreamingEvent {
+  type: string;
+  provider?: LLMProvider;
+  timestamp?: number;
+  requestId?: string;
 }
+
+export interface StreamingChunkEvent extends BaseStreamingEvent {
+  type: 'chunk';
+  data: string;
+}
+
+export interface StreamingCompletionEvent extends BaseStreamingEvent {
+  type: 'completion';
+  data: {
+    totalTokens: number;
+    completionReason: 'stop' | 'length' | 'content_filter' | 'function_call' | 'fallback';
+    model: string;
+    responseMetadata?: any;
+  };
+}
+
+export interface ResponseCompletedEvent extends BaseStreamingEvent {
+  type: 'response_completed';
+  data: {
+    summary: {
+      totalChunks: number;
+      totalTokens: number;
+      responseTime: number;
+      completionReason: string;
+      success: boolean;
+    };
+    metadata: {
+      citations: CitationMap;
+      synthesisMetadata: SynthesisMetadata;
+      qualityMetrics?: any;
+    };
+  };
+}
+
+export interface ProviderSpecificEvent<T = any> extends BaseStreamingEvent {
+  type: 'provider_specific';
+  providerEventType: string;
+  data: T;
+}
+
+// Backwards compatible streaming response types
+export interface StreamingSynthesisResponse {
+  type: 'chunk' | 'citations' | 'metadata' | 'error' | 'done' | 'completion' | 'response_completed' | 'provider_specific';
+  data: string | CitationMap | SynthesisMetadata | Error | null | StreamingCompletionEvent['data'] | ResponseCompletedEvent['data'] | any;
+}
+
+// Union type for all enhanced streaming events
+export type EnhancedStreamingEvent =
+  | StreamingChunkEvent
+  | StreamingCompletionEvent
+  | ResponseCompletedEvent
+  | ProviderSpecificEvent
+  | BaseStreamingEvent;
 
 export interface SynthesisMetadata {
   tokensUsed: number;

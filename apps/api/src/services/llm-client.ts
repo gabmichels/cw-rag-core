@@ -9,6 +9,7 @@ import {
   LLMProviderError,
   StreamingSynthesisResponse
 } from '../types/synthesis.js';
+import { createStreamingEventHandler, StreamingEventHandler } from './streaming-event-handler.js';
 
 export interface LLMClient {
   /**
@@ -61,9 +62,11 @@ export interface LLMClient {
 
 export class LLMClientImpl implements LLMClient {
   private model: BaseLanguageModel;
+  private streamingEventHandler: StreamingEventHandler;
 
   constructor(private config: LLMConfig) {
     this.model = this.createModel(config);
+    this.streamingEventHandler = createStreamingEventHandler();
   }
 
   async generateCompletion(
@@ -149,12 +152,33 @@ export class LLMClientImpl implements LLMClient {
         return;
       }
 
-      // For other providers that support streaming (fallback to non-streaming for now)
+      // For OpenAI and Anthropic providers using LangChain streaming
+      if (this.config.provider === 'openai' || this.config.provider === 'anthropic' || this.config.provider === 'azure-openai') {
+        yield* this.generateLangChainStreamingCompletion(prompt, context, maxTokens, guardrailDecision);
+        return;
+      }
+
+      // Fallback to non-streaming for unsupported providers
       const result = await this.generateCompletion(prompt, context, maxTokens, guardrailDecision);
       yield {
         type: 'chunk',
         data: result.text
       };
+
+      // Emit completion event for fallback
+      const completionEvent = this.streamingEventHandler.handleCompletion(
+        {
+          totalTokens: result.tokensUsed,
+          model: result.model,
+          finishReason: 'stop'
+        },
+        this.config.provider
+      );
+      yield {
+        type: 'completion',
+        data: completionEvent.data
+      };
+
       yield {
         type: 'done',
         data: null
@@ -375,6 +399,88 @@ export class LLMClientImpl implements LLMClient {
     }
   }
 
+  private async *generateLangChainStreamingCompletion(
+    prompt: string,
+    context: string,
+    maxTokens?: number,
+    guardrailDecision?: {
+      isAnswerable: boolean;
+      confidence: number;
+      score: any;
+    }
+  ): AsyncGenerator<StreamingSynthesisResponse, void, unknown> {
+    const systemPrompt = this.buildSystemPrompt(guardrailDecision);
+    const promptTemplate = ChatPromptTemplate.fromMessages([
+      ['system', systemPrompt.replace('{context}', context)],
+      ['human', '{query}']
+    ]);
+
+    const formattedPrompt = await promptTemplate.format({
+      context,
+      query: prompt
+    });
+
+    let totalTokens = 0;
+    let completionReason = 'stop';
+    let modelUsed = this.config.model;
+
+    try {
+      // Use LangChain's streaming via stream method
+      const streamIterator = await this.model.stream(formattedPrompt);
+
+      for await (const chunk of streamIterator) {
+        const content = typeof chunk.content === 'string'
+          ? chunk.content
+          : chunk.content.toString();
+
+        if (content) {
+          totalTokens += this.estimateTokens(content);
+
+          // Emit chunk event
+          yield {
+            type: 'chunk',
+            data: content
+          };
+        }
+
+        // Extract completion metadata if available
+        if (chunk.response_metadata?.finish_reason) {
+          completionReason = chunk.response_metadata.finish_reason;
+        }
+        if (chunk.response_metadata?.model) {
+          modelUsed = chunk.response_metadata.model;
+        }
+      }
+
+      // Emit completion event using the generic handler
+      const completionEvent = this.streamingEventHandler.handleCompletion(
+        {
+          totalTokens,
+          finishReason: completionReason,
+          model: modelUsed,
+          usage: { total_tokens: totalTokens }
+        },
+        this.config.provider
+      );
+
+      yield {
+        type: 'completion',
+        data: completionEvent.data
+      };
+
+      yield {
+        type: 'done',
+        data: null
+      };
+
+    } catch (error) {
+      yield {
+        type: 'error',
+        data: error as Error
+      };
+    }
+  }
+
   private createModel(config: LLMConfig): BaseLanguageModel {
     switch (config.provider) {
       case 'openai':
@@ -582,15 +688,28 @@ export class LLMClientFactoryImpl implements LLMClientFactory {
         maxTokens: 1000,
         baseURL: llmEndpoint,
         streaming: llmStreaming,
+        streamingOptions: {
+          enableProviderEvents: true,
+          enableCompletionEvents: true,
+          bufferSize: 1024,
+          flushInterval: 100
+        },
         timeoutMs: llmTimeout
       };
     } else {
-      // OpenAI default configuration
+      // OpenAI/Anthropic default configuration
       defaultConfig = {
         provider: llmProvider as LLMProvider,
         model: llmModel,
         temperature: 0.1,
         maxTokens: 1000,
+        streaming: llmStreaming,
+        streamingOptions: {
+          enableProviderEvents: true,
+          enableCompletionEvents: true,
+          bufferSize: 512,
+          flushInterval: 50
+        },
         timeoutMs: llmTimeout
       };
     }
@@ -628,15 +747,28 @@ export class LLMClientFactoryImpl implements LLMClientFactory {
         maxTokens: 1000,
         baseURL: llmEndpoint,
         streaming: llmStreaming,
+        streamingOptions: {
+          enableProviderEvents: true,
+          enableCompletionEvents: true,
+          bufferSize: 1024,
+          flushInterval: 100
+        },
         timeoutMs: llmTimeout
       };
     } else {
-      // OpenAI default configuration
+      // OpenAI/Anthropic default configuration
       defaultConfig = {
         provider: llmProvider as LLMProvider,
         model: llmModel,
         temperature: 0.1,
         maxTokens: 1000,
+        streaming: llmStreaming,
+        streamingOptions: {
+          enableProviderEvents: true,
+          enableCompletionEvents: true,
+          bufferSize: 512,
+          flushInterval: 50
+        },
         timeoutMs: llmTimeout
       };
     }
