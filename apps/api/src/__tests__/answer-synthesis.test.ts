@@ -4,6 +4,7 @@ import { CitationService } from '../services/citation.js';
 import { HybridSearchResult } from '@cw-rag-core/retrieval';
 import { UserContext } from '@cw-rag-core/shared';
 import { SynthesisRequest, LLMConfig, CitationMap, StreamingSynthesisResponse } from '../types/synthesis.js';
+import { describe, beforeEach, it, expect } from '@jest/globals';
 
 // Mock implementations
 class MockLLMClient implements LLMClient {
@@ -85,7 +86,8 @@ class MockCitationService implements CitationService {
         id: doc.id,
         number: index + 1,
         source: `source-${index + 1}`,
-        docId: doc.id
+        docId: doc.id,
+        qdrantDocId: doc.id // Add the required qdrantDocId field
       };
     });
     return citations;

@@ -1,8 +1,7 @@
-import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import rateLimit from '@fastify/rate-limit';
 import { pino } from 'pino';
-import { FastifyReply, FastifyRequest} from 'fastify'; // Import all necessary Fastify types explicitly from stub
+import Fastify, { FastifyReply, FastifyRequest} from 'fastify'; // Import all necessary Fastify types explicitly from stub
 import { QdrantClient } from '@qdrant/js-client-rest';
 import 'dotenv/config';
 

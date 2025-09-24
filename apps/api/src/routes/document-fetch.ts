@@ -24,7 +24,174 @@ interface DocumentFetchRouteOptions {
   collectionName: string;
 }
 
+// Helper to ensure valid ISO date string
+function safeGetDate(timestamp: string | undefined): string {
+  try {
+    const date = timestamp ? new Date(timestamp) : new Date();
+    return !isNaN(date.getTime()) ? date.toISOString() : new Date().toISOString();
+  } catch (e) {
+    return new Date().toISOString(); // Fallback to current date on error
+  }
+}
+
 export async function documentFetchRoute(fastify: FastifyInstance, options: DocumentFetchRouteOptions) {
+  // GET /documents - List all documents grouped by docId
+  fastify.get('/documents', {
+    schema: {
+      response: {
+        200: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              docId: { type: 'string' },
+              createdAt: { type: 'string' },
+              updatedAt: { type: 'string' },
+              chunkCount: { type: 'number' },
+              freshness: {
+                type: 'object',
+                properties: {
+                  category: { type: 'string' },
+                  badge: { type: 'string' },
+                  ageInDays: { type: 'number' },
+                  humanReadable: { type: 'string' },
+                  timestamp: { type: 'string' }
+                }
+              }
+            }
+          }
+        },
+        500: {
+          type: 'object',
+          properties: {
+            error: { type: 'string' },
+            message: { type: 'string' }
+          }
+        }
+      }
+    },
+    handler: async (request: FastifyRequest, reply: FastifyReply) => {
+      try {
+        // Fetch all points from the collection
+        const scrollResult = await options.qdrantClient.scroll(options.collectionName, {
+          limit: 10000, // Adjust based on expected scale
+          with_payload: true,
+          with_vector: false,
+        });
+
+        if (!scrollResult || scrollResult.points.length === 0) {
+          return reply.status(200).send([]);
+        }
+
+        // Group points by docId and extract metadata
+        const documentsMap = new Map<string, {
+          docId: string;
+          chunks: any[];
+          createdAt: string;
+          updatedAt: string;
+        }>();
+
+        for (const point of scrollResult.points) {
+          if (!point.payload?.docId) continue;
+
+          const docId = point.payload.docId as string;
+          const createdAtRaw = point.payload.createdAt as string | undefined;
+          const modifiedAtRaw = point.payload.modifiedAt as string | undefined;
+
+          const createdAt = safeGetDate(createdAtRaw);
+          const updatedAt = safeGetDate(modifiedAtRaw || createdAtRaw); // Fallback to createdAt if modifiedAt is missing
+
+
+          if (!documentsMap.has(docId)) {
+            documentsMap.set(docId, {
+              docId,
+              chunks: [point],
+              createdAt,
+              updatedAt
+            });
+          } else {
+            const doc = documentsMap.get(docId)!;
+            doc.chunks.push(point);
+
+            // Update timestamps to latest (earliest for createdAt, latest for updatedAt)
+            if (new Date(createdAt) < new Date(doc.createdAt)) {
+              doc.createdAt = createdAt;
+            }
+            if (new Date(updatedAt) > new Date(doc.updatedAt)) {
+              doc.updatedAt = updatedAt;
+            }
+          }
+        }
+
+        // Transform to response format with freshness calculation
+        const documents = Array.from(documentsMap.values()).map(doc => {
+          // Calculate freshness
+          const ageInDays = Math.floor((Date.now() - new Date(doc.updatedAt).getTime()) / (1000 * 60 * 60 * 24));
+          let category: string, badge: string, humanReadable: string;
+
+          if (ageInDays <= 7) {
+            category = 'Fresh';
+            badge = '🟢 Fresh';
+          } else if (ageInDays <= 30) {
+            category = 'Recent';
+            badge = '🟡 Recent';
+          } else {
+            category = 'Stale';
+            badge = '🔴 Stale';
+          }
+
+          if (ageInDays <= 0) {
+            humanReadable = 'today';
+          } else if (ageInDays === 1) {
+            humanReadable = '1 day ago';
+          } else if (ageInDays < 7) {
+            humanReadable = `${ageInDays} days ago`;
+          } else if (ageInDays < 14) {
+            humanReadable = '1 week ago';
+          } else if (ageInDays < 30) {
+            const weeks = Math.floor(ageInDays / 7);
+            humanReadable = `${weeks} weeks ago`;
+          } else if (ageInDays < 60) {
+            humanReadable = '1 month ago';
+          } else if (ageInDays < 365) {
+            const months = Math.floor(ageInDays / 30);
+            humanReadable = `${months} months ago`;
+          } else {
+            const years = Math.floor(ageInDays / 365);
+            humanReadable = years === 1 ? '1 year ago' : `${years} years ago`;
+          }
+
+          return {
+            docId: doc.docId,
+            createdAt: doc.createdAt,
+            updatedAt: doc.updatedAt,
+            chunkCount: doc.chunks.length,
+            freshness: {
+              category,
+              badge,
+              ageInDays,
+              humanReadable,
+              timestamp: doc.updatedAt
+            }
+          };
+        });
+
+        // Sort by most recently updated first
+        documents.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+
+        return reply.status(200).send(documents);
+
+      } catch (error) {
+        fastify.log.error(error, 'Failed to fetch documents list');
+        return reply.status(500).send({
+          error: 'Internal Server Error',
+          message: 'Failed to retrieve documents list.',
+        });
+      }
+    },
+  });
+
+  // GET /documents/:docId - Fetch specific document (existing functionality)
   fastify.get('/documents/:docId', {
     schema: {
       params: {
@@ -126,7 +293,7 @@ export async function documentFetchRoute(fastify: FastifyInstance, options: Docu
           .filter((point: { id: string | number; payload?: any }): point is { id: string | number; payload: ChunkPayload } =>
               point.payload?.content !== undefined && point.id !== undefined
           ) // Filter and type assertion for payload (ensures id and payload are present)
-          .sort((a, b) => {
+          .sort((a: { payload: ChunkPayload; id: any; }, b: { payload: ChunkPayload; id: any; }) => {
             const aPayload = a.payload as ChunkPayload;
             const bPayload = b.payload as ChunkPayload;
 
@@ -171,7 +338,7 @@ export async function documentFetchRoute(fastify: FastifyInstance, options: Docu
 
         // Reconstruct the document content
         const reconstructedContent = sortedChunks
-          .map(point => point.payload?.content)
+          .map((point: { payload: { content: any; }; }) => point.payload?.content)
           .join('\n\n'); // Join with double newline for readability
 
         // Extract metadata from the first chunk (assuming consistent and complete metadata on all chunks for the same docId)
@@ -197,7 +364,7 @@ export async function documentFetchRoute(fastify: FastifyInstance, options: Docu
         };
 
         // Prepare chunk data for the response, including info needed for highlighting
-        const chunkData = sortedChunks.map(point => {
+        const chunkData = sortedChunks.map((point: { payload: ChunkPayload; id: any; }) => {
             const payload = point.payload as ChunkPayload;
             return {
                 id: point.id,
@@ -224,6 +391,98 @@ export async function documentFetchRoute(fastify: FastifyInstance, options: Docu
         return reply.status(500).send({
           error: 'Internal Server Error',
           message: 'Failed to retrieve document content.',
+        });
+      }
+    },
+  });
+
+  // DELETE /documents/:docId - Delete all chunks for a document
+  fastify.delete('/documents/:docId', {
+    schema: {
+      params: {
+        type: 'object',
+        properties: {
+          docId: { type: 'string' }
+        },
+        required: ['docId']
+      },
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            success: { type: 'boolean' },
+            message: { type: 'string' },
+            docId: { type: 'string' },
+            deletedCount: { type: 'number' }
+          }
+        },
+        404: {
+          type: 'object',
+          properties: {
+            error: { type: 'string' },
+            message: { type: 'string' }
+          }
+        },
+        500: {
+          type: 'object',
+          properties: {
+            error: { type: 'string' },
+            message: { type: 'string' }
+          }
+        }
+      }
+    },
+    handler: async (request: FastifyRequest, reply: FastifyReply) => {
+      const { docId } = request.params as { docId: string };
+
+      try {
+        // First, check if document exists by finding chunks
+        const scrollResult = await options.qdrantClient.scroll(options.collectionName, {
+          filter: {
+            must: [
+              {
+                key: 'docId',
+                match: {
+                  value: docId,
+                },
+              },
+            ],
+          },
+          limit: 10000, // Get all chunks for the document
+          with_payload: false,
+          with_vector: false,
+        });
+
+        if (!scrollResult || scrollResult.points.length === 0) {
+          return reply.status(404).send({
+            error: 'Not Found',
+            message: `Document with docId ${docId} not found or has no chunks.`,
+          });
+        }
+
+        // Extract point IDs for deletion
+        const pointIds = scrollResult.points.map((point: { id: any; }) => point.id);
+
+        // Delete all chunks for this document
+        await options.qdrantClient.delete(options.collectionName, {
+          wait: true,
+          points: pointIds,
+        });
+
+        fastify.log.info(`Successfully deleted ${pointIds.length} chunks for document ${docId}`);
+
+        return reply.status(200).send({
+          success: true,
+          message: `Successfully deleted document ${docId} and all its chunks.`,
+          docId,
+          deletedCount: pointIds.length,
+        });
+
+      } catch (error) {
+        fastify.log.error(error, `Failed to delete document ${docId}`);
+        return reply.status(500).send({
+          error: 'Internal Server Error',
+          message: 'Failed to delete document.',
         });
       }
     },

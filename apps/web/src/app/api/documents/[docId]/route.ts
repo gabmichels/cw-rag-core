@@ -46,3 +46,48 @@ export async function GET(
     );
   }
 }
+
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: { docId: string } }
+) {
+  try {
+    const { docId } = params;
+
+    // Decode the docId to handle URL encoding
+    const decodedDocId = decodeURIComponent(docId);
+
+    // Forward the delete request to the backend API
+    const backendUrl = `${API_BASE_URL}/documents/${encodeURIComponent(decodedDocId)}`;
+
+    const response = await fetch(backendUrl, {
+      method: 'DELETE',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      return NextResponse.json(
+        {
+          error: response.statusText || 'Failed to delete document',
+          message: `Document with ID "${decodedDocId}" could not be deleted.`
+        },
+        { status: response.status }
+      );
+    }
+
+    const data = await response.json();
+    return NextResponse.json(data);
+
+  } catch (error) {
+    console.error('Error deleting document:', error);
+    return NextResponse.json(
+      {
+        error: 'Internal Server Error',
+        message: 'Failed to delete document.'
+      },
+      { status: 500 }
+    );
+  }
+}

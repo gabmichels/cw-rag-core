@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { MessageSquare, Upload, BarChart3, Bot } from 'lucide-react';
+import { MessageSquare, Upload, BarChart3, Bot, Book } from 'lucide-react';
 
 export default function Navigation() {
   const pathname = usePathname();
@@ -16,6 +16,7 @@ export default function Navigation() {
   const navItems = [
     { href: '/ask', label: 'AI Chat', icon: MessageSquare },
     { href: '/upload', label: 'Upload', icon: Upload },
+    { href: '/library', label: 'Library', icon: Book },
     { href: '/ingests', label: 'Analytics', icon: BarChart3 },
   ];
 
