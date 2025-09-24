@@ -140,7 +140,7 @@ services:
       - "${WEB_PORT:-3001}:3000"
     environment:
       - API_URL=http://api:3000
-      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:3000}
+      - NEXT_PUBLIC_API_URL=http://api:3000
       - TENANT=${TENANT:-zenithfall}
     depends_on:
       api:

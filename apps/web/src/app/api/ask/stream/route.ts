@@ -5,7 +5,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
 
     // Forward the request to the backend API
-    const backendUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
+    const backendUrl = process.env.API_URL || 'http://localhost:3000';
     const response = await fetch(`${backendUrl}/ask/stream`, {
       method: 'POST',
       headers: {
