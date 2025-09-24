@@ -25,6 +25,7 @@ export declare class AnswerSynthesisServiceImpl implements AnswerSynthesisServic
     private maxContextLength;
     private lastQualityMetrics;
     private guardrailService;
+    private streamingEventHandler;
     constructor(llmClientFactory: LLMClientFactory, citationService: CitationService, maxContextLength?: number);
     synthesizeAnswer(request: SynthesisRequest): Promise<SynthesisResponse>;
     synthesizeAnswerStreaming(request: SynthesisRequest): AsyncGenerator<StreamingSynthesisResponse, void, unknown>;

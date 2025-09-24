@@ -4,7 +4,11 @@ export interface LLMClient {
     /**
      * Generate completion using the configured model
      */
-    generateCompletion(prompt: string, context: string, maxTokens?: number): Promise<{
+    generateCompletion(prompt: string, context: string, maxTokens?: number, guardrailDecision?: {
+        isAnswerable: boolean;
+        confidence: number;
+        score: any;
+    }): Promise<{
         text: string;
         tokensUsed: number;
         model: string;
@@ -12,7 +16,11 @@ export interface LLMClient {
     /**
      * Generate streaming completion using the configured model
      */
-    generateStreamingCompletion(prompt: string, context: string, maxTokens?: number): AsyncGenerator<StreamingSynthesisResponse, void, unknown>;
+    generateStreamingCompletion(prompt: string, context: string, maxTokens?: number, guardrailDecision?: {
+        isAnswerable: boolean;
+        confidence: number;
+        score: any;
+    }): AsyncGenerator<StreamingSynthesisResponse, void, unknown>;
     /**
      * Get the underlying LangChain model
      */
@@ -29,19 +37,30 @@ export interface LLMClient {
 export declare class LLMClientImpl implements LLMClient {
     private config;
     private model;
+    private streamingEventHandler;
     constructor(config: LLMConfig);
-    generateCompletion(prompt: string, context: string, maxTokens?: number): Promise<{
+    generateCompletion(prompt: string, context: string, maxTokens?: number, guardrailDecision?: {
+        isAnswerable: boolean;
+        confidence: number;
+        score: any;
+    }): Promise<{
         text: string;
         tokensUsed: number;
         model: string;
     }>;
-    generateStreamingCompletion(prompt: string, context: string, maxTokens?: number): AsyncGenerator<StreamingSynthesisResponse, void, unknown>;
+    generateStreamingCompletion(prompt: string, context: string, maxTokens?: number, guardrailDecision?: {
+        isAnswerable: boolean;
+        confidence: number;
+        score: any;
+    }): AsyncGenerator<StreamingSynthesisResponse, void, unknown>;
     getModel(): BaseLanguageModel;
     getConfig(): LLMConfig;
     supportsStreaming(): boolean;
     private generateVLLMCompletion;
     private generateVLLMStreamingCompletion;
+    private generateLangChainStreamingCompletion;
     private createModel;
+    private buildSystemPrompt;
     private estimateTokens;
 }
 export interface LLMClientFactory {

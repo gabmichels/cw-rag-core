@@ -2,37 +2,26 @@ import { ChatPromptTemplate } from '@langchain/core/prompts';
 import { ChatOpenAI } from '@langchain/openai';
 import { ChatAnthropic } from '@langchain/anthropic';
 import { LLMProviderError } from '../types/synthesis.js';
+import { createStreamingEventHandler } from './streaming-event-handler.js';
 export class LLMClientImpl {
     config;
     model;
+    streamingEventHandler;
     constructor(config) {
         this.config = config;
         this.model = this.createModel(config);
+        this.streamingEventHandler = createStreamingEventHandler();
     }
-    async generateCompletion(prompt, context, maxTokens) {
+    async generateCompletion(prompt, context, maxTokens, guardrailDecision) {
         try {
             // For vLLM, use direct HTTP API
             if (this.config.provider === 'vllm') {
-                return this.generateVLLMCompletion(prompt, context, maxTokens, false);
+                return this.generateVLLMCompletion(prompt, context, maxTokens, false, guardrailDecision);
             }
             // Create the chat prompt template for LangChain providers
+            const systemPrompt = this.buildSystemPrompt(guardrailDecision);
             const promptTemplate = ChatPromptTemplate.fromMessages([
-                [
-                    'system',
-                    `You are a helpful AI assistant that answers questions based only on the provided context.
-
-CRITICAL INSTRUCTIONS:
-1. Use ONLY the information provided in the context below
-2. If the context doesn't contain enough information to answer the question, respond with "I don't have enough information in the provided context to answer this question."
-3. Include inline citations in your response using the format [^1], [^2], etc. for each source you reference
-4. Each piece of information should be cited to its source document
-5. Do NOT invent, hallucinate, or make up any citations
-6. Provide a clear, well-structured answer in markdown format
-7. If multiple sources support the same point, cite all relevant sources
-
-Context:
-{context}`
-                ],
+                ['system', systemPrompt.replace('{context}', context)],
                 ['human', '{query}']
             ]);
             // Format the prompt with context and query
@@ -58,21 +47,36 @@ Context:
             throw new LLMProviderError(`Failed to generate completion: ${error.message}`, this.config.provider, error);
         }
     }
-    async *generateStreamingCompletion(prompt, context, maxTokens) {
+    async *generateStreamingCompletion(prompt, context, maxTokens, guardrailDecision) {
         if (!this.supportsStreaming()) {
             throw new LLMProviderError(`Streaming not supported for provider: ${this.config.provider}`, this.config.provider);
         }
         try {
             // For vLLM streaming
             if (this.config.provider === 'vllm') {
-                yield* this.generateVLLMStreamingCompletion(prompt, context, maxTokens);
+                yield* this.generateVLLMStreamingCompletion(prompt, context, maxTokens, guardrailDecision);
                 return;
             }
-            // For other providers that support streaming (fallback to non-streaming for now)
-            const result = await this.generateCompletion(prompt, context, maxTokens);
+            // For OpenAI and Anthropic providers using LangChain streaming
+            if (this.config.provider === 'openai' || this.config.provider === 'anthropic' || this.config.provider === 'azure-openai') {
+                yield* this.generateLangChainStreamingCompletion(prompt, context, maxTokens, guardrailDecision);
+                return;
+            }
+            // Fallback to non-streaming for unsupported providers
+            const result = await this.generateCompletion(prompt, context, maxTokens, guardrailDecision);
             yield {
                 type: 'chunk',
                 data: result.text
+            };
+            // Emit completion event for fallback
+            const completionEvent = this.streamingEventHandler.handleCompletion({
+                totalTokens: result.tokensUsed,
+                model: result.model,
+                finishReason: 'stop'
+            }, this.config.provider);
+            yield {
+                type: 'completion',
+                data: completionEvent.data
             };
             yield {
                 type: 'done',
@@ -104,20 +108,8 @@ Context:
         // For other providers, check the streaming config
         return this.config.streaming === true;
     }
-    async generateVLLMCompletion(prompt, context, maxTokens, streaming = false) {
-        const systemPrompt = `You are a helpful AI assistant that answers questions based only on the provided context.
-
-CRITICAL INSTRUCTIONS:
-1. Use ONLY the information provided in the context below
-2. If the context doesn't contain enough information to answer the question, respond with "I don't have enough information in the provided context to answer this question."
-3. Include inline citations in your response using the format [^1], [^2], etc. for each source you reference
-4. Each piece of information should be cited to its source document
-5. Do NOT invent, hallucinate, or make up any citations
-6. Provide a clear, well-structured answer in markdown format
-7. If multiple sources support the same point, cite all relevant sources
-
-Context:
-${context}`;
+    async generateVLLMCompletion(prompt, context, maxTokens, streaming = false, guardrailDecision) {
+        const systemPrompt = this.buildSystemPrompt(guardrailDecision).replace('{context}', context);
         const messages = [
             { role: 'system', content: systemPrompt },
             { role: 'user', content: prompt }
@@ -126,7 +118,7 @@ ${context}`;
             model: this.config.model,
             messages,
             max_tokens: maxTokens || this.config.maxTokens || 1000,
-            temperature: this.config.temperature || 0.1,
+            temperature: this.config.temperature || (guardrailDecision?.confidence && guardrailDecision.confidence > 0.7 ? 0.3 : 0.1),
             stream: streaming
         };
         const timeoutMs = this.config.timeoutMs || parseInt(process.env.LLM_TIMEOUT_MS || '25000');
@@ -167,20 +159,8 @@ ${context}`;
             throw error;
         }
     }
-    async *generateVLLMStreamingCompletion(prompt, context, maxTokens) {
-        const systemPrompt = `You are a helpful AI assistant that answers questions based only on the provided context.
-
-CRITICAL INSTRUCTIONS:
-1. Use ONLY the information provided in the context below
-2. If the context doesn't contain enough information to answer the question, respond with "I don't have enough information in the provided context to answer this question."
-3. Include inline citations in your response using the format [^1], [^2], etc. for each source you reference
-4. Each piece of information should be cited to its source document
-5. Do NOT invent, hallucinate, or make up any citations
-6. Provide a clear, well-structured answer in markdown format
-7. If multiple sources support the same point, cite all relevant sources
-
-Context:
-${context}`;
+    async *generateVLLMStreamingCompletion(prompt, context, maxTokens, guardrailDecision) {
+        const systemPrompt = this.buildSystemPrompt(guardrailDecision).replace('{context}', context);
         const messages = [
             { role: 'system', content: systemPrompt },
             { role: 'user', content: prompt }
@@ -189,7 +169,7 @@ ${context}`;
             model: this.config.model,
             messages,
             max_tokens: maxTokens || this.config.maxTokens || 1000,
-            temperature: this.config.temperature || 0.1,
+            temperature: this.config.temperature || (guardrailDecision?.confidence && guardrailDecision.confidence > 0.7 ? 0.3 : 0.1),
             stream: true
         };
         const timeoutMs = this.config.timeoutMs || parseInt(process.env.LLM_TIMEOUT_MS || '25000');
@@ -272,6 +252,65 @@ ${context}`;
             }
         }
     }
+    async *generateLangChainStreamingCompletion(prompt, context, maxTokens, guardrailDecision) {
+        const systemPrompt = this.buildSystemPrompt(guardrailDecision);
+        const promptTemplate = ChatPromptTemplate.fromMessages([
+            ['system', systemPrompt.replace('{context}', context)],
+            ['human', '{query}']
+        ]);
+        const formattedPrompt = await promptTemplate.format({
+            context,
+            query: prompt
+        });
+        let totalTokens = 0;
+        let completionReason = 'stop';
+        let modelUsed = this.config.model;
+        try {
+            // Use LangChain's streaming via stream method
+            const streamIterator = await this.model.stream(formattedPrompt);
+            for await (const chunk of streamIterator) {
+                const content = typeof chunk.content === 'string'
+                    ? chunk.content
+                    : chunk.content.toString();
+                if (content) {
+                    totalTokens += this.estimateTokens(content);
+                    // Emit chunk event
+                    yield {
+                        type: 'chunk',
+                        data: content
+                    };
+                }
+                // Extract completion metadata if available
+                if (chunk.response_metadata?.finish_reason) {
+                    completionReason = chunk.response_metadata.finish_reason;
+                }
+                if (chunk.response_metadata?.model) {
+                    modelUsed = chunk.response_metadata.model;
+                }
+            }
+            // Emit completion event using the generic handler
+            const completionEvent = this.streamingEventHandler.handleCompletion({
+                totalTokens,
+                finishReason: completionReason,
+                model: modelUsed,
+                usage: { total_tokens: totalTokens }
+            }, this.config.provider);
+            yield {
+                type: 'completion',
+                data: completionEvent.data
+            };
+            yield {
+                type: 'done',
+                data: null
+            };
+        }
+        catch (error) {
+            yield {
+                type: 'error',
+                data: error
+            };
+        }
+    }
     createModel(config) {
         switch (config.provider) {
             case 'openai':
@@ -312,6 +351,51 @@ ${context}`;
                 });
             default:
                 throw new LLMProviderError(`Unsupported LLM provider: ${config.provider}`, config.provider);
+        }
+    }
+    buildSystemPrompt(guardrailDecision) {
+        const isHighConfidence = guardrailDecision?.confidence && guardrailDecision.confidence > 0.7;
+        const isAnswerable = guardrailDecision?.isAnswerable;
+        if (isAnswerable && isHighConfidence) {
+            // High confidence: encourage confident answers, remove IDK instruction
+            return `You are a helpful AI assistant that provides comprehensive answers based on the provided context.
+
+INSTRUCTIONS FOR HIGH-CONFIDENCE QUERIES:
+1. The system has determined this query is HIGHLY ANSWERABLE (confidence: ${(guardrailDecision?.confidence * 100).toFixed(1)}%)
+2. Use ALL relevant information provided in the context below to give a complete answer
+3. Be confident and comprehensive in your response - the relevant information IS present
+4. Include inline citations in your response using the format [^1], [^2], etc. for each source you reference
+5. Each piece of information should be cited to its source document
+6. Do NOT invent, hallucinate, or make up any citations
+7. Provide a clear, well-structured answer in markdown format
+8. If multiple sources support the same point, cite all relevant sources
+9. Since the system has high confidence, provide the best possible answer from the available context
+
+SPECIAL INSTRUCTIONS FOR TABLES AND STRUCTURED CONTENT:
+- When showing skill tables, tier lists, or any structured data, include ALL tiers/rows/entries from the context
+- Do NOT omit any skill tiers (Novice, Apprentice, Journeyman, Master, Grandmaster, Legendary, Mythic)
+- If the context contains multiple parts of the same table, combine them into one complete table
+- Preserve the original structure and formatting of tables as much as possible
+- When reconstructing tables, maintain the logical order (e.g., skill progression from lowest to highest tier)
+
+Context:
+{context}`;
+        }
+        else {
+            // Lower confidence or not answerable: use conservative approach
+            return `You are a helpful AI assistant that answers questions based only on the provided context.
+
+STANDARD INSTRUCTIONS:
+1. Use ONLY the information provided in the context below
+2. If the context doesn't contain enough information to answer the question, respond with "I don't have enough information in the provided context to answer this question."
+3. Include inline citations in your response using the format [^1], [^2], etc. for each source you reference
+4. Each piece of information should be cited to its source document
+5. Do NOT invent, hallucinate, or make up any citations
+6. Provide a clear, well-structured answer in markdown format
+7. If multiple sources support the same point, cite all relevant sources
+
+Context:
+{context}`;
         }
     }
     estimateTokens(text) {
@@ -384,16 +468,29 @@ export class LLMClientFactoryImpl {
                 maxTokens: 1000,
                 baseURL: llmEndpoint,
                 streaming: llmStreaming,
+                streamingOptions: {
+                    enableProviderEvents: true,
+                    enableCompletionEvents: true,
+                    bufferSize: 1024,
+                    flushInterval: 100
+                },
                 timeoutMs: llmTimeout
             };
         }
         else {
-            // OpenAI default configuration
+            // OpenAI/Anthropic default configuration
             defaultConfig = {
                 provider: llmProvider,
                 model: llmModel,
                 temperature: 0.1,
                 maxTokens: 1000,
+                streaming: llmStreaming,
+                streamingOptions: {
+                    enableProviderEvents: true,
+                    enableCompletionEvents: true,
+                    bufferSize: 512,
+                    flushInterval: 50
+                },
                 timeoutMs: llmTimeout
             };
         }
@@ -426,16 +523,29 @@ export class LLMClientFactoryImpl {
                 maxTokens: 1000,
                 baseURL: llmEndpoint,
                 streaming: llmStreaming,
+                streamingOptions: {
+                    enableProviderEvents: true,
+                    enableCompletionEvents: true,
+                    bufferSize: 1024,
+                    flushInterval: 100
+                },
                 timeoutMs: llmTimeout
             };
         }
         else {
-            // OpenAI default configuration
+            // OpenAI/Anthropic default configuration
             defaultConfig = {
                 provider: llmProvider,
                 model: llmModel,
                 temperature: 0.1,
                 maxTokens: 1000,
+                streaming: llmStreaming,
+                streamingOptions: {
+                    enableProviderEvents: true,
+                    enableCompletionEvents: true,
+                    bufferSize: 512,
+                    flushInterval: 50
+                },
                 timeoutMs: llmTimeout
             };
         }
@@ -480,7 +590,7 @@ class ResilientLLMClient {
         this.primaryClient = new LLMClientImpl(primaryConfig);
         this.fallbackClients = fallbackConfigs.map(config => new LLMClientImpl(config));
     }
-    async generateCompletion(prompt, context, maxTokens) {
+    async generateCompletion(prompt, context, maxTokens, guardrailDecision) {
         const clients = [this.primaryClient, ...this.fallbackClients];
         for (let i = 0; i < clients.length; i++) {
             const client = clients[i];
@@ -489,7 +599,7 @@ class ResilientLLMClient {
                     const timeoutPromise = new Promise((_, reject) => {
                         setTimeout(() => reject(new Error('Request timeout')), this.timeoutMs);
                     });
-                    const completionPromise = client.generateCompletion(prompt, context, maxTokens);
+                    const completionPromise = client.generateCompletion(prompt, context, maxTokens, guardrailDecision);
                     const result = await Promise.race([completionPromise, timeoutPromise]);
                     return result;
                 }
@@ -508,7 +618,7 @@ class ResilientLLMClient {
         }
         throw new LLMProviderError('All LLM clients failed', this.primaryConfig.provider);
     }
-    async *generateStreamingCompletion(prompt, context, maxTokens) {
+    async *generateStreamingCompletion(prompt, context, maxTokens, guardrailDecision) {
         const clients = [this.primaryClient, ...this.fallbackClients];
         for (let i = 0; i < clients.length; i++) {
             const client = clients[i];
@@ -516,42 +626,60 @@ class ResilientLLMClient {
                 continue; // Skip clients that don't support streaming
             }
             for (let retry = 0; retry < this.maxRetries; retry++) {
+                let timeoutId = null;
+                let streamingCompleted = false;
                 try {
-                    // Create a timeout generator wrapper
                     const timeoutMs = this.timeoutMs;
-                    const generator = client.generateStreamingCompletion(prompt, context, maxTokens);
-                    let timeoutId;
-                    let hasStarted = false;
-                    try {
-                        for await (const chunk of generator) {
-                            if (!hasStarted) {
-                                hasStarted = true;
-                                // Set timeout for overall streaming operation
-                                timeoutId = setTimeout(() => {
-                                    throw new Error('Streaming timeout');
-                                }, timeoutMs);
+                    const generator = client.generateStreamingCompletion(prompt, context, maxTokens, guardrailDecision);
+                    // Create a promise-based timeout that can be properly cancelled
+                    const timeoutPromise = new Promise((_, reject) => {
+                        timeoutId = setTimeout(() => {
+                            if (!streamingCompleted) {
+                                reject(new Error('Streaming timeout'));
                             }
-                            yield chunk;
-                            if (chunk.type === 'done' || chunk.type === 'error') {
+                        }, timeoutMs);
+                    });
+                    // Create a generator wrapper that handles the timeout
+                    const wrappedGenerator = async function* () {
+                        try {
+                            for await (const chunk of generator) {
+                                yield chunk;
+                                if (chunk.type === 'done' || chunk.type === 'error') {
+                                    streamingCompleted = true;
+                                    if (timeoutId) {
+                                        clearTimeout(timeoutId);
+                                        timeoutId = null;
+                                    }
+                                    return;
+                                }
+                            }
+                            streamingCompleted = true;
+                        }
+                        finally {
+                            // Ensure timeout is always cleared
+                            if (timeoutId) {
                                 clearTimeout(timeoutId);
-                                return;
+                                timeoutId = null;
                             }
                         }
-                        clearTimeout(timeoutId);
-                        return;
-                    }
-                    catch (streamError) {
-                        clearTimeout(timeoutId);
-                        throw streamError;
-                    }
+                    };
+                    // Execute the wrapped generator
+                    yield* wrappedGenerator();
+                    return;
                 }
                 catch (error) {
+                    // Ensure timeout is cleared on any error
+                    streamingCompleted = true;
+                    if (timeoutId) {
+                        clearTimeout(timeoutId);
+                        timeoutId = null;
+                    }
                     console.warn(`LLM streaming client ${i} attempt ${retry + 1} failed:`, error);
                     // If this is the last client and last retry, fall back to non-streaming
                     if (i === clients.length - 1 && retry === this.maxRetries - 1) {
                         // Fallback to non-streaming completion
                         try {
-                            const result = await this.generateCompletion(prompt, context, maxTokens);
+                            const result = await this.generateCompletion(prompt, context, maxTokens, guardrailDecision);
                             yield {
                                 type: 'chunk',
                                 data: result.text
@@ -579,7 +707,7 @@ class ResilientLLMClient {
         }
         // If no streaming clients are available, fallback to non-streaming
         try {
-            const result = await this.generateCompletion(prompt, context, maxTokens);
+            const result = await this.generateCompletion(prompt, context, maxTokens, guardrailDecision);
             yield {
                 type: 'chunk',
                 data: result.text

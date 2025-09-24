@@ -7,13 +7,14 @@ import { healthzRoute } from './routes/healthz.js';
 import { readyzRoute } from './routes/readyz.js';
 import { ingestNormalizeRoute } from './routes/ingestNormalize.js';
 import { askRoute } from './routes/ask.js';
+import { askStreamRoute } from './routes/ask-stream.js';
 import { ingestRoutes } from './routes/ingest/index.js';
-import { DOCUMENT_VECTOR_DIMENSION } from '@cw-rag-core/shared';
 import { BgeSmallEnV15EmbeddingService } from '@cw-rag-core/retrieval';
+import { bootstrapQdrant as comprehensiveBootstrapQdrant, QDRANT_COLLECTION_NAME } from './services/qdrant.js';
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const QDRANT_URL = process.env.QDRANT_URL || 'http://localhost:6333';
 const QDRANT_API_KEY = process.env.QDRANT_API_KEY;
-const QDRANT_COLLECTION_NAME = 'docs_v1';
+// QDRANT_COLLECTION_NAME is now imported from services/qdrant.js to ensure consistency
 const INGEST_TOKEN = process.env.INGEST_TOKEN;
 // Security configuration
 const ALLOWED_ORIGINS = [
@@ -35,43 +36,7 @@ const qdrantClient = new QdrantClient({
     apiKey: QDRANT_API_KEY,
 });
 const embeddingService = new BgeSmallEnV15EmbeddingService();
-async function bootstrapQdrant(maxRetries = 5, retryDelay = 5000) {
-    for (let i = 0; i < maxRetries; i++) {
-        try {
-            logger.info(`Attempt ${i + 1} to connect to Qdrant and bootstrap collection...`);
-            const collections = await qdrantClient.getCollections();
-            const collectionExists = collections.collections.some((c) => c.name === QDRANT_COLLECTION_NAME);
-            if (!collectionExists) {
-                logger.info(`Collection '${QDRANT_COLLECTION_NAME}' not found, creating...`);
-                await qdrantClient.createCollection(QDRANT_COLLECTION_NAME, {
-                    vectors: { size: DOCUMENT_VECTOR_DIMENSION, distance: 'Cosine' },
-                });
-                logger.info(`Collection '${QDRANT_COLLECTION_NAME}' created.`);
-                logger.info(`Creating payload indexes for '${QDRANT_COLLECTION_NAME}'...`);
-                await qdrantClient.createPayloadIndex(QDRANT_COLLECTION_NAME, { field_name: 'tenant', field_schema: 'keyword', wait: true });
-                await qdrantClient.createPayloadIndex(QDRANT_COLLECTION_NAME, { field_name: 'docId', field_schema: 'keyword', wait: true });
-                await qdrantClient.createPayloadIndex(QDRANT_COLLECTION_NAME, { field_name: 'acl', field_schema: 'keyword', wait: true });
-                await qdrantClient.createPayloadIndex(QDRANT_COLLECTION_NAME, { field_name: 'lang', field_schema: 'keyword', wait: true });
-                logger.info('Payload indexes created successfully.');
-            }
-            else {
-                logger.info(`Collection '${QDRANT_COLLECTION_NAME}' already exists.`);
-            }
-            logger.info('Qdrant bootstrap complete.');
-            return;
-        }
-        catch (error) {
-            logger.error(`Failed to connect to Qdrant or bootstrap collection: ${error.message}`);
-            if (i < maxRetries - 1) {
-                logger.info(`Retrying in ${retryDelay / 1000} seconds...`);
-                await new Promise((resolve) => setTimeout(resolve, retryDelay));
-            }
-            else {
-                throw new Error('Max Qdrant connection retries reached. Exiting.');
-            }
-        }
-    }
-}
+// Bootstrap function is now imported from services/qdrant.js for better consistency and maintenance
 async function startServer() {
     const server = Fastify({
         logger: process.env.NODE_ENV === 'production' ? true : {
@@ -137,6 +102,7 @@ async function startServer() {
     server.register(readyzRoute, { qdrantClient, collectionName: QDRANT_COLLECTION_NAME });
     server.register(ingestNormalizeRoute, { qdrantClient, collectionName: QDRANT_COLLECTION_NAME, embeddingService });
     server.register(askRoute, { qdrantClient, collectionName: QDRANT_COLLECTION_NAME, embeddingService });
+    server.register(askStreamRoute, { qdrantClient, collectionName: QDRANT_COLLECTION_NAME, embeddingService });
     server.register(ingestRoutes, {
         qdrantClient,
         collectionName: QDRANT_COLLECTION_NAME,
@@ -185,7 +151,10 @@ async function startServer() {
         }
     });
     try {
-        await bootstrapQdrant();
+        // Use the comprehensive bootstrap function with enhanced logging
+        server.log.info('Starting comprehensive Qdrant bootstrap process...');
+        await comprehensiveBootstrapQdrant(qdrantClient, server.log);
+        server.log.info('Comprehensive Qdrant bootstrap completed successfully.');
         await server.listen({ port: PORT, host: '0.0.0.0' });
         logger.info(`Secure server listening on http://0.0.0.0:${PORT}`, {
             event: 'server_started',

@@ -18,6 +18,12 @@ export * from './services/source-aware-confidence.js';
 export * from './services/guardrail-config.js';
 export * from './services/guarded-retrieval.js';
 
+// Section-aware retrieval services
+export * from './services/section-detection.js';
+export * from './services/related-chunk-fetcher.js';
+export * from './services/section-reconstruction.js';
+export * from './services/section-aware-hybrid-search.js';
+
 // New token-aware embedding and chunking system
 export * from './token-counter.js';
 export * from './embedding-config.js';

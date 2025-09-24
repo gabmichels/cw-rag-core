@@ -18,7 +18,12 @@ import {
   SentenceTransformersRerankerService,
   DEFAULT_RERANKER_CONFIG,
   RERANKER_MODELS,
-  HybridSearchResult
+  HybridSearchResult,
+  StructuredHybridSearchResult, // Added import
+  SectionAwareHybridSearchService, // Added import
+  createSectionAwareHybridSearchService, // Added import
+  SectionAwareSearchResult, // Import the SectionAwareSearchResult type
+  GuardedRetrievalResult // Import GuardedRetrievalResult
 } from '@cw-rag-core/retrieval';
 import { createAnswerSynthesisService } from '../services/answer-synthesis.js';
 import { createCitationService } from '../services/citation.js';
@@ -109,13 +114,22 @@ export async function askStreamRoute(fastify: FastifyInstance, options: AskStrea
 
   const vectorSearchService = enhancedQdrantService;
 
-  // Create hybrid search service
-  const hybridSearchService: HybridSearchService = createHybridSearchService(
+  // Create section-aware hybrid search service
+  const hybridSearchService: SectionAwareHybridSearchService = createSectionAwareHybridSearchService(
     vectorSearchService,
     keywordSearchService,
     rrfFusionService,
     options.embeddingService,
-    createRerankerService(true)
+    createRerankerService(true), // Enable reranker by default
+    options.qdrantClient, // Pass qdrantClient for section awareness
+    {
+      enabled: process.env.SECTION_AWARE_SEARCH !== 'false', // Enable by default
+      maxSectionsToComplete: 10, // Increased to handle more sections
+      sectionCompletionTimeoutMs: 2500,
+      mergeStrategy: 'interleave',
+      preserveOriginalRanking: false,
+      minTriggerConfidence: 0.7
+    }
   );
 
   // Create guarded retrieval service
@@ -273,7 +287,7 @@ export async function askStreamRoute(fastify: FastifyInstance, options: AskStrea
         };
 
         // Perform guarded retrieval
-        const retrievalResult = await guardedRetrievalService.retrieveWithGuardrail(
+        const retrievalResult: GuardedRetrievalResult = await guardedRetrievalService.retrieveWithGuardrail(
           options.collectionName,
           hybridSearchRequest,
           userContext,
@@ -289,7 +303,7 @@ export async function askStreamRoute(fastify: FastifyInstance, options: AskStrea
             queryId,
             guardrailDecision: {
               isAnswerable: false,
-              confidence: retrievalResult.guardrailDecision.score?.confidence || 0,
+              confidence: retrievalResult.guardrailDecision.score?.confidence || 0, // Corrected access
               reasonCode: retrievalResult.idkResponse?.reasonCode,
               suggestions: retrievalResult.idkResponse?.suggestions,
             },
@@ -307,113 +321,123 @@ export async function askStreamRoute(fastify: FastifyInstance, options: AskStrea
         let metadata: any = {};
 
         try {
-          for await (const chunk of answerSynthesisService.synthesizeAnswerStreaming({
-            query,
-            documents: retrievalResult.results || [],
-            userContext,
-            maxContextLength: synthesis?.maxContextLength || 8000,
-            includeCitations: synthesis?.includeCitations ?? true,
-            answerFormat: synthesis?.answerFormat || 'markdown',
-            guardrailDecision: {
-              isAnswerable: retrievalResult.guardrailDecision.isAnswerable,
-              confidence: retrievalResult.guardrailDecision.score?.confidence || 0,
-              score: retrievalResult.guardrailDecision.score
-            }
-          })) {
-            if (chunk.type === 'chunk' && typeof chunk.data === 'string') {
-              answer += chunk.data;
-              sendEvent('chunk', { text: chunk.data, accumulated: answer });
-            } else if (chunk.type === 'citations') {
-              citations = chunk.data;
-              sendEvent('citations', chunk.data);
-            } else if (chunk.type === 'metadata') {
-              metadata = chunk.data;
-              sendEvent('metadata', chunk.data);
-            } else if (chunk.type === 'error') {
-              sendEvent('error', { message: (chunk.data as Error).message });
-              reply.raw.end();
-              return;
-            } else if (chunk.type === 'done') {
-              break;
-            }
-          }
+           fastify.log.info({ queryId, retrievedDocumentsForSynthesis: retrievalResult.results }, 'Documents provided to LLM for streaming synthesis');
+           for await (const chunk of answerSynthesisService.synthesizeAnswerStreaming({
+             query,
+             documents: retrievalResult.results || [],
+             userContext,
+             maxContextLength: synthesis?.maxContextLength || 8000,
+             includeCitations: synthesis?.includeCitations ?? true,
+             answerFormat: synthesis?.answerFormat || 'markdown',
+             guardrailDecision: {
+               isAnswerable: retrievalResult.isAnswerable,
+               confidence: retrievalResult.guardrailDecision.score?.confidence || 0,
+               score: retrievalResult.guardrailDecision.score
+             }
+           })) {
+             if (chunk.type === 'chunk' && typeof chunk.data === 'string') {
+               answer += chunk.data;
+               process.stdout.write(chunk.data);
+               sendEvent('chunk', { text: chunk.data, accumulated: answer });
+             } else if (chunk.type === 'citations') {
+               citations = chunk.data;
+               sendEvent('citations', chunk.data);
+             } else if (chunk.type === 'metadata') {
+               metadata = chunk.data;
+               sendEvent('metadata', chunk.data);
+             } else if (chunk.type === 'error') {
+               sendEvent('error', { message: (chunk.data as Error).message });
+               reply.raw.end();
+               return;
+             } else if (chunk.type === 'done') {
+               break;
+             }
+           }
 
-          // Convert results for final response
-          const retrievedDocuments = (retrievalResult.results || [])
-            .map((result: HybridSearchResult) => ({
-              document: {
-                id: result.id,
-                content: result.content || '',
-                metadata: {
-                  tenantId: result.payload?.tenant || userContext.tenantId || 'default',
-                  docId: result.payload?.docId || result.id,
-                  acl: Array.isArray(result.payload?.acl) ? result.payload.acl : [result.payload?.acl || ''],
-                  lang: result.payload?.lang,
-                  url: result.payload?.url,
-                  ...(result.payload?.version && { version: result.payload.version }),
-                  ...(result.payload?.filepath && { filepath: result.payload.filepath }),
-                  ...(result.payload?.authors && { authors: result.payload.authors }),
-                  ...(result.payload?.keywords && { keywords: result.payload.keywords }),
-                },
-              },
-              score: result.fusionScore || result.score || 0,
-              searchType: result.searchType,
-              vectorScore: result.vectorScore,
-              keywordScore: result.keywordScore,
-              fusionScore: result.fusionScore,
-              rerankerScore: result.score !== result.fusionScore ? result.score : undefined,
-              rank: result.rank
-            }));
+           // Convert results for final response
+           const retrievedDocuments = (retrievalResult.results || [])
+             .map((result: HybridSearchResult) => ({
+               document: {
+                 id: result.id,
+                 content: result.content || '',
+                 metadata: {
+                   tenantId: result.payload?.tenant || userContext.tenantId || 'default',
+                   docId: result.payload?.docId || result.id,
+                   acl: Array.isArray(result.payload?.acl) ? result.payload.acl : [result.payload?.acl || ''],
+                   lang: result.payload?.lang,
+                   url: result.payload?.url,
+                   ...(result.payload?.version && { version: result.payload.version }),
+                   ...(result.payload?.filepath && { filepath: result.payload.filepath }),
+                   ...(result.payload?.authors && { authors: result.payload.authors }),
+                   ...(result.payload?.keywords && { keywords: result.payload.keywords }),
+                 },
+               },
+               score: result.fusionScore || result.score || 0,
+               searchType: result.searchType,
+               vectorScore: result.vectorScore,
+               keywordScore: result.keywordScore,
+               fusionScore: result.fusionScore,
+               rerankerScore: result.score !== result.fusionScore ? result.score : undefined,
+               rank: result.rank
+             }));
 
-          const responseCitations = Object.values(citations).map((citation: any) => ({
-            id: citation.id,
-            number: citation.number,
-            source: citation.source,
-            freshness: citation.freshness,
-            docId: citation.docId,
-            version: citation.version,
-            url: citation.url,
-            filepath: citation.filepath,
-            authors: citation.authors
-          }));
+           const responseCitations = Object.values(citations).map((citation: any) => ({
+             id: citation.id,
+             number: citation.number,
+             source: citation.source,
+             freshness: citation.freshness,
+             docId: citation.docId,
+             version: citation.version,
+             url: citation.url,
+             filepath: citation.filepath,
+             authors: citation.authors
+           }));
 
-          const totalTime = performance.now() - startTime;
+           const totalTime = performance.now() - startTime;
 
-          // Send final response completed event
-          sendEvent('response_completed', {
-            answer,
-            retrievedDocuments,
-            queryId,
-            guardrailDecision: {
-              isAnswerable: true,
-              confidence: retrievalResult.guardrailDecision.score?.confidence || 0,
-            },
-            freshnessStats: metadata.freshnessStats,
-            citations: responseCitations,
-            ...(includeMetrics && {
-              metrics: {
-                totalDuration: totalTime,
-                vectorSearchDuration: retrievalResult.metrics.vectorSearchDuration,
-                keywordSearchDuration: retrievalResult.metrics.keywordSearchDuration,
-                fusionDuration: retrievalResult.metrics.fusionDuration,
-                rerankerDuration: retrievalResult.metrics.rerankerDuration,
-                guardrailDuration: retrievalResult.metrics.guardrailDuration,
-                synthesisTime: metadata.synthesisTime || 0,
-                vectorResultCount: retrievalResult.metrics.vectorResultCount,
-                keywordResultCount: retrievalResult.metrics.keywordResultCount,
-                finalResultCount: retrievalResult.metrics.finalResultCount,
-                documentsReranked: retrievalResult.metrics.documentsReranked,
-                rerankingEnabled: retrievalResult.metrics.rerankingEnabled
-              }
-            }),
-            synthesisMetadata: {
-              tokensUsed: metadata.tokensUsed || 0,
-              modelUsed: metadata.modelUsed || 'unknown',
-              contextTruncated: metadata.contextTruncated || false,
-              confidence: metadata.confidence || 0,
-              llmProvider: metadata.llmProvider
-            }
-          });
+           // Send final response completed event
+           sendEvent('response_completed', {
+             answer,
+             retrievedDocuments,
+             queryId,
+             guardrailDecision: {
+               isAnswerable: retrievalResult.isAnswerable,
+               confidence: retrievalResult.guardrailDecision.score?.confidence || 0,
+             },
+             freshnessStats: metadata.freshnessStats,
+             citations: responseCitations,
+             ...(includeMetrics && {
+               metrics: {
+                 totalDuration: totalTime,
+                 vectorSearchDuration: retrievalResult.metrics.vectorSearchDuration,
+                 keywordSearchDuration: retrievalResult.metrics.keywordSearchDuration,
+                 fusionDuration: retrievalResult.metrics.fusionDuration,
+                 rerankerDuration: retrievalResult.metrics.rerankerDuration,
+                 guardrailDuration: retrievalResult.metrics.guardrailDuration,
+                 synthesisTime: metadata.synthesisTime || 0,
+                 vectorResultCount: retrievalResult.metrics.vectorResultCount,
+                 keywordResultCount: retrievalResult.metrics.keywordResultCount,
+                 finalResultCount: retrievalResult.metrics.finalResultCount,
+                 documentsReranked: retrievalResult.metrics.documentsReranked,
+                 rerankingEnabled: retrievalResult.metrics.rerankingEnabled,
+                 sectionCompletionMetrics: retrievalResult.sectionCompletionMetrics || {
+                   sectionsDetected: 0,
+                   sectionsCompleted: 0,
+                   sectionsReconstructed: 0,
+                   totalAdditionalChunks: 0,
+                   completionDuration: 0,
+                   timeoutOccurred: false
+                 }
+               }
+             }),
+             synthesisMetadata: {
+               tokensUsed: metadata.tokensUsed || 0,
+               modelUsed: metadata.modelUsed || 'unknown',
+               contextTruncated: metadata.contextTruncated || false,
+               confidence: metadata.confidence || 0,
+               llmProvider: metadata.llmProvider
+             }
+           });
 
         } catch (error) {
           sendEvent('error', { message: `Streaming synthesis failed: ${(error as Error).message}` });

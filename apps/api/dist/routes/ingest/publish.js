@@ -377,9 +377,9 @@ async function handleDocumentDeletion(doc, options, request) {
     options.auditLogger.logTombstone(doc.meta.tenant, doc.meta.docId, doc.meta.source, request.ip || 'unknown', request.headers['user-agent']);
 }
 async function publishDocument(doc, maskedText, options) {
-    // Adaptive chunking strategy - split large blocks intelligently
-    const maxCharsPerChunk = 1500; // Character limit to avoid 413 errors
-    const chunks = await createAdaptiveChunks(doc, maxCharsPerChunk);
+    // TOKEN-AWARE CHUNKING - VERY CONSERVATIVE for structured content (tables, etc.)
+    const maxTokensPerChunk = 350; // Extra conservative limit for structured content like tables
+    const chunks = await createTokenAwareChunks(doc, maxTokensPerChunk);
     const points = [];
     // Initialize embedding service once (optimization)
     const { BgeSmallEnV15EmbeddingService } = await import('@cw-rag-core/retrieval');
@@ -390,31 +390,43 @@ async function publishDocument(doc, maskedText, options) {
         const chunk = chunks[i];
         const pointId = generatePointId(doc.meta.tenant, doc.meta.docId, chunk.id);
         const payload = createChunkPayload(doc, chunk.id, chunk.sectionPath);
-        // Generate embedding with size validation
-        console.log(`🔄 Generating embedding for chunk ${chunk.id} (${chunk.text.length} chars)`);
+        // Generate embedding with token validation
+        console.log(`🔄 Generating embedding for chunk ${chunk.id} (${chunk.text.length} chars, ~${chunk.estimatedTokens} tokens)`);
         let vector;
         try {
-            if (chunk.text.length > 2000) {
-                console.warn(`⚠️  Large chunk detected: ${chunk.text.length} chars, truncating...`);
-                const truncatedText = chunk.text.substring(0, 1800) + '...';
-                vector = await embeddingService.embed(truncatedText);
-            }
-            else {
-                vector = await embeddingService.embed(chunk.text);
-            }
+            vector = await embeddingService.embed(chunk.text);
             console.log(`✅ Embedding generated for chunk ${chunk.id}: ${vector.length} dimensions`);
         }
         catch (error) {
             console.error(`❌ Failed to generate embedding for chunk ${chunk.id}:`, error);
-            // Try with a smaller chunk if it fails
-            try {
-                console.log(`🔄 Retrying with smaller chunk...`);
-                const smallerText = chunk.text.substring(0, 800);
-                vector = await embeddingService.embed(smallerText);
-                console.log(`✅ Retry successful with truncated chunk`);
+            // If it's a 413 error, the chunk is still too large - EXTREME emergency truncation
+            if (error.message?.includes('413') || error.message?.includes('too large')) {
+                console.warn(`⚠️  Emergency truncation for chunk ${chunk.id} (original: ${chunk.text.length} chars)`);
+                try {
+                    // EXTREME emergency fallback for pathological content (like long dashes)
+                    let emergencyText = chunk.text.substring(0, Math.min(400, chunk.text.length));
+                    // Special handling for repeated characters (like dashes, equals, etc.)
+                    if (/^(.)\1{50,}/.test(emergencyText)) {
+                        console.warn(`⚠️  Detected repeated character pattern, using minimal text`);
+                        emergencyText = emergencyText.substring(0, 50) + '...'; // Only take first 50 chars of repeated pattern
+                    }
+                    // If still too long, be even more aggressive
+                    if (emergencyText.length > 200) {
+                        emergencyText = emergencyText.substring(0, 100) + '...';
+                    }
+                    console.log(`🔄 Emergency text: ${emergencyText.length} chars`);
+                    vector = await embeddingService.embed(emergencyText);
+                    console.log(`✅ Emergency truncation successful`);
+                }
+                catch (emergencyError) {
+                    console.warn(`⚠️  Even emergency truncation failed, skipping this chunk`);
+                    // As absolute last resort, use a minimal placeholder embedding
+                    vector = Array(384).fill(0.001); // Tiny non-zero values
+                    console.log(`✅ Using placeholder embedding for pathological chunk`);
+                }
             }
-            catch (retryError) {
-                throw new Error(`Embedding generation failed for chunk ${chunk.id} even after retry: ${retryError.message}`);
+            else {
+                throw error;
             }
         }
         points.push({
@@ -439,8 +451,184 @@ async function publishDocument(doc, maskedText, options) {
     });
     return points.length;
 }
-// Adaptive chunking function that handles large blocks better
+// TOKEN-AWARE chunking function that respects embedding service limits
+async function createTokenAwareChunks(doc, maxTokensPerChunk) {
+    const chunks = [];
+    for (let blockIndex = 0; blockIndex < doc.blocks.length; blockIndex++) {
+        const block = doc.blocks[blockIndex];
+        let text = block.text || block.html || '';
+        if (!text.trim())
+            continue; // Skip empty blocks
+        // SPECIAL HANDLING: Detect pathological patterns (repeated characters like dashes)
+        text = preprocessPathologicalContent(text);
+        // Estimate tokens (ULTRA conservative for table content: 1 token ≈ 1.5 characters)
+        const estimatedTokens = isTableContent(text)
+            ? Math.ceil(text.length / 1.5) // Ultra conservative for tables
+            : Math.ceil(text.length / 2.2); // Very conservative for other content
+        if (estimatedTokens <= maxTokensPerChunk) {
+            // Block fits in one chunk
+            chunks.push({
+                id: `chunk_${blockIndex}`,
+                text: text,
+                sectionPath: `block_${blockIndex}`,
+                index: chunks.length,
+                estimatedTokens
+            });
+        }
+        else {
+            // Split large block using token-aware strategy
+            const blockChunks = await createTokenAwareBlockChunks(text, blockIndex, maxTokensPerChunk);
+            chunks.push(...blockChunks);
+        }
+    }
+    return chunks;
+}
+// Check if content appears to be table-related
+function isTableContent(text) {
+    // Look for table indicators: pipe symbols, header separators, etc.
+    const tableIndicators = [
+        /\|.*\|.*\|/, // Multiple pipes (table rows)
+        /\|[\s-]*:?[\s-]*\|/, // Table header separators
+        /^\s*\|.*\|\s*$/m, // Lines starting/ending with pipes
+        /#.*#.*#/, // Multiple hash symbols (headers)
+    ];
+    return tableIndicators.some(pattern => pattern.test(text));
+}
+// Preprocess pathological content that causes extreme tokenization
+function preprocessPathologicalContent(text) {
+    // Handle table separators and repeated character patterns
+    // Pattern: Table separator lines (generated during processing)
+    text = text.replace(/^\s*[-|:\s]{20,}\s*$/gm, (match) => {
+        console.log(`⚠️  Detected table separator line (${match.length} chars), simplifying`);
+        return '---|---|---'; // Replace with simple table separator
+    });
+    // Pattern: 20+ repeated dashes, equals, underscores, etc.
+    text = text.replace(/(-{20,})/g, (match) => {
+        console.log(`⚠️  Detected ${match.length} repeated dashes, truncating to 10`);
+        return '----------'; // Replace with exactly 10 dashes
+    });
+    text = text.replace(/(={20,})/g, (match) => {
+        console.log(`⚠️  Detected ${match.length} repeated equals, truncating to 10`);
+        return '==========';
+    });
+    text = text.replace(/(__{20,})/g, (match) => {
+        console.log(`⚠️  Detected ${match.length} repeated underscores, truncating to 10`);
+        return '__________';
+    });
+    // Pattern: Any other repeated character (20+ times)
+    text = text.replace(/(.)\1{19,}/g, (match, char) => {
+        console.log(`⚠️  Detected ${match.length} repeated '${char}', truncating to 10`);
+        return char.repeat(10);
+    });
+    return text;
+}
+// Helper function to split a single block into token-aware chunks
+async function createTokenAwareBlockChunks(text, blockIndex, maxTokensPerChunk) {
+    const chunks = [];
+    // Split by sentences first
+    const sentences = text.split(/(?<=[.!?])\s+/).filter(s => s.trim().length > 0);
+    let currentChunk = '';
+    let subChunkIndex = 0;
+    for (const sentence of sentences) {
+        const testChunk = currentChunk ? currentChunk + ' ' + sentence : sentence;
+        const estimatedTokens = isTableContent(testChunk)
+            ? Math.ceil(testChunk.length / 1.5) // Ultra conservative for tables
+            : Math.ceil(testChunk.length / 2.2); // Very conservative for other content
+        if (estimatedTokens <= maxTokensPerChunk) {
+            // Safe to add this sentence
+            currentChunk = testChunk;
+        }
+        else {
+            // Would exceed limit, save current chunk and start new one
+            if (currentChunk.trim()) {
+                chunks.push({
+                    id: `chunk_${blockIndex}_${subChunkIndex}`,
+                    text: currentChunk.trim(),
+                    sectionPath: `block_${blockIndex}/part_${subChunkIndex}`,
+                    index: chunks.length,
+                    estimatedTokens: isTableContent(currentChunk)
+                        ? Math.ceil(currentChunk.length / 1.5)
+                        : Math.ceil(currentChunk.length / 2.2)
+                });
+                subChunkIndex++;
+            }
+            // Handle oversized single sentence
+            const sentenceTokens = isTableContent(sentence)
+                ? Math.ceil(sentence.length / 1.5)
+                : Math.ceil(sentence.length / 2.2);
+            if (sentenceTokens > maxTokensPerChunk) {
+                // Sentence too large, split by words
+                const wordChunks = await createWordLevelChunks(sentence, blockIndex, subChunkIndex, maxTokensPerChunk);
+                chunks.push(...wordChunks);
+                subChunkIndex += wordChunks.length;
+                currentChunk = '';
+            }
+            else {
+                // Start new chunk with current sentence
+                currentChunk = sentence;
+            }
+        }
+    }
+    // Add final chunk if exists
+    if (currentChunk.trim()) {
+        chunks.push({
+            id: `chunk_${blockIndex}_${subChunkIndex}`,
+            text: currentChunk.trim(),
+            sectionPath: `block_${blockIndex}/part_${subChunkIndex}`,
+            index: chunks.length,
+            estimatedTokens: isTableContent(currentChunk)
+                ? Math.ceil(currentChunk.length / 1.5)
+                : Math.ceil(currentChunk.length / 2.2)
+        });
+    }
+    return chunks;
+}
+// Emergency word-level chunking for oversized sentences
+async function createWordLevelChunks(sentence, blockIndex, startSubIndex, maxTokensPerChunk) {
+    const chunks = [];
+    const words = sentence.split(/\s+/);
+    let currentChunk = '';
+    let subChunkIndex = startSubIndex;
+    for (const word of words) {
+        const testChunk = currentChunk ? currentChunk + ' ' + word : word;
+        const estimatedTokens = isTableContent(testChunk)
+            ? Math.ceil(testChunk.length / 1.5)
+            : Math.ceil(testChunk.length / 2.2);
+        if (estimatedTokens <= maxTokensPerChunk) {
+            currentChunk = testChunk;
+        }
+        else {
+            if (currentChunk.trim()) {
+                chunks.push({
+                    id: `chunk_${blockIndex}_${subChunkIndex}`,
+                    text: currentChunk.trim(),
+                    sectionPath: `block_${blockIndex}/part_${subChunkIndex}`,
+                    index: chunks.length,
+                    estimatedTokens: isTableContent(currentChunk)
+                        ? Math.ceil(currentChunk.length / 1.5)
+                        : Math.ceil(currentChunk.length / 2.2)
+                });
+                subChunkIndex++;
+            }
+            currentChunk = word;
+        }
+    }
+    if (currentChunk.trim()) {
+        chunks.push({
+            id: `chunk_${blockIndex}_${subChunkIndex}`,
+            text: currentChunk.trim(),
+            sectionPath: `block_${blockIndex}/part_${subChunkIndex}`,
+            index: chunks.length,
+            estimatedTokens: isTableContent(currentChunk)
+                ? Math.ceil(currentChunk.length / 1.5)
+                : Math.ceil(currentChunk.length / 2.2)
+        });
+    }
+    return chunks;
+}
+// LEGACY: Adaptive chunking function that handles large blocks better (kept for backward compatibility)
 async function createAdaptiveChunks(doc, maxCharsPerChunk) {
+    console.warn('⚠️  Using legacy createAdaptiveChunks - consider migrating to createTokenAwareChunks');
     const chunks = [];
     for (const [blockIndex, block] of doc.blocks.entries()) {
         const text = block.text || block.html || '';

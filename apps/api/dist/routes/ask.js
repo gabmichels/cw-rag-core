@@ -1,7 +1,7 @@
 import { 
 // AskResponseSchema, // Removed as it's defined inline now for clarity and direct control
 validateUserAuthorization } from '@cw-rag-core/shared';
-import { createHybridSearchService, createGuardedRetrievalService, QdrantKeywordSearchService, ReciprocalRankFusionService, HttpRerankerService, SentenceTransformersRerankerService, DEFAULT_RERANKER_CONFIG, RERANKER_MODELS } from '@cw-rag-core/retrieval';
+import { createGuardedRetrievalService, QdrantKeywordSearchService, ReciprocalRankFusionService, HttpRerankerService, SentenceTransformersRerankerService, DEFAULT_RERANKER_CONFIG, RERANKER_MODELS, createSectionAwareHybridSearchService } from '@cw-rag-core/retrieval';
 import { createAnswerSynthesisService } from '../services/answer-synthesis.js';
 import { createCitationService } from '../services/citation.js';
 import { createAuditLogger } from '../utils/audit.js';
@@ -101,9 +101,16 @@ export async function askRoute(fastify, options) {
     };
     // Use the enhanced service for vector search as well
     const vectorSearchService = enhancedQdrantService;
-    // Create hybrid search service
-    const hybridSearchService = createHybridSearchService(vectorSearchService, keywordSearchService, rrfFusionService, options.embeddingService, createRerankerService(true) // Enable reranker by default
-    );
+    // Create section-aware hybrid search service
+    const hybridSearchService = createSectionAwareHybridSearchService(vectorSearchService, keywordSearchService, rrfFusionService, options.embeddingService, createRerankerService(true), // Enable reranker by default
+    options.qdrantClient, {
+        enabled: process.env.SECTION_AWARE_SEARCH !== 'false', // Enable by default
+        maxSectionsToComplete: 2,
+        sectionCompletionTimeoutMs: 2500,
+        mergeStrategy: 'interleave',
+        preserveOriginalRanking: false,
+        minTriggerConfidence: 0.7
+    });
     // Create guarded retrieval service
     const guardedRetrievalService = createGuardedRetrievalService(hybridSearchService, fastify.log, true // performance optimized
     );
@@ -397,6 +404,18 @@ export async function askRoute(fastify, options) {
                                 finalResultCount: { type: 'integer', minimum: 0 },
                                 documentsReranked: { type: 'integer', minimum: 0 },
                                 rerankingEnabled: { type: 'boolean' },
+                                sectionCompletionMetrics: {
+                                    type: 'object',
+                                    properties: {
+                                        sectionsDetected: { type: 'integer', minimum: 0 },
+                                        sectionsCompleted: { type: 'integer', minimum: 0 },
+                                        sectionsReconstructed: { type: 'integer', minimum: 0 },
+                                        totalAdditionalChunks: { type: 'integer', minimum: 0 },
+                                        completionDuration: { type: 'number', minimum: 0 },
+                                        timeoutOccurred: { type: 'boolean' }
+                                    },
+                                    required: ['sectionsDetected', 'sectionsCompleted', 'sectionsReconstructed', 'totalAdditionalChunks', 'completionDuration', 'timeoutOccurred']
+                                }
                             },
                             required: ['totalDuration'],
                         },
@@ -534,7 +553,8 @@ export async function askRoute(fastify, options) {
                     debugSteps.push('Completed guarded retrieval');
                     guardrailConfig = {
                         enabled: true,
-                        decision: retrievalResult.guardrailDecision.isAnswerable ? 'ANSWERABLE' : 'NOT_ANSWERABLE'
+                        decision: retrievalResult.guardrailDecision.isAnswerable ? 'ANSWERABLE' : 'NOT_ANSWERABLE',
+                        sectionCompletionMetrics: retrievalResult.sectionCompletionMetrics, // Include in debug
                     };
                 }
                 // Enhanced audit logging with required fields
@@ -588,7 +608,7 @@ export async function askRoute(fastify, options) {
                                 count: retrievalResult.guardrailDecision.score.scoreStats.count
                             } : undefined,
                             algorithmScores: retrievalResult.guardrailDecision.score?.algorithmScores,
-                            sourceAwareConfidence: retrievalResult.guardrailDecision.score?.sourceAwareConfidence // Add sourceAwareConfidence
+                            sourceAwareConfidence: retrievalResult.guardrailDecision.score?.sourceAwareConfidence
                         },
                         ...(includeMetrics && {
                             metrics: {
@@ -602,7 +622,11 @@ export async function askRoute(fastify, options) {
                                 keywordResultCount: retrievalResult.metrics.keywordResultCount,
                                 finalResultCount: retrievalResult.metrics.finalResultCount,
                                 documentsReranked: retrievalResult.metrics.documentsReranked,
-                                rerankingEnabled: retrievalResult.metrics.rerankingEnabled
+                                rerankingEnabled: retrievalResult.metrics.rerankingEnabled,
+                                sectionCompletionMetrics: retrievalResult.sectionCompletionMetrics || {
+                                    sectionsDetected: 0, sectionsCompleted: 0, sectionsReconstructed: 0,
+                                    totalAdditionalChunks: 0, completionDuration: 0, timeoutOccurred: false
+                                }
                             }
                         }),
                         ...(includeDebugInfo && {
@@ -629,11 +653,16 @@ export async function askRoute(fastify, options) {
                     try {
                         for await (const chunk of answerSynthesisService.synthesizeAnswerStreaming({
                             query,
-                            documents: retrievalResult.results || [], // Correctly use retrievalResult.results
+                            documents: retrievalResult.results || [],
                             userContext,
                             maxContextLength: synthesis?.maxContextLength || 8000,
                             includeCitations: synthesis?.includeCitations ?? true,
-                            answerFormat: synthesis?.answerFormat || 'markdown'
+                            answerFormat: synthesis?.answerFormat || 'markdown',
+                            guardrailDecision: {
+                                isAnswerable: retrievalResult.isAnswerable,
+                                confidence: retrievalResult.guardrailDecision.score?.confidence || 0,
+                                score: retrievalResult.guardrailDecision.score
+                            }
                         })) {
                             if (chunk.type === 'chunk' && typeof chunk.data === 'string') {
                                 answer += chunk.data;
@@ -652,7 +681,7 @@ export async function askRoute(fastify, options) {
                             }
                         }
                         // Convert streaming result to regular response format
-                        const retrievedDocuments = (retrievalResult.results || []) // Correctly use retrievalResult.results
+                        const retrievedDocuments = (retrievalResult.results || [])
                             .map((result) => ({
                             document: {
                                 id: result.id,
@@ -694,8 +723,8 @@ export async function askRoute(fastify, options) {
                             retrievedDocuments,
                             queryId,
                             guardrailDecision: {
-                                isAnswerable: true,
-                                confidence: retrievalResult.guardrailDecision.score?.confidence || 0, // Direct from guardrail decision score
+                                isAnswerable: retrievalResult.isAnswerable,
+                                confidence: retrievalResult.guardrailDecision.score?.confidence || 0,
                                 scoreStats: retrievalResult.guardrailDecision.score?.scoreStats ? {
                                     mean: retrievalResult.guardrailDecision.score.scoreStats.mean,
                                     max: retrievalResult.guardrailDecision.score.scoreStats.max,
@@ -712,7 +741,7 @@ export async function askRoute(fastify, options) {
                                 metrics: {
                                     totalDuration: totalTime,
                                     vectorSearchDuration: retrievalResult.metrics.vectorSearchDuration,
-                                    keywordSearchDuration: retrievalResult.metrics.keywordSearchDuration,
+                                    keywordSearchDuration: retrievalResult.metrics.keywordSearchDuration, // Direct access
                                     fusionDuration: retrievalResult.metrics.fusionDuration,
                                     rerankerDuration: retrievalResult.metrics.rerankerDuration,
                                     guardrailDuration: retrievalResult.metrics.guardrailDuration,
@@ -721,7 +750,11 @@ export async function askRoute(fastify, options) {
                                     keywordResultCount: retrievalResult.metrics.keywordResultCount,
                                     finalResultCount: retrievalResult.metrics.finalResultCount,
                                     documentsReranked: retrievalResult.metrics.documentsReranked,
-                                    rerankingEnabled: retrievalResult.metrics.rerankingEnabled
+                                    rerankingEnabled: retrievalResult.metrics.rerankingEnabled,
+                                    sectionCompletionMetrics: retrievalResult.sectionCompletionMetrics || {
+                                        sectionsDetected: 0, sectionsCompleted: 0, sectionsReconstructed: 0,
+                                        totalAdditionalChunks: 0, completionDuration: 0, timeoutOccurred: false
+                                    }
                                 }
                             }),
                             synthesisMetadata: {
@@ -750,11 +783,16 @@ export async function askRoute(fastify, options) {
                 const synthesisStartTime = performance.now();
                 const synthesisResult = await timeoutManager.executeWithTimeout(() => answerSynthesisService.synthesizeAnswer({
                     query,
-                    documents: retrievalResult.results || [], // Correctly use retrievalResult.results
+                    documents: retrievalResult.results || [],
                     userContext,
                     maxContextLength: synthesis?.maxContextLength || 8000,
                     includeCitations: synthesis?.includeCitations ?? true,
-                    answerFormat: synthesis?.answerFormat || 'markdown'
+                    answerFormat: synthesis?.answerFormat || 'markdown',
+                    guardrailDecision: {
+                        isAnswerable: retrievalResult.isAnswerable,
+                        confidence: retrievalResult.guardrailDecision.score?.confidence || 0,
+                        score: retrievalResult.guardrailDecision.score
+                    }
                 }), timeouts.llm, 'LLM synthesis');
                 const synthesisResponse = synthesisResult;
                 const synthesisTime = performance.now() - synthesisStartTime;
@@ -762,7 +800,7 @@ export async function askRoute(fastify, options) {
                     debugSteps.push('Completed answer synthesis');
                 }
                 // Convert HybridSearchResult to RetrievedDocument format for response
-                const retrievedDocuments = (retrievalResult.results || []) // Correctly use retrievalResult.results
+                const retrievedDocuments = (retrievalResult.results || [])
                     .map((result) => ({
                     document: {
                         id: result.id,
@@ -832,8 +870,8 @@ export async function askRoute(fastify, options) {
                     retrievedDocuments,
                     queryId,
                     guardrailDecision: {
-                        isAnswerable: true,
-                        confidence: retrievalResult.guardrailDecision.score?.confidence || 0, // Direct from guardrail decision score
+                        isAnswerable: retrievalResult.isAnswerable,
+                        confidence: retrievalResult.guardrailDecision.score?.confidence || 0,
                         threshold: retrievalResult.guardrailDecision.threshold,
                         scoreStats: retrievalResult.guardrailDecision.score?.scoreStats ? {
                             mean: retrievalResult.guardrailDecision.score.scoreStats.mean,
@@ -860,7 +898,11 @@ export async function askRoute(fastify, options) {
                             keywordResultCount: retrievalResult.metrics.keywordResultCount,
                             finalResultCount: retrievalResult.metrics.finalResultCount,
                             documentsReranked: retrievalResult.metrics.documentsReranked,
-                            rerankingEnabled: retrievalResult.metrics.rerankingEnabled
+                            rerankingEnabled: retrievalResult.metrics.rerankingEnabled,
+                            sectionCompletionMetrics: retrievalResult.sectionCompletionMetrics || {
+                                sectionsDetected: 0, sectionsCompleted: 0, sectionsReconstructed: 0,
+                                totalAdditionalChunks: 0, completionDuration: 0, timeoutOccurred: false
+                            }
                         }
                     }),
                     synthesisMetadata: {

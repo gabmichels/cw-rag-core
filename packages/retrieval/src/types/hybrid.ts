@@ -17,7 +17,7 @@ export interface HybridSearchResult {
   score: number; // Final score after fusion/reranking
   content?: string;
   payload?: Record<string, any>;
-  searchType?: 'vector_only' | 'keyword_only' | 'hybrid';
+  searchType?: 'vector_only' | 'keyword_only' | 'hybrid' | 'section_reconstructed' | 'section_related';
   vectorScore?: number;
   keywordScore?: number;
   fusionScore?: number; // Score specifically from RRF fusion

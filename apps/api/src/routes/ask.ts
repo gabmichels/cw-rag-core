@@ -22,7 +22,10 @@ import {
   DEFAULT_RERANKER_CONFIG,
   RERANKER_MODELS,
   HybridSearchResult,
-  StructuredHybridSearchResult // Import StructuredHybridSearchResult
+  StructuredHybridSearchResult,
+  SectionAwareHybridSearchService,
+  createSectionAwareHybridSearchService,
+  GuardedRetrievalResult // Import GuardedRetrievalResult
 } from '@cw-rag-core/retrieval';
 import { createAnswerSynthesisService } from '../services/answer-synthesis.js';
 import { createCitationService } from '../services/citation.js';
@@ -151,13 +154,22 @@ export async function askRoute(fastify: FastifyInstance, options: AskRouteOption
   // Use the enhanced service for vector search as well
   const vectorSearchService = enhancedQdrantService;
 
-  // Create hybrid search service
-  const hybridSearchService: HybridSearchService = createHybridSearchService(
+  // Create section-aware hybrid search service
+  const hybridSearchService: SectionAwareHybridSearchService = createSectionAwareHybridSearchService(
     vectorSearchService,
     keywordSearchService,
     rrfFusionService,
     options.embeddingService,
-    createRerankerService(true) // Enable reranker by default
+    createRerankerService(true), // Enable reranker by default
+    options.qdrantClient,
+    {
+      enabled: process.env.SECTION_AWARE_SEARCH !== 'false', // Enable by default
+      maxSectionsToComplete: 10, // Increased to handle more sections
+      sectionCompletionTimeoutMs: 2500,
+      mergeStrategy: 'interleave',
+      preserveOriginalRanking: false,
+      minTriggerConfidence: 0.7
+    }
   );
 
   // Create guarded retrieval service
@@ -460,6 +472,18 @@ export async function askRoute(fastify: FastifyInstance, options: AskRouteOption
                 finalResultCount: { type: 'integer', minimum: 0 },
                 documentsReranked: { type: 'integer', minimum: 0 },
                 rerankingEnabled: { type: 'boolean' },
+                sectionCompletionMetrics: {
+                  type: 'object',
+                  properties: {
+                    sectionsDetected: { type: 'integer', minimum: 0 },
+                    sectionsCompleted: { type: 'integer', minimum: 0 },
+                    sectionsReconstructed: { type: 'integer', minimum: 0 },
+                    totalAdditionalChunks: { type: 'integer', minimum: 0 },
+                    completionDuration: { type: 'number', minimum: 0 },
+                    timeoutOccurred: { type: 'boolean' }
+                  },
+                  required: ['sectionsDetected', 'sectionsCompleted', 'sectionsReconstructed', 'totalAdditionalChunks', 'completionDuration', 'timeoutOccurred']
+                }
               },
               required: ['totalDuration'],
             },
@@ -611,7 +635,7 @@ export async function askRoute(fastify: FastifyInstance, options: AskRouteOption
 
           // Perform guarded retrieval (includes hybrid search + guardrails) with timeout
           const retrievalStartTime = performance.now();
-          const retrievalResult = await timeoutManager.executeWithTimeout(
+          const retrievalResult: GuardedRetrievalResult = await timeoutManager.executeWithTimeout(
             () => guardedRetrievalService.retrieveWithGuardrail(
               options.collectionName,
               hybridSearchRequest,
@@ -633,9 +657,11 @@ export async function askRoute(fastify: FastifyInstance, options: AskRouteOption
 
         if (includeDebugInfo) {
           debugSteps.push('Completed guarded retrieval');
+
           guardrailConfig = {
             enabled: true,
-            decision: retrievalResult.guardrailDecision.isAnswerable ? 'ANSWERABLE' : 'NOT_ANSWERABLE'
+            decision: retrievalResult.guardrailDecision.isAnswerable ? 'ANSWERABLE' : 'NOT_ANSWERABLE',
+            sectionCompletionMetrics: retrievalResult.sectionCompletionMetrics, // Include in debug
           };
         }
 
@@ -693,7 +719,7 @@ export async function askRoute(fastify: FastifyInstance, options: AskRouteOption
                 count: retrievalResult.guardrailDecision.score.scoreStats.count
               } : undefined,
               algorithmScores: retrievalResult.guardrailDecision.score?.algorithmScores,
-              sourceAwareConfidence: retrievalResult.guardrailDecision.score?.sourceAwareConfidence // Add sourceAwareConfidence
+              sourceAwareConfidence: retrievalResult.guardrailDecision.score?.sourceAwareConfidence
             },
             ...(includeMetrics && {
               metrics: {
@@ -707,7 +733,11 @@ export async function askRoute(fastify: FastifyInstance, options: AskRouteOption
                 keywordResultCount: retrievalResult.metrics.keywordResultCount,
                 finalResultCount: retrievalResult.metrics.finalResultCount,
                 documentsReranked: retrievalResult.metrics.documentsReranked,
-                rerankingEnabled: retrievalResult.metrics.rerankingEnabled
+                rerankingEnabled: retrievalResult.metrics.rerankingEnabled,
+                sectionCompletionMetrics: retrievalResult.sectionCompletionMetrics || { // Include here
+                  sectionsDetected: 0, sectionsCompleted: 0, sectionsReconstructed: 0,
+                  totalAdditionalChunks: 0, completionDuration: 0, timeoutOccurred: false
+                }
               }
             }),
             ...(includeDebugInfo && {
@@ -739,13 +769,13 @@ export async function askRoute(fastify: FastifyInstance, options: AskRouteOption
           try {
             for await (const chunk of answerSynthesisService.synthesizeAnswerStreaming({
               query,
-              documents: retrievalResult.results || [], // Correctly use retrievalResult.results
+              documents: retrievalResult.results || [],
               userContext,
               maxContextLength: synthesis?.maxContextLength || 8000,
               includeCitations: synthesis?.includeCitations ?? true,
               answerFormat: synthesis?.answerFormat || 'markdown',
               guardrailDecision: {
-                isAnswerable: retrievalResult.guardrailDecision.isAnswerable,
+                isAnswerable: retrievalResult.isAnswerable,
                 confidence: retrievalResult.guardrailDecision.score?.confidence || 0,
                 score: retrievalResult.guardrailDecision.score
               }
@@ -764,7 +794,7 @@ export async function askRoute(fastify: FastifyInstance, options: AskRouteOption
             }
 
             // Convert streaming result to regular response format
-            const retrievedDocuments: RetrievedDocument[] = (retrievalResult.results || []) // Correctly use retrievalResult.results
+            const retrievedDocuments: RetrievedDocument[] = (retrievalResult.results || [])
               .map((result: HybridSearchResult) => ({
                 document: {
                   id: result.id,
@@ -809,8 +839,8 @@ export async function askRoute(fastify: FastifyInstance, options: AskRouteOption
               retrievedDocuments,
               queryId,
               guardrailDecision: {
-                isAnswerable: true,
-                confidence: retrievalResult.guardrailDecision.score?.confidence || 0, // Direct from guardrail decision score
+                isAnswerable: retrievalResult.isAnswerable,
+                confidence: retrievalResult.guardrailDecision.score?.confidence || 0,
                 scoreStats: retrievalResult.guardrailDecision.score?.scoreStats ? {
                   mean: retrievalResult.guardrailDecision.score.scoreStats.mean,
                   max: retrievalResult.guardrailDecision.score.scoreStats.max,
@@ -827,7 +857,7 @@ export async function askRoute(fastify: FastifyInstance, options: AskRouteOption
                 metrics: {
                   totalDuration: totalTime,
                   vectorSearchDuration: retrievalResult.metrics.vectorSearchDuration,
-                  keywordSearchDuration: retrievalResult.metrics.keywordSearchDuration,
+                  keywordSearchDuration: retrievalResult.metrics.keywordSearchDuration, // Direct access
                   fusionDuration: retrievalResult.metrics.fusionDuration,
                   rerankerDuration: retrievalResult.metrics.rerankerDuration,
                   guardrailDuration: retrievalResult.metrics.guardrailDuration,
@@ -836,7 +866,11 @@ export async function askRoute(fastify: FastifyInstance, options: AskRouteOption
                   keywordResultCount: retrievalResult.metrics.keywordResultCount,
                   finalResultCount: retrievalResult.metrics.finalResultCount,
                   documentsReranked: retrievalResult.metrics.documentsReranked,
-                  rerankingEnabled: retrievalResult.metrics.rerankingEnabled
+                  rerankingEnabled: retrievalResult.metrics.rerankingEnabled,
+                  sectionCompletionMetrics: retrievalResult.sectionCompletionMetrics || { // Direct from GuardedRetrievalResult
+                    sectionsDetected: 0, sectionsCompleted: 0, sectionsReconstructed: 0,
+                    totalAdditionalChunks: 0, completionDuration: 0, timeoutOccurred: false
+                  }
                 }
               }),
               synthesisMetadata: {
@@ -868,13 +902,13 @@ export async function askRoute(fastify: FastifyInstance, options: AskRouteOption
         const synthesisResult = await timeoutManager.executeWithTimeout(
           () => answerSynthesisService.synthesizeAnswer({
             query,
-            documents: retrievalResult.results || [], // Correctly use retrievalResult.results
+            documents: retrievalResult.results || [],
             userContext,
             maxContextLength: synthesis?.maxContextLength || 8000,
             includeCitations: synthesis?.includeCitations ?? true,
             answerFormat: synthesis?.answerFormat || 'markdown',
             guardrailDecision: {
-              isAnswerable: retrievalResult.guardrailDecision.isAnswerable,
+              isAnswerable: retrievalResult.isAnswerable,
               confidence: retrievalResult.guardrailDecision.score?.confidence || 0,
               score: retrievalResult.guardrailDecision.score
             }
@@ -890,7 +924,7 @@ export async function askRoute(fastify: FastifyInstance, options: AskRouteOption
         }
 
         // Convert HybridSearchResult to RetrievedDocument format for response
-        const retrievedDocuments: RetrievedDocument[] = (retrievalResult.results || []) // Correctly use retrievalResult.results
+        const retrievedDocuments: RetrievedDocument[] = (retrievalResult.results || [])
           .map((result: HybridSearchResult) => ({
             document: {
               id: result.id,
@@ -966,8 +1000,8 @@ export async function askRoute(fastify: FastifyInstance, options: AskRouteOption
           retrievedDocuments,
           queryId,
           guardrailDecision: {
-            isAnswerable: true,
-            confidence: retrievalResult.guardrailDecision.score?.confidence || 0, // Direct from guardrail decision score
+            isAnswerable: retrievalResult.isAnswerable,
+            confidence: retrievalResult.guardrailDecision.score?.confidence || 0,
             threshold: retrievalResult.guardrailDecision.threshold,
             scoreStats: retrievalResult.guardrailDecision.score?.scoreStats ? {
               mean: retrievalResult.guardrailDecision.score.scoreStats.mean,
@@ -994,7 +1028,11 @@ export async function askRoute(fastify: FastifyInstance, options: AskRouteOption
               keywordResultCount: retrievalResult.metrics.keywordResultCount,
               finalResultCount: retrievalResult.metrics.finalResultCount,
               documentsReranked: retrievalResult.metrics.documentsReranked,
-              rerankingEnabled: retrievalResult.metrics.rerankingEnabled
+              rerankingEnabled: retrievalResult.metrics.rerankingEnabled,
+              sectionCompletionMetrics: retrievalResult.sectionCompletionMetrics || { // Direct from GuardedRetrievalResult
+                sectionsDetected: 0, sectionsCompleted: 0, sectionsReconstructed: 0,
+                totalAdditionalChunks: 0, completionDuration: 0, timeoutOccurred: false
+              }
             }
           }),
           synthesisMetadata: {

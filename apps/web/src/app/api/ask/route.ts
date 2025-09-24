@@ -30,6 +30,7 @@ export async function POST(request: NextRequest) {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(askRequest),
+      cache: 'no-store', // Disable Next.js data cache for this request
     });
 
     if (!response.ok) {

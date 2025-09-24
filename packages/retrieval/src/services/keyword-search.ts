@@ -73,8 +73,19 @@ export class QdrantKeywordSearchService implements KeywordSearchService {
       // Calculate BM25-like scores for each document
       const scoredResults: HybridSearchResult[] = allResults
         .map((result: any) => {
+          // Combine content with metadata fields for keyword matching
           const content = (result.payload?.content || '').toLowerCase();
-          const score = this.calculateKeywordScore(content, queryTerms);
+          const title = (result.payload?.title || '').toLowerCase();
+          const docId = (result.payload?.docId || '').toLowerCase();
+          const path = (result.payload?.path || '').toLowerCase();
+
+          // Create searchable text that includes metadata (with field boosting)
+          const searchableText = content + ' ' +
+                                title.repeat(3) + ' ' +     // 3x boost for title matches
+                                docId.repeat(5) + ' ' +     // 5x boost for docId matches
+                                path.repeat(3);             // 3x boost for path matches
+
+          const score = this.calculateKeywordScore(searchableText, queryTerms);
 
           return {
             id: result.id,

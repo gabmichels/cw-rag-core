@@ -2,8 +2,9 @@ import { HybridSearchService } from './hybrid-search.js';
 import {
   HybridSearchRequest,
   HybridSearchResult,
-  SearchPerformanceMetrics
+  SearchPerformanceMetrics,
 } from '../types/hybrid.js';
+import { SectionAwareSearchResult, SectionAwareHybridSearchService } from './section-aware-hybrid-search.js'; // Correct import
 import {
   AnswerabilityGuardrailService,
   createAnswerabilityGuardrailService
@@ -33,6 +34,9 @@ export interface GuardedRetrievalResult {
   metrics: SearchPerformanceMetrics & {
     guardrailDuration: number;
   };
+  // Add section-aware metrics directly to GuardedRetrievalResult
+  sectionCompletionMetrics?: SectionAwareSearchResult['sectionCompletionMetrics'];
+  reconstructedSections?: SectionAwareSearchResult['reconstructedSections'];
 }
 
 export interface GuardedRetrievalService {
@@ -78,7 +82,7 @@ export class GuardedRetrievalServiceImpl implements GuardedRetrievalService {
   ): Promise<GuardedRetrievalResult> {
     try {
       // Perform hybrid search
-      const searchResult = await this.hybridSearchService.search(
+      const searchResult = await (this.hybridSearchService as SectionAwareHybridSearchService).search( // Cast to SectionAwareHybridSearchService
         collectionName,
         request,
         userContext
@@ -118,7 +122,9 @@ export class GuardedRetrievalServiceImpl implements GuardedRetrievalService {
         metrics: {
           ...searchResult.metrics,
           guardrailDuration
-        }
+        },
+        sectionCompletionMetrics: searchResult.sectionCompletionMetrics, // Propagate section completion metrics
+        reconstructedSections: searchResult.reconstructedSections // Propagate reconstructed sections
       };
 
       return result;

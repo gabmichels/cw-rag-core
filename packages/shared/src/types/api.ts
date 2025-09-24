@@ -61,7 +61,7 @@ export interface RetrievedDocument {
   freshness?: FreshnessInfo;
 
   // Enhanced retrieval metadata
-  searchType?: 'hybrid' | 'vector_only' | 'keyword_only';
+  searchType?: 'hybrid' | 'vector_only' | 'keyword_only' | 'section_reconstructed' | 'section_related';
   vectorScore?: number;
   keywordScore?: number;
   fusionScore?: number;

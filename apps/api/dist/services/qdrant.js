@@ -6,11 +6,14 @@ export const QDRANT_COLLECTION_NAME = 'docs_v1';
 export async function bootstrapQdrant(qdrantClient, logger, maxRetries = 5, retryDelay = 5000) {
     for (let i = 0; i < maxRetries; i++) {
         try {
-            logger.info(`Attempt ${i + 1} to connect to Qdrant and bootstrap collection...`);
+            logger.info(`Attempt ${i + 1}/${maxRetries} to connect to Qdrant and bootstrap collection...`);
             const collections = await qdrantClient.getCollections();
+            // Enhanced logging for debugging collection persistence
+            const existingCollectionNames = collections.collections.map(c => c.name);
+            logger.info(`Qdrant connection successful. Found ${collections.collections.length} existing collections: [${existingCollectionNames.join(', ')}]. Target collection: '${QDRANT_COLLECTION_NAME}'`);
             const collectionExists = collections.collections.some((c) => c.name === QDRANT_COLLECTION_NAME);
             if (!collectionExists) {
-                logger.info(`Collection '${QDRANT_COLLECTION_NAME}' not found, creating...`);
+                logger.info(`Collection '${QDRANT_COLLECTION_NAME}' not found in existing collections, creating new collection...`);
                 await qdrantClient.createCollection(QDRANT_COLLECTION_NAME, {
                     vectors: { size: DOCUMENT_VECTOR_DIMENSION, distance: 'Cosine' },
                 });
@@ -71,7 +74,15 @@ export async function bootstrapQdrant(qdrantClient, logger, maxRetries = 5, retr
                 logger.info('Payload indexes and full-text index created successfully.');
             }
             else {
-                logger.info(`Collection '${QDRANT_COLLECTION_NAME}' already exists.`);
+                logger.info(`Collection '${QDRANT_COLLECTION_NAME}' already exists - skipping creation and index setup.`);
+                // Additional validation to ensure collection health
+                try {
+                    const collectionInfo = await qdrantClient.getCollection(QDRANT_COLLECTION_NAME);
+                    logger.info(`Existing collection '${QDRANT_COLLECTION_NAME}' validation - Vectors: ${collectionInfo.vectors_count}, Indexed: ${collectionInfo.indexed_vectors_count}, Points: ${collectionInfo.points_count}, Status: ${collectionInfo.status}`);
+                }
+                catch (validationError) {
+                    logger.warn(`Could not validate existing collection '${QDRANT_COLLECTION_NAME}': ${validationError.message}`);
+                }
             }
             logger.info('Qdrant bootstrap complete.');
             return;

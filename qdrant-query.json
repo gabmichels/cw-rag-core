@@ -1,0 +1,21 @@
+{
+  "filter": {
+    "must": [
+      {
+        "key": "tenantId",
+        "match": {
+          "value": "zenithfall"
+        }
+      },
+      {
+        "key": "docId",
+        "match": {
+          "value": "Skill Tables"
+        }
+      }
+    ]
+  },
+  "limit": 3,
+  "with_payload": true,
+  "with_vector": false
+}

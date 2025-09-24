@@ -3,45 +3,65 @@ import { calculateFreshnessStats } from '@cw-rag-core/shared';
 import { AnswerSynthesisError } from '../types/synthesis.js';
 import { createCitationService } from './citation.js';
 import { createLLMClientFactory } from './llm-client.js';
+import { createStreamingEventHandler } from './streaming-event-handler.js';
 export class AnswerSynthesisServiceImpl {
     llmClientFactory;
     citationService;
     maxContextLength;
     lastQualityMetrics = null;
     guardrailService;
+    streamingEventHandler;
     constructor(llmClientFactory, citationService, maxContextLength = 8000) {
         this.llmClientFactory = llmClientFactory;
         this.citationService = citationService;
         this.maxContextLength = maxContextLength;
         this.guardrailService = createAnswerabilityGuardrailService();
+        this.streamingEventHandler = createStreamingEventHandler();
     }
     async synthesizeAnswer(request) {
         const startTime = performance.now();
         try {
             // Validate request
             this.validateRequest(request);
-            // Check answerability guardrail
-            // The answer synthesis service only receives the already fused documents.
-            // We pass them as fusionResults for source-aware confidence calculation.
-            const guardrailDecision = await this.guardrailService.evaluateAnswerability(request.query, {
-                vectorResults: [], // Not available at this stage
-                keywordResults: [], // Not available at this stage
-                fusionResults: request.documents,
-                rerankerResults: undefined // Not available as RerankerResult[] at this stage
-            }, request.userContext);
+            // Use passed guardrail decision if available, otherwise evaluate
+            let guardrailDecision;
+            if (request.guardrailDecision) {
+                // Trust the pre-evaluated guardrail decision from the main retrieval pipeline
+                guardrailDecision = {
+                    isAnswerable: request.guardrailDecision.isAnswerable,
+                    score: {
+                        confidence: request.guardrailDecision.confidence,
+                        ...request.guardrailDecision.score
+                    }
+                };
+                console.log(`Using pre-evaluated guardrail decision: confidence=${guardrailDecision.score.confidence}, isAnswerable=${guardrailDecision.isAnswerable}`);
+            }
+            else {
+                // Fallback: Check answerability guardrail
+                // The answer synthesis service only receives the already fused documents.
+                // We pass them as fusionResults for source-aware confidence calculation.
+                guardrailDecision = await this.guardrailService.evaluateAnswerability(request.query, {
+                    vectorResults: [], // Not available at this stage
+                    keywordResults: [], // Not available at this stage
+                    fusionResults: request.documents,
+                    rerankerResults: undefined // Not available as RerankerResult[] at this stage
+                }, request.userContext);
+                console.log(`Evaluated guardrail decision: confidence=${guardrailDecision.score.confidence}, isAnswerable=${guardrailDecision.isAnswerable}`);
+            }
             const tenantId = request.userContext.tenantId || 'default';
-            const answerabilityThreshold = parseFloat(process.env.ANSWERABILITY_THRESHOLD || '0.5');
-            // If not answerable according to guardrail, return IDK response
-            if (!guardrailDecision.isAnswerable || guardrailDecision.score.confidence < answerabilityThreshold) {
-                console.log(`Answerability guardrail triggered: confidence=${guardrailDecision.score.confidence}, threshold=${answerabilityThreshold}`);
-                const idkResponse = this.guardrailService.generateIdkResponse(guardrailDecision.score, await this.guardrailService.getTenantConfig(tenantId), request.documents);
+            const answerabilityThreshold = parseFloat(process.env.ANSWERABILITY_THRESHOLD || '0.5'); // Retain for clarity/future use if needed
+            // If not answerable according to guardrail's definitive decision, return IDK response
+            if (!guardrailDecision.isAnswerable) {
+                console.log(`Answerability guardrail triggered IDK: confidence=${guardrailDecision.score.confidence}, isAnswerable=${guardrailDecision.isAnswerable}`);
+                const idkResponse = this.guardrailService.generateIdkResponse(guardrailDecision.score, await this.guardrailService.getTenantConfig(tenantId), request.documents // Still pass unfiltered documents for suggestions
+                );
                 const synthesisTime = performance.now() - startTime;
                 return {
                     answer: idkResponse.message,
                     citations: {},
                     tokensUsed: 0,
                     synthesisTime,
-                    confidence: guardrailDecision.score.confidence,
+                    confidence: guardrailDecision.score.confidence, // Use confidence from guardrailDecision
                     modelUsed: 'guardrail',
                     contextTruncated: false,
                     freshnessStats: this.calculateFreshnessStats(request.documents, tenantId)
@@ -54,8 +74,12 @@ export class AnswerSynthesisServiceImpl {
             // Get LLM client for tenant
             const llmClient = await this.llmClientFactory.createClientForTenant(request.userContext.tenantId || 'default');
             // Generate answer
-            const completion = await llmClient.generateCompletion(request.query, contextResult.context, 1000 // max tokens for answer
-            );
+            const completion = await llmClient.generateCompletion(request.query, contextResult.context, 1000, // max tokens for answer
+            {
+                isAnswerable: guardrailDecision.isAnswerable,
+                confidence: guardrailDecision.score.confidence,
+                score: guardrailDecision.score
+            });
             // Format answer with citations
             const formattedAnswer = this.formatAnswerWithCitations(completion.text, citations, request.answerFormat || 'markdown');
             // Calculate freshness statistics
@@ -97,21 +121,38 @@ export class AnswerSynthesisServiceImpl {
         try {
             // Validate request
             this.validateRequest(request);
-            // Check answerability guardrail
-            // The answer synthesis service only receives the already fused documents.
-            // We pass them as fusionResults for source-aware confidence calculation.
-            const guardrailDecision = await this.guardrailService.evaluateAnswerability(request.query, {
-                vectorResults: [],
-                keywordResults: [],
-                fusionResults: request.documents,
-                rerankerResults: undefined
-            }, request.userContext);
+            // Use passed guardrail decision if available, otherwise evaluate
+            let guardrailDecision;
+            if (request.guardrailDecision) {
+                // Trust the pre-evaluated guardrail decision from the main retrieval pipeline
+                guardrailDecision = {
+                    isAnswerable: request.guardrailDecision.isAnswerable,
+                    score: {
+                        confidence: request.guardrailDecision.confidence,
+                        ...request.guardrailDecision.score
+                    }
+                };
+                console.log(`Using pre-evaluated guardrail decision: confidence=${guardrailDecision.score.confidence}, isAnswerable=${guardrailDecision.isAnswerable}`);
+            }
+            else {
+                // Fallback: Check answerability guardrail
+                // The answer synthesis service only receives the already fused documents.
+                // We pass them as fusionResults for source-aware confidence calculation.
+                guardrailDecision = await this.guardrailService.evaluateAnswerability(request.query, {
+                    vectorResults: [],
+                    keywordResults: [],
+                    fusionResults: request.documents,
+                    rerankerResults: undefined
+                }, request.userContext);
+                console.log(`Evaluated guardrail decision: confidence=${guardrailDecision.score.confidence}, isAnswerable=${guardrailDecision.isAnswerable}`);
+            }
             const tenantId = request.userContext.tenantId || 'default';
             const answerabilityThreshold = parseFloat(process.env.ANSWERABILITY_THRESHOLD || '0.5');
-            // If not answerable according to guardrail, return IDK response
-            if (!guardrailDecision.isAnswerable || guardrailDecision.score.confidence < answerabilityThreshold) {
-                console.log(`Answerability guardrail triggered: confidence=${guardrailDecision.score.confidence}, threshold=${answerabilityThreshold}`);
-                const idkResponse = this.guardrailService.generateIdkResponse(guardrailDecision.score, await this.guardrailService.getTenantConfig(tenantId), request.documents);
+            // If not answerable according to guardrail's definitive decision, return IDK response
+            if (!guardrailDecision.isAnswerable) {
+                console.log(`Answerability guardrail triggered IDK: confidence=${guardrailDecision.score.confidence}, isAnswerable=${guardrailDecision.isAnswerable}`);
+                const idkResponse = this.guardrailService.generateIdkResponse(guardrailDecision.score, await this.guardrailService.getTenantConfig(tenantId), request.documents // Still pass unfiltered documents for suggestions
+                );
                 const synthesisTime = performance.now() - startTime;
                 // Emit IDK response as a single chunk
                 yield {
@@ -124,7 +165,7 @@ export class AnswerSynthesisServiceImpl {
                     data: {
                         tokensUsed: 0,
                         synthesisTime,
-                        confidence: guardrailDecision.score.confidence,
+                        confidence: guardrailDecision.score.confidence, // Use confidence from guardrailDecision
                         modelUsed: 'guardrail',
                         contextTruncated: false,
                         freshnessStats: this.calculateFreshnessStats(request.documents, tenantId)
@@ -172,15 +213,29 @@ export class AnswerSynthesisServiceImpl {
                 return;
             }
             let fullAnswer = '';
-            const totalTokens = 0;
-            // Generate streaming answer
-            for await (const chunk of llmClient.generateStreamingCompletion(request.query, contextResult.context, 1000)) {
+            let totalTokens = 0;
+            let totalChunks = 0;
+            let completionReason = 'stop';
+            let llmProvider = llmClient.getConfig().provider;
+            // Generate streaming answer with enhanced event tracking
+            for await (const chunk of llmClient.generateStreamingCompletion(request.query, contextResult.context, 1000, {
+                isAnswerable: guardrailDecision.isAnswerable,
+                confidence: guardrailDecision.score.confidence,
+                score: guardrailDecision.score
+            })) {
                 if (chunk.type === 'chunk' && typeof chunk.data === 'string') {
                     fullAnswer += chunk.data;
+                    totalChunks++;
                     yield {
                         type: 'chunk',
                         data: chunk.data
                     };
+                }
+                else if (chunk.type === 'completion' && chunk.data) {
+                    // Handle completion event from LLM client
+                    totalTokens = chunk.data.totalTokens || totalTokens;
+                    completionReason = chunk.data.completionReason || completionReason;
+                    // Don't yield completion event directly - we'll handle it in ResponseCompletedEvent
                 }
                 else if (chunk.type === 'error') {
                     yield chunk;
@@ -194,7 +249,7 @@ export class AnswerSynthesisServiceImpl {
             const formattedAnswer = this.formatAnswerWithCitations(fullAnswer, citations, request.answerFormat || 'markdown');
             // Calculate freshness statistics
             const freshnessStats = this.calculateFreshnessStats(request.documents, tenantId);
-            // Calculate confidence
+            // Calculate confidence (this confidence is for the LLM's raw answer, distinct from guardrail's overall decision)
             const confidence = this.calculateConfidence(request.documents, contextResult.contextTruncated, fullAnswer, freshnessStats);
             const synthesisTime = performance.now() - startTime;
             // Store quality metrics
@@ -212,16 +267,34 @@ export class AnswerSynthesisServiceImpl {
                 data: citations
             };
             // Emit metadata
+            const synthesisMetadata = {
+                tokensUsed: totalTokens,
+                synthesisTime,
+                // Use guardrail decision's confidence here for consistency with the overall decision
+                confidence: guardrailDecision.score.confidence,
+                modelUsed: llmClient.getConfig().model,
+                contextTruncated: contextResult.contextTruncated,
+                freshnessStats
+            };
             yield {
                 type: 'metadata',
-                data: {
-                    tokensUsed: totalTokens,
-                    synthesisTime,
-                    confidence,
-                    modelUsed: llmClient.getConfig().model,
-                    contextTruncated: contextResult.contextTruncated,
-                    freshnessStats
-                }
+                data: synthesisMetadata
+            };
+            // Emit ResponseCompletedEvent before done
+            const responseCompletedEvent = this.streamingEventHandler.handleResponseCompleted(llmProvider, {
+                totalChunks,
+                totalTokens,
+                responseTime: synthesisTime,
+                completionReason,
+                success: true
+            }, {
+                citations,
+                synthesisMetadata,
+                qualityMetrics: this.lastQualityMetrics
+            });
+            yield {
+                type: 'response_completed',
+                data: responseCompletedEvent.data
             };
             yield {
                 type: 'done',
