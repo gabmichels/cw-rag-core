@@ -279,7 +279,7 @@ export default function DocumentViewerModal({
                 rehypePlugins={[rehypeRaw]}
                 components={customMarkdownComponents as any}
               >
-                {documentData.content}
+                {documentData.content.replace(/\.\s+---/g, '.\n\n---\n\n')}
               </ReactMarkdown>
             </div>
           )}
