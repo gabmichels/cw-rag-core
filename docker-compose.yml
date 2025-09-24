@@ -10,12 +10,12 @@ services:
       - "${QDRANT_PORT:-6333}:6333"
       - "${QDRANT_GRPC_PORT:-6334}:6334"
     volumes:
-      - qdrant_storage:/qdrant/data
+      - qdrant_storage:/qdrant/storage
     networks:
       - app_network
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:6333/healthz || exit 1"]
+      test: ["CMD-SHELL", "nc -z localhost 6333 || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -99,6 +99,18 @@ services:
       - LLM_TIMEOUT_MS=${LLM_TIMEOUT_MS:-25000}
       - OVERALL_TIMEOUT_MS=${OVERALL_TIMEOUT_MS:-45000}
       - EMBEDDING_TIMEOUT_MS=${EMBEDDING_TIMEOUT_MS:-5000}
+      # Token-aware embedding configuration (CONSERVATIVE settings for structured content)
+      - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:-bge}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-bge-small-en-v1.5}
+      - EMBEDDING_URL=${EMBEDDING_URL:-http://embeddings:80}
+      - EMBEDDING_MAX_TOKENS=${EMBEDDING_MAX_TOKENS:-350}
+      - EMBEDDING_CHUNKING_STRATEGY=${EMBEDDING_CHUNKING_STRATEGY:-token-aware}
+      - EMBEDDING_OVERLAP_TOKENS=${EMBEDDING_OVERLAP_TOKENS:-30}
+      - EMBEDDING_MIN_CHUNK_TOKENS=${EMBEDDING_MIN_CHUNK_TOKENS:-30}
+      - EMBEDDING_SAFETY_MARGIN=${EMBEDDING_SAFETY_MARGIN:-0.15}
+      - EMBEDDING_RETRY_MAX_ATTEMPTS=${EMBEDDING_RETRY_MAX_ATTEMPTS:-3}
+      - EMBEDDING_CHAR_TO_TOKEN_RATIO=${EMBEDDING_CHAR_TO_TOKEN_RATIO:-2.2}
+      - EMBEDDING_DEBUG_LOGGING=${EMBEDDING_DEBUG_LOGGING:-true}
       # Rate limiting configuration
       - RATE_LIMIT_PER_IP=${RATE_LIMIT_PER_IP:-30}
       - RATE_LIMIT_PER_USER=${RATE_LIMIT_PER_USER:-100}

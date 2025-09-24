@@ -178,6 +178,7 @@ export class BgeSmallEnV15EmbeddingService implements EmbeddingService {
   async embedDocument(document: Document): Promise<number[]> {
     // For simplicity, embedding document content directly.
     // In a more complex scenario, this might involve chunking and averaging/concatenating embeddings.
+    // TODO: Migrate to use EmbeddingServiceManager for advanced chunking
     return this.embed(document.content);
   }
 }

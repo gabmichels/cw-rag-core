@@ -17,3 +17,11 @@ export * from './services/guardrail-audit.js';
 export * from './services/source-aware-confidence.js';
 export * from './services/guardrail-config.js';
 export * from './services/guarded-retrieval.js';
+
+// New token-aware embedding and chunking system
+export * from './token-counter.js';
+export * from './embedding-config.js';
+export * from './adaptive-chunker.js';
+export * from './embedding-manager.js';
+export * from './config-manager.js';
+export * from './monitoring.js';
