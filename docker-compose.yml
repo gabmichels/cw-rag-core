@@ -116,6 +116,9 @@ services:
       - RATE_LIMIT_PER_USER=${RATE_LIMIT_PER_USER:-100}
       - RATE_LIMIT_PER_TENANT=${RATE_LIMIT_PER_TENANT:-1000}
       - RATE_LIMIT_WINDOW_MINUTES=${RATE_LIMIT_WINDOW_MINUTES:-1}
+      # Guardrail configuration - Critical fix for rejection issue
+      - ANSWERABILITY_THRESHOLD=0.5
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-no-key-set}
     depends_on:
       qdrant:
         condition: service_healthy
