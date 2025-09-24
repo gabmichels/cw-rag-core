@@ -128,7 +128,7 @@ const mockHighConfidenceResponse: AskResponse = {
     freshPercentage: 33.3,
     recentPercentage: 33.3,
     stalePercentage: 33.3,
-    averageAge: 93
+    avgAgeInDays: 93
   },
   citations: [
     {

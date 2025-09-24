@@ -115,11 +115,11 @@ export default function FreshnessStats({ stats }: FreshnessStatsProps) {
         <div className="text-sm text-gray-600">
           <span className="font-medium">Average document age:</span>
           <span className="ml-2">
-            {stats.averageAge < 1
+            {stats.avgAgeInDays < 1
               ? 'Less than 1 day'
-              : stats.averageAge === 1
+              : stats.avgAgeInDays === 1
                 ? '1 day'
-                : `${Math.round(stats.averageAge)} days`
+                : `${Math.round(stats.avgAgeInDays)} days`
             }
           </span>
         </div>
