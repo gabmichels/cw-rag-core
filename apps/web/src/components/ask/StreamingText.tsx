@@ -1,7 +1,12 @@
 "use client";
 
 import { useState, useEffect, useRef } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import rehypeRaw from 'rehype-raw';
 import { cn } from '@/lib/utils';
+import { processEmojis } from '@/utils/emoji';
+import { MarkdownComponents } from './MarkdownComponents';
 
 interface StreamingTextProps {
   text: string;
@@ -79,15 +84,25 @@ export default function StreamingText({
     };
   }, []);
 
+  // Process emojis in the displayed text
+  const processedText = processEmojis(displayedText);
+
   return (
     <div className={cn("relative", className)}>
-      <span className="whitespace-pre-wrap leading-relaxed">
-        {displayedText}
-      </span>
+      <div className="markdown-content">
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm]}
+          rehypePlugins={[rehypeRaw]}
+          components={MarkdownComponents}
+          className="prose prose-invert max-w-none"
+        >
+          {processedText}
+        </ReactMarkdown>
+      </div>
       {isStreaming && (
         <span
           className={cn(
-            "streaming-cursor ml-1",
+            "streaming-cursor ml-1 inline-block",
             showCursor ? "opacity-100" : "opacity-0"
           )}
         />

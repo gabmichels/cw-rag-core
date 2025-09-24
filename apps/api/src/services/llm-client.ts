@@ -892,40 +892,59 @@ class ResilientLLMClient implements LLMClient {
       }
 
       for (let retry = 0; retry < this.maxRetries; retry++) {
+        let timeoutId: NodeJS.Timeout | null = null;
+        let streamingCompleted = false;
+
         try {
-          // Create a timeout generator wrapper
           const timeoutMs = this.timeoutMs;
           const generator = client.generateStreamingCompletion(prompt, context, maxTokens, guardrailDecision);
 
-          let timeoutId: NodeJS.Timeout;
-          let hasStarted = false;
-
-          try {
-            for await (const chunk of generator) {
-              if (!hasStarted) {
-                hasStarted = true;
-                // Set timeout for overall streaming operation
-                timeoutId = setTimeout(() => {
-                  throw new Error('Streaming timeout');
-                }, timeoutMs);
+          // Create a promise-based timeout that can be properly cancelled
+          const timeoutPromise = new Promise<never>((_, reject) => {
+            timeoutId = setTimeout(() => {
+              if (!streamingCompleted) {
+                reject(new Error('Streaming timeout'));
               }
+            }, timeoutMs);
+          });
 
-              yield chunk;
+          // Create a generator wrapper that handles the timeout
+          const wrappedGenerator = async function* () {
+            try {
+              for await (const chunk of generator) {
+                yield chunk;
 
-              if (chunk.type === 'done' || chunk.type === 'error') {
-                clearTimeout(timeoutId!);
-                return;
+                if (chunk.type === 'done' || chunk.type === 'error') {
+                  streamingCompleted = true;
+                  if (timeoutId) {
+                    clearTimeout(timeoutId);
+                    timeoutId = null;
+                  }
+                  return;
+                }
+              }
+              streamingCompleted = true;
+            } finally {
+              // Ensure timeout is always cleared
+              if (timeoutId) {
+                clearTimeout(timeoutId);
+                timeoutId = null;
               }
             }
-            clearTimeout(timeoutId!);
-            return;
+          };
 
-          } catch (streamError) {
-            clearTimeout(timeoutId!);
-            throw streamError;
-          }
+          // Execute the wrapped generator
+          yield* wrappedGenerator();
+          return;
 
         } catch (error) {
+          // Ensure timeout is cleared on any error
+          streamingCompleted = true;
+          if (timeoutId) {
+            clearTimeout(timeoutId);
+            timeoutId = null;
+          }
+
           console.warn(`LLM streaming client ${i} attempt ${retry + 1} failed:`, error);
 
           // If this is the last client and last retry, fall back to non-streaming

@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans:wght@300;400;500;600;700&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -110,4 +110,115 @@
   .text-balance {
     text-wrap: balance;
   }
+}
+
+/* Markdown Content Styling */
+.markdown-content {
+  @apply text-foreground;
+}
+
+.markdown-content .prose {
+  @apply max-w-none;
+}
+
+.markdown-content h1 {
+  @apply text-foreground font-bold mt-10 first:mt-0;
+}
+
+.markdown-content h2 {
+  @apply text-foreground font-semibold mt-8 first:mt-0;
+}
+
+.markdown-content h3 {
+  @apply text-foreground font-semibold mt-7 first:mt-0;
+}
+
+.markdown-content h4 {
+  @apply text-foreground font-medium mt-6 first:mt-0;
+}
+
+.markdown-content h5 {
+  @apply text-foreground font-medium mt-5 first:mt-0;
+}
+
+.markdown-content h6 {
+  @apply text-muted-foreground font-medium mt-4 first:mt-0;
+}
+
+.markdown-content p {
+  @apply text-muted-foreground leading-relaxed mb-6 last:mb-0;
+}
+
+.markdown-content a {
+  @apply text-primary hover:text-primary/80 underline underline-offset-2 transition-colors;
+}
+
+.markdown-content strong {
+  @apply font-bold text-foreground;
+}
+
+.markdown-content em {
+  @apply italic text-muted-foreground;
+}
+
+.markdown-content code {
+  @apply px-1.5 py-0.5 text-sm bg-muted/30 text-primary rounded border border-border/30 font-mono;
+}
+
+.markdown-content pre {
+  @apply my-4 rounded-lg overflow-hidden border border-border/30;
+}
+
+.markdown-content pre code {
+  @apply px-0 py-0 bg-transparent border-0 rounded-none;
+}
+
+.markdown-content ul,
+.markdown-content ol {
+  @apply my-2 text-muted-foreground;
+}
+
+.markdown-content li {
+  @apply text-muted-foreground leading-relaxed mb-2;
+}
+
+.markdown-content blockquote {
+  @apply border-l-4 border-primary/50 pl-4 py-3 my-6 bg-card/20 rounded-r-lg italic text-muted-foreground;
+}
+
+.markdown-content hr {
+  @apply my-8 border-0 h-px bg-gradient-to-r from-transparent via-border to-transparent;
+}
+
+.markdown-content table {
+  @apply w-full my-4 border-collapse;
+}
+
+.markdown-content table,
+.markdown-content th,
+.markdown-content td {
+  @apply border border-border/30;
+}
+
+.markdown-content th {
+  @apply bg-muted/20 px-4 py-3 text-left text-sm font-semibold text-foreground;
+}
+
+.markdown-content td {
+  @apply px-4 py-3 text-sm text-muted-foreground;
+}
+
+.markdown-content img {
+  @apply max-w-full h-auto rounded-lg border border-border/30 my-6;
+}
+
+/* Streaming cursor animation */
+.streaming-cursor {
+  @apply w-2 h-5 bg-primary;
+  animation: typing 1s steps(20) infinite;
+}
+
+@keyframes typing {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0.3; }
 }

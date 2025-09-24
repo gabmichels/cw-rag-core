@@ -10,7 +10,7 @@ const config: Config = {
   theme: {
   	extend: {
   		fontFamily: {
-  			sans: ['Poppins', 'system-ui', 'sans-serif'],
+  			sans: ['Noto Sans', 'system-ui', 'sans-serif'],
   		},
   		backgroundImage: {
   			'gradient-radial': 'radial-gradient(var(--tw-gradient-stops))',
