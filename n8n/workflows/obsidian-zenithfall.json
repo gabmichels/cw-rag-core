@@ -39,7 +39,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
       "position": [
-        -784,
+        -672,
         1216
       ],
       "id": "e4695326-6f7e-493f-9d7a-3b43d712e7a9",
@@ -53,7 +53,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -576,
+        -464,
         1264
       ],
       "id": "2900fcab-2a3d-49b3-8836-c7510b89754a",
@@ -67,7 +67,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -2176,
+        -2320,
         1360
       ],
       "id": "4ed7d487-c609-4c4c-b32b-f8c77a5410e4",
@@ -101,7 +101,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
       "position": [
-        -1984,
+        -1888,
         1360
       ],
       "id": "183983e2-7090-4595-9cef-c9a55bdabb1f",
@@ -118,7 +118,7 @@
       "type": "n8n-nodes-base.readWriteFile",
       "typeVersion": 1,
       "position": [
-        -1856,
+        -1744,
         1152
       ],
       "id": "2090fedb-7204-4468-8d09-086ab0a78b04",
@@ -132,7 +132,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -1136,
+        -1024,
         1232
       ],
       "id": "785d7fc3-99c0-446b-b7c8-0f40d43f79ba",
@@ -166,7 +166,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4,
       "position": [
-        -976,
+        -864,
         1216
       ],
       "id": "44f754d1-7f5b-43e5-8461-05f0f795dd99",
@@ -200,7 +200,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4,
       "position": [
-        -576,
+        -464,
         1120
       ],
       "id": "93b9a82e-bcd7-4bbc-99c1-49f3d55e7550",
@@ -234,7 +234,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4,
       "position": [
-        -1584,
+        -1472,
         1456
       ],
       "id": "7d8ff643-9c08-40da-925b-fa045777a324",
@@ -248,7 +248,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -336,
+        -224,
         1376
       ],
       "id": "ff6f3fcc-370c-48e2-bcf0-d858cabffaa6",
@@ -271,7 +271,7 @@
       "type": "n8n-nodes-base.localFileTrigger",
       "typeVersion": 1,
       "position": [
-        -2400,
+        -2560,
         1360
       ],
       "id": "745dd154-9570-4103-8706-942228124825",
@@ -285,7 +285,7 @@
       "type": "n8n-nodes-base.extractFromFile",
       "typeVersion": 1,
       "position": [
-        -1696,
+        -1584,
         1152
       ],
       "id": "bcc0f0a3-4b3d-4233-842d-b51bf27686c4",
@@ -299,7 +299,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -1776,
+        -1664,
         1456
       ],
       "id": "257934aa-343c-4185-a886-d9b8b48e8d81",
@@ -313,7 +313,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -1312,
+        -1200,
         1216
       ],
       "id": "0dcde7e3-7a0d-4806-97ed-3b21586b8254",
@@ -328,11 +328,44 @@
       "type": "n8n-nodes-base.merge",
       "typeVersion": 3.2,
       "position": [
-        -1504,
+        -1392,
         1216
       ],
       "id": "24eccc62-8fbc-49c0-93a2-5b9d3c89e4f9",
       "name": "Merge"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "55471991-3e50-415b-b3f2-572d1ea8205a",
+              "leftValue": "={{ $json.filePath }}",
+              "rightValue": "=md",
+              "operator": {
+                "type": "string",
+                "operation": "endsWith"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.2,
+      "position": [
+        -2096,
+        1360
+      ],
+      "id": "5b34dba9-048a-4d8c-ab53-31f15ca1ede3",
+      "name": "MD Filter"
     }
   ],
   "pinData": {},
@@ -370,7 +403,7 @@
       "main": [
         [
           {
-            "node": "Check Event Type1",
+            "node": "MD Filter",
             "type": "main",
             "index": 0
           }
@@ -509,14 +542,26 @@
           }
         ]
       ]
+    },
+    "MD Filter": {
+      "main": [
+        [
+          {
+            "node": "Check Event Type1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
-  "active": false,
+  "active": true,
   "settings": {
     "executionOrder": "v1"
   },
-  "versionId": "fee1d9ce-f1db-4385-9543-86c0aa3a56be",
+  "versionId": "9584f6c3-9193-432c-a1a4-0ff86adb2f6b",
   "meta": {
+    "templateCredsSetupCompleted": true,
     "instanceId": "560b438390dee1f3268219b2a8ca0b8d4e15ec412dd27c0fc3ee60cc31cb05bc"
   },
   "id": "MT1tHbTar4rQavpA",

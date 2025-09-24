@@ -119,6 +119,10 @@ services:
       # Guardrail configuration - Critical fix for rejection issue
       - ANSWERABILITY_THRESHOLD=0.5
       - OPENAI_API_KEY=${OPENAI_API_KEY:-no-key-set}
+      - LLM_STREAMING=${LLM_STREAMING:-true}
+      - LLM_ENABLED=${LLM_ENABLED:-true}
+      - LLM_PROVIDER=${LLM_PROVIDER:-openai}
+      - LLM_MODEL=${LLM_MODEL:-gpt-4.1-2025-04-14}
     depends_on:
       qdrant:
         condition: service_healthy

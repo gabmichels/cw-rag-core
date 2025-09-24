@@ -60,36 +60,68 @@ export class StreamingClient {
       let buffer = '';
 
       try {
+        let currentEvent: Partial<StreamingEvent> = {};
+
         while (true) {
           const { done, value } = await reader.read();
 
-          if (done) {
-            break;
+          if (value) {
+            buffer += decoder.decode(value, { stream: true });
           }
 
-          buffer += decoder.decode(value, { stream: true });
+          // Process events using double newline as separator (standard SSE format)
+          let eventDelimiterIndex;
+          while ((eventDelimiterIndex = buffer.indexOf('\n\n')) !== -1) {
+            const eventString = buffer.substring(0, eventDelimiterIndex);
+            buffer = buffer.substring(eventDelimiterIndex + 2);
 
-          // Process complete events from buffer
-          const lines = buffer.split('\n');
-          buffer = lines.pop() || ''; // Keep incomplete line in buffer
+            const lines = eventString.split('\n');
+            let eventType = '';
+            let eventData = {};
 
-          let currentEvent: Partial<StreamingEvent> = {};
-
-          for (const line of lines) {
-            if (line.startsWith('event: ')) {
-              currentEvent.type = line.slice(7).trim() as StreamingEvent['type'];
-            } else if (line.startsWith('data: ')) {
-              try {
-                currentEvent.data = JSON.parse(line.slice(6));
-              } catch (e) {
-                console.warn('Failed to parse SSE data:', line);
-                continue;
+            for (const line of lines) {
+              if (line.startsWith('event: ')) {
+                eventType = line.substring(7).trim();
+              } else if (line.startsWith('data: ')) {
+                try {
+                  eventData = JSON.parse(line.substring(6));
+                } catch (e) {
+                  console.warn('Failed to parse SSE data:', line);
+                }
               }
-            } else if (line === '' && currentEvent.type && currentEvent.data !== undefined) {
-              // Complete event received
-              this.handleEvent(currentEvent as StreamingEvent, callbacks);
-              currentEvent = {};
             }
+
+            if (eventType && Object.keys(eventData).length > 0) {
+              console.log('Processing event:', eventType);
+              this.handleEvent({ type: eventType as StreamingEvent['type'], data: eventData }, callbacks);
+            }
+          }
+
+          if (done) {
+            // Process any remaining complete event in buffer (without requiring \n\n at the end)
+            if (buffer.trim()) {
+              const lines = buffer.split('\n');
+              let eventType = '';
+              let eventData = {};
+
+              for (const line of lines) {
+                if (line.startsWith('event: ')) {
+                  eventType = line.substring(7).trim();
+                } else if (line.startsWith('data: ')) {
+                  try {
+                    eventData = JSON.parse(line.substring(6));
+                  } catch (e) {
+                    console.warn('Failed to parse final SSE data:', line);
+                  }
+                }
+              }
+
+              if (eventType && Object.keys(eventData).length > 0) {
+                console.log('Processing final event without delimiter:', eventType);
+                this.handleEvent({ type: eventType as StreamingEvent['type'], data: eventData }, callbacks);
+              }
+            }
+            break;
           }
         }
       } finally {

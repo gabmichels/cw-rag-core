@@ -1,0 +1,610 @@
+{
+  "name": "GitHub Zenithfall RAG",
+  "nodes": [
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "preview-check",
+              "leftValue": "={{ $json.wouldPublish }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equal"
+              }
+            },
+            {
+              "id": "d7d4b571-802f-4d34-a984-aca35a930b19",
+              "leftValue": "={{ $json.wouldPublish }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "name": "Check Preview Result",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -672,
+        1216
+      ],
+      "id": "e4695326-6f7e-493f-9d7a-3b43d712e7a9",
+      "notes": "Branch based on preview result"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Log policy block for rejected documents\nconst previewResult = $json;\nconst filePath = $('Initialize Config & Extract GitHub Event').first().json.filePath;\n\nconsole.log(`BLOCKED: Document rejected by policy`);\nconsole.log(`- File: ${filePath}`);\nconsole.log(`- Would publish: ${previewResult.wouldPublish}`);\nconsole.log(`- Findings: ${JSON.stringify(previewResult.findings)}`);\n\nreturn [{\n  status: 'blocked',\n  filePath,\n  findings: previewResult.findings || [],\n  timestamp: new Date().toISOString()\n}];"
+      },
+      "name": "Log Policy Block",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -464,
+        1264
+      ],
+      "id": "2900fcab-2a3d-49b3-8836-c7510b89754a",
+      "notes": "Log when document is blocked by policy"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Zenithfall-specific configuration for GitHub\nconst config = {\n  tenantId: 'zenithfall',\n  fileExtensions: ['.md', '.markdown'],\n  excludePaths: ['.github', '.git', 'node_modules', 'templates', 'Archive'],\n  acl: ['public'],\n  source: 'github',\n  lang: 'en',\n  apiUrl: ($env.ZENITHFALL_API_URL || 'http://api:3000').trim(),\n  ingestToken: ($env.ZENITHFALL_INGEST_TOKEN || 'missing-token').trim()\n};\n\n// Get GitHub push event data\nconst githubData = $input.first().json;\nconst commits = githubData.commits || [];\nconst repository = githubData.repository || {};\nconst ref = githubData.ref || 'refs/heads/main';\nconst branch = ref.replace('refs/heads/', '');\n\nconsole.log(`=== ZENITHFALL GITHUB PUSH ===`);\nconsole.log(`Repository: ${repository.full_name}`);\nconsole.log(`Branch: ${branch}`);\nconsole.log(`Commits: ${commits.length}`);\nconsole.log(`API URL: '${config.apiUrl}'`);\nconsole.log(`Ingest token configured: ${config.ingestToken ? 'Yes' : 'No'}`);\n\n// Extract all modified/added markdown files from commits\nconst processedFiles = new Set();\nconst filesToProcess = [];\n\nfor (const commit of commits) {\n  const files = [...(commit.added || []), ...(commit.modified || [])];\n  \n  for (const filePath of files) {\n    if (!processedFiles.has(filePath)) {\n      processedFiles.add(filePath);\n      \n      // Check if it's a markdown file\n      if (filePath.endsWith('.md') || filePath.endsWith('.markdown')) {\n        filesToProcess.push({\n          filePath,\n          eventType: 'change', // GitHub doesn't distinguish add vs modify in our use case\n          commitSha: commit.id,\n          commitMessage: commit.message,\n          author: commit.author\n        });\n      }\n    }\n  }\n}\n\n// Also handle removed files for tombstones\nfor (const commit of commits) {\n  const removedFiles = commit.removed || [];\n  \n  for (const filePath of removedFiles) {\n    if (!processedFiles.has(filePath)) {\n      processedFiles.add(filePath);\n      \n      if (filePath.endsWith('.md') || filePath.endsWith('.markdown')) {\n        filesToProcess.push({\n          filePath,\n          eventType: 'unlink',\n          commitSha: commit.id,\n          commitMessage: commit.message,\n          author: commit.author\n        });\n      }\n    }\n  }\n}\n\nconsole.log(`Found ${filesToProcess.length} markdown files to process`);\n\nreturn filesToProcess.map(file => ({\n  config,\n  filePath: file.filePath,\n  eventType: file.eventType,\n  commitSha: file.commitSha,\n  commitMessage: file.commitMessage,\n  author: file.author,\n  repository: repository.full_name,\n  branch,\n  timestamp: new Date().toISOString()\n}));"
+      },
+      "name": "Initialize Config & Extract GitHub Event",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2320,
+        1360
+      ],
+      "id": "4ed7d487-c609-4c4c-b32b-f8c77a5410e4",
+      "notes": "Initialize config and extract file changes from GitHub push event"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "unlink-check",
+              "leftValue": "={{ $json.eventType }}",
+              "rightValue": "unlink",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "name": "Check Event Type",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -1888,
+        1360
+      ],
+      "id": "183983e2-7090-4595-9cef-c9a55bdabb1f",
+      "notes": "Branch based on event type\nTrue: File deleted (unlink), False: File added/changed"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ `https://api.github.com/repos/${$json.repository}/contents/${$json.filePath}?ref=${$json.commitSha}` }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github.v3.raw"
+            },
+            {
+              "name": "Authorization",
+              "value": "={{ $env.GITHUB_TOKEN ? `token ${$env.GITHUB_TOKEN}` : '' }}"
+            },
+            {
+              "name": "User-Agent",
+              "value": "N8N-Zenithfall-RAG"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "name": "Fetch File from GitHub",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        -1744,
+        1152
+      ],
+      "id": "2090fedb-7204-4468-8d09-086ab0a78b04",
+      "notes": "Fetch the file content from GitHub API"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse markdown file and create normalized document\nconst path = require('path');\nconst filePath = $json.filePath;\nconst content = $json.fileContent;\nconst config = $json.config;\nconst fileHash = $json.fileHash;\nconst commitInfo = {\n  sha: $json.commitSha,\n  message: $json.commitMessage,\n  author: $json.author,\n  repository: $json.repository,\n  branch: $json.branch\n};\n\ntry {\n  // Parse frontmatter\n  const frontmatterRegex = /^---\\s*\\n([\\s\\S]*?)\\n---\\s*\\n([\\s\\S]*)$/;\n  const match = content.match(frontmatterRegex);\n  \n  let frontmatter = {};\n  let markdownContent = content;\n  \n  if (match) {\n    try {\n      const yamlContent = match[1];\n      const lines = yamlContent.split('\\n');\n      \n      for (const line of lines) {\n        const colonIndex = line.indexOf(':');\n        if (colonIndex > 0) {\n          const key = line.substring(0, colonIndex).trim();\n          const value = line.substring(colonIndex + 1).trim();\n          \n          if (value.startsWith('[') && value.endsWith(']')) {\n            frontmatter[key] = value.slice(1, -1).split(',').map(s => s.trim().replace(/^\"|\"$/g, ''));\n          } else {\n            frontmatter[key] = value.replace(/^\"|\"$/g, '');\n          }\n        }\n      }\n      \n      markdownContent = match[2];\n    } catch (yamlError) {\n      console.log(`Failed to parse frontmatter for ${filePath}:`, yamlError.message);\n    }\n  }\n  \n  // Generate docId from GitHub path (remove .md extension and normalize)\n  const docId = filePath.replace(/\\.(md|markdown)$/i, '').replace(/\\\\/g, '/');\n  \n  // Extract title\n  const title = frontmatter.title || \n                markdownContent.match(/^#\\s+(.+)$/m)?.[1] || \n                path.basename(filePath, path.extname(filePath));\n  \n  // Parse content into blocks\n  const blocks = [];\n  const sections = markdownContent.split(/\\n(?=#{1,6}\\s)/);\n  \n  for (const section of sections) {\n    const trimmed = section.trim();\n    if (trimmed) {\n      let blockType = 'text';\n      if (trimmed.includes('```')) {\n        blockType = 'code';\n      } else if (trimmed.includes('|') && trimmed.includes('---')) {\n        blockType = 'table';\n      }\n      \n      blocks.push({\n        type: blockType,\n        text: trimmed,\n        html: trimmed\n      });\n    }\n  }\n  \n  // Create NormalizedDoc with GitHub metadata\n  const normalizedDoc = {\n    meta: {\n      tenant: config.tenantId,\n      docId: docId,\n      source: config.source,\n      path: filePath,\n      title: title,\n      lang: config.lang,\n      version: frontmatter.version || '1.0',\n      sha256: fileHash,\n      acl: frontmatter.acl || frontmatter.tags || config.acl,\n      authors: frontmatter.authors || (frontmatter.author ? [frontmatter.author] : [commitInfo.author?.name || 'unknown']),\n      tags: frontmatter.tags || [],\n      timestamp: new Date().toISOString(),\n      modifiedAt: new Date().toISOString(),\n      deleted: false,\n      github: {\n        repository: commitInfo.repository,\n        branch: commitInfo.branch,\n        commitSha: commitInfo.sha,\n        commitMessage: commitInfo.message,\n        author: commitInfo.author\n      }\n    },\n    blocks: blocks\n  };\n  \n  console.log(`Parsed GitHub document: ${docId}`);\n  \n  return [normalizedDoc];\n  \n} catch (error) {\n  console.error(`Error parsing ${filePath}:`, error.message);\n  return [{\n    _error: true,\n    _filePath: filePath,\n    _errorMessage: error.message\n  }];\n}"
+      },
+      "name": "Parse Document",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1024,
+        1232
+      ],
+      "id": "785d7fc3-99c0-446b-b7c8-0f40d43f79ba",
+      "notes": "Parse markdown file into normalized document format with GitHub metadata"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Initialize Config & Extract GitHub Event').first().json.config.apiUrl + '/ingest/preview' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-ingest-token",
+              "value": "={{ $('Initialize Config & Extract GitHub Event').first().json.config.ingestToken }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify([$json]) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "name": "Preview Document",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        -864,
+        1216
+      ],
+      "id": "44f754d1-7f5b-43e5-8461-05f0f795dd99",
+      "notes": "Preview single document for PII policy compliance"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Initialize Config & Extract GitHub Event').first().json.config.apiUrl + '/ingest/publish' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-ingest-token",
+              "value": "={{ $('Initialize Config & Extract GitHub Event').first().json.config.ingestToken }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify([$('Parse Document').first().json]) }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "name": "Publish Document",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        -464,
+        1120
+      ],
+      "id": "93b9a82e-bcd7-4bbc-99c1-49f3d55e7550",
+      "notes": "Publish approved document"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Initialize Config & Extract GitHub Event').first().json.config.apiUrl + '/ingest/publish' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-ingest-token",
+              "value": "={{ $('Initialize Config & Extract GitHub Event').first().json.config.ingestToken }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify([$json]) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "name": "Publish Tombstone",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        -1472,
+        1456
+      ],
+      "id": "7d8ff643-9c08-40da-925b-fa045777a324",
+      "notes": "Publish tombstone for vector cleanup"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Update workflow state and clean up file hashes for GitHub\nconst staticData = $getWorkflowStaticData('global');\nconst fileHashes = staticData.fileHashes || {};\nconst initData = $('Initialize Config & Extract GitHub Event').first().json;\nconst filePath = initData.filePath;\nconst eventType = initData.eventType;\nconst repository = initData.repository;\nconst commitSha = initData.commitSha;\n\n// Create a unique key for GitHub files (repo + path)\nconst fileKey = `${repository}:${filePath}`;\n\nif (eventType === 'unlink') {\n  // Remove hash for deleted file\n  delete fileHashes[fileKey];\n  console.log(`Removed hash for deleted GitHub file: ${fileKey}`);\n} else {\n  console.log(`Updated hash for GitHub file: ${fileKey} (commit: ${commitSha})`);\n}\n\n// Update static data\nstaticData.fileHashes = fileHashes;\nstaticData.lastRunTime = new Date().toISOString();\nstaticData.lastCommit = commitSha;\n\nconsole.log(`GitHub workflow completed for ${eventType} event on ${filePath}`);\n\nreturn [{\n  status: 'completed',\n  eventType,\n  filePath,\n  repository,\n  commitSha,\n  timestamp: new Date().toISOString()\n}];"
+      },
+      "name": "Update State",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -224,
+        1376
+      ],
+      "id": "ff6f3fcc-370c-48e2-bcf0-d858cabffaa6",
+      "notes": "Update workflow state and clean up file tracking for GitHub"
+    },
+    {
+      "parameters": {
+        "events": [
+          "push"
+        ],
+        "repository": "",
+        "options": {}
+      },
+      "name": "GitHub Trigger",
+      "type": "n8n-nodes-base.githubTrigger",
+      "typeVersion": 1,
+      "position": [
+        -2560,
+        1360
+      ],
+      "id": "745dd154-9570-4103-8706-942228124825",
+      "notes": "Triggers on GitHub push events\nConfigure repository, webhook URL, and secret after import"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Process GitHub file content and add metadata\nconst initData = $('Initialize Config & Extract GitHub Event').first().json;\nconst githubResponse = $input.first();\n\n// GitHub API returns file content as text when using Accept: application/vnd.github.v3.raw\nconst fileContent = githubResponse.data || githubResponse.json || '';\n\nconsole.log(`GitHub file content length: ${fileContent.length}`);\nconsole.log(`File path: ${initData.filePath}`);\n\nreturn [{\n  ...initData,\n  fileContent: fileContent,\n  data: fileContent // For compatibility with existing workflow structure\n}];"
+      },
+      "name": "Process GitHub Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1584,
+        1152
+      ],
+      "id": "bcc0f0a3-4b3d-4233-842d-b51bf27686c4",
+      "notes": "Process GitHub API response and extract file content"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Create tombstone for deleted GitHub file\nconst crypto = require('crypto');\n\n// Get data from Initialize Config & Extract GitHub Event node\nconst initData = $input.first().json;\nconst filePath = initData.filePath;\nconst config = initData.config;\nconst repository = initData.repository;\nconst commitSha = initData.commitSha;\n\nconst docId = filePath.replace(/\\.(md|markdown)$/i, '').replace(/\\\\/g, '/');\n\nconsole.log(`Creating tombstone for deleted GitHub file: ${docId}`);\n\n// Generate proper SHA256 hash for tombstone (hash of deletion info)\nconst deletionContent = `DELETED:${config.tenantId}:${docId}:${repository}:${commitSha}:${new Date().toISOString()}`;\nconst sha256 = crypto.createHash('sha256').update(deletionContent).digest('hex');\n\nconst tombstone = {\n  meta: {\n    tenant: config.tenantId,\n    docId: docId,\n    source: config.source,\n    path: filePath,\n    title: `[DELETED] ${filePath.split('/').pop().replace(/\\.(md|markdown)$/i, '')}`,\n    lang: config.lang,\n    version: '1.0',\n    sha256: sha256,\n    acl: ['system'],\n    authors: [initData.author?.name || 'unknown'],\n    tags: ['deleted', 'tombstone'],\n    timestamp: new Date().toISOString(),\n    modifiedAt: new Date().toISOString(),\n    deleted: true,\n    github: {\n      repository: repository,\n      branch: initData.branch,\n      commitSha: commitSha,\n      commitMessage: initData.commitMessage,\n      author: initData.author\n    }\n  },\n  blocks: []\n};\n\n// Clean up file hash from static data\nconst staticData = $getWorkflowStaticData('global');\nconst fileKey = `${repository}:${filePath}`;\nif (staticData.fileHashes && staticData.fileHashes[fileKey]) {\n  delete staticData.fileHashes[fileKey];\n  console.log(`Removed file hash for deleted GitHub file: ${fileKey}`);\n}\n\nreturn [tombstone];"
+      },
+      "name": "Create Tombstone",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1664,
+        1456
+      ],
+      "id": "257934aa-343c-4185-a886-d9b8b48e8d81",
+      "notes": "Create tombstone document for deleted GitHub file"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Check if GitHub file should be processed and handle idempotency\nconst initData = $input.first().json;\nconst filePath = initData.filePath;\nconst config = initData.config;\nconst fileContent = initData.data; // File content from GitHub\nconst repository = initData.repository;\nconst commitSha = initData.commitSha;\nconst crypto = require('crypto');\n\nconsole.log(`Checking GitHub file: ${repository}:${filePath}`);\nconsole.log(`File content length: ${fileContent ? fileContent.length : 'undefined'}`);\n\n// Filter out excluded paths\nif (config.excludePaths.some(excludePath => filePath.includes(`/${excludePath}/`) || filePath.startsWith(`${excludePath}/`))) {\n  console.log(`SKIP: ${filePath} (excluded path)`);\n  return [{ _skip: true, reason: 'excluded_path', filePath }];\n}\n\n// File extension is already checked by Initialize Config & Extract GitHub Event\n// but we can double-check here\nif (!filePath.endsWith('.md') && !filePath.endsWith('.markdown')) {\n  console.log(`SKIP: ${filePath} (not markdown)`);\n  return [{ _skip: true, reason: 'not_markdown', filePath }];\n}\n\n// Calculate file hash for idempotency\nconst fileHash = crypto.createHash('sha256').update(fileContent).digest('hex');\n\n// Get previous hash from static data (using repo:path as key)\nconst staticData = $getWorkflowStaticData('global');\nconst fileHashes = staticData.fileHashes || {};\nconst fileKey = `${repository}:${filePath}`;\nconst previousHash = fileHashes[fileKey];\n\nif (previousHash && previousHash === fileHash) {\n  console.log(`SKIP: ${repository}:${filePath} (unchanged)`);\n  return [{ _skip: true, reason: 'unchanged', filePath, repository }];\n}\n\nconsole.log(`PROCESS: ${repository}:${filePath} (${previousHash ? 'modified' : 'new'}) - commit: ${commitSha}`);\n\n// Update hash in static data\nfileHashes[fileKey] = fileHash;\nstaticData.fileHashes = fileHashes;\n\nreturn [{\n  filePath,\n  fileContent,\n  fileHash,\n  isNew: !previousHash,\n  config,\n  repository,\n  commitSha,\n  commitMessage: initData.commitMessage,\n  author: initData.author,\n  branch: initData.branch,\n  timestamp: new Date().toISOString()\n}];"
+      },
+      "name": "Check File & Idempotency",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1200,
+        1216
+      ],
+      "id": "0dcde7e3-7a0d-4806-97ed-3b21586b8254",
+      "notes": "Check if GitHub file should be processed and handle idempotency"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -1392,
+        1216
+      ],
+      "id": "24eccc62-8fbc-49c0-93a2-5b9d3c89e4f9",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "55471991-3e50-415b-b3f2-572d1ea8205a",
+              "leftValue": "={{ $json.filePath }}",
+              "rightValue": ".md",
+              "operator": {
+                "type": "string",
+                "operation": "endsWith"
+              }
+            },
+            {
+              "id": "markdown-check",
+              "leftValue": "={{ $json.filePath }}",
+              "rightValue": ".markdown",
+              "operator": {
+                "type": "string",
+                "operation": "endsWith"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.2,
+      "position": [
+        -2096,
+        1360
+      ],
+      "id": "5b34dba9-048a-4d8c-ab53-31f15ca1ede3",
+      "name": "MD Filter"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Check Preview Result": {
+      "main": [
+        [
+          {
+            "node": "Publish Document",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log Policy Block",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Policy Block": {
+      "main": [
+        [
+          {
+            "node": "Update State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Initialize Config & Extract GitHub Event": {
+      "main": [
+        [
+          {
+            "node": "MD Filter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Event Type": {
+      "main": [
+        [
+          {
+            "node": "Create Tombstone",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fetch File from GitHub",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Fetch File from GitHub": {
+      "main": [
+        [
+          {
+            "node": "Process GitHub Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Document": {
+      "main": [
+        [
+          {
+            "node": "Preview Document",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preview Document": {
+      "main": [
+        [
+          {
+            "node": "Check Preview Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Publish Document": {
+      "main": [
+        [
+          {
+            "node": "Update State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Publish Tombstone": {
+      "main": [
+        [
+          {
+            "node": "Update State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GitHub Trigger": {
+      "main": [
+        [
+          {
+            "node": "Initialize Config & Extract GitHub Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process GitHub Response": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Tombstone": {
+      "main": [
+        [
+          {
+            "node": "Publish Tombstone",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check File & Idempotency": {
+      "main": [
+        [
+          {
+            "node": "Parse Document",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Check File & Idempotency",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MD Filter": {
+      "main": [
+        [
+          {
+            "node": "Check Event Type",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "github-zenithfall-v1",
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "instanceId": "github-zenithfall-workflow"
+  },
+  "id": "GitHubZenithfallRAG",
+  "tags": [
+    {
+      "createdAt": "2025-09-24T18:00:00.000Z",
+      "updatedAt": "2025-09-24T18:00:00.000Z",
+      "id": "github-trigger",
+      "name": "github"
+    },
+    {
+      "createdAt": "2025-09-24T18:00:00.000Z",
+      "updatedAt": "2025-09-24T18:00:00.000Z",
+      "id": "zenithfall-github",
+      "name": "zenithfall"
+    },
+    {
+      "createdAt": "2025-09-24T18:00:00.000Z",
+      "updatedAt": "2025-09-24T18:00:00.000Z",
+      "id": "ingestion-github",
+      "name": "ingestion"
+    }
+  ]
+}
