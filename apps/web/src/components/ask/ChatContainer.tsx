@@ -1,11 +1,13 @@
 "use client";
 
 import { useState, useRef, useEffect } from 'react';
+import { useRouter } from 'next/navigation'; // Added useRouter
 import { cn } from '@/lib/utils';
 import { AskRequest } from '@cw-rag-core/shared';
-import { streamAskRequest, StreamingCallbacks } from '@/utils/streaming-api';
-import MessageBubble from './MessageBubble';
+import { streamAskRequest, StreamingCallbacks, CitationMap } from '@/utils/streaming-api'; // Added CitationMap
+import MessageBubble, { Citation } from './MessageBubble'; // Import Citation
 import InputContainer from './InputContainer';
+import DocumentViewerModal from './DocumentViewerModal'; // Import the new modal component
 
 interface Message {
   id: string;
@@ -13,7 +15,7 @@ interface Message {
   content: string;
   timestamp: Date;
   isStreaming?: boolean;
-  citations?: any[];
+  citations?: Citation[]; // Change to Citation[]
   confidence?: number;
   metrics?: any;
   freshnessStats?: any;
@@ -30,9 +32,13 @@ export default function ChatContainer({
   className,
   placeholder = "Ask a question about your documents...",
 }: ChatContainerProps) {
+  const router = useRouter(); // Initialize router
   const [messages, setMessages] = useState<Message[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamingClient, setStreamingClient] = useState<{ abort: () => void } | null>(null);
+  const [showDocumentModal, setShowDocumentModal] = useState(false); // State for modal visibility
+  const [modalQdrantDocId, setModalQdrantDocId] = useState<string | null>(null); // State for docId to open in modal
+  const [modalHighlightId, setModalHighlightId] = useState<string | null>(null); // State for chunkId to highlight
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -122,17 +128,19 @@ export default function ChatContainer({
         });
       },
 
-      onCitations: (citations) => {
-        console.log('Citations received:', citations);
-        // Update the last AI message with citations
+      onCitations: (citationsMap: { [key: string]: Citation }) => { // Type as CitationMap
+        console.log('Citations received (onCitations callback):', citationsMap);
+        const citationsArray = Object.values(citationsMap); // Convert object to array
         setMessages(prev => {
           const lastMessage = prev[prev.length - 1];
           if (lastMessage?.type === 'ai') {
-            return prev.map((msg, index) =>
+            const updatedMessages = prev.map((msg, index) =>
               index === prev.length - 1
-                ? { ...msg, citations }
+                ? { ...msg, citations: citationsArray }
                 : msg
             );
+            console.log('Messages after onCitations update:', updatedMessages);
+            return updatedMessages;
           }
           return prev;
         });
@@ -180,7 +188,7 @@ export default function ChatContainer({
           setMessages(prev => {
             const lastMessage = prev[prev.length - 1];
             if (lastMessage?.type === 'ai') {
-              return prev.map((msg, index) =>
+              const updatedMessages = prev.map((msg, index) =>
                 index === prev.length - 1
                   ? {
                       ...msg,
@@ -192,6 +200,8 @@ export default function ChatContainer({
                     }
                   : msg
               );
+              console.log('Messages after onResponseCompleted update:', updatedMessages);
+              return updatedMessages;
             }
             return prev;
           });
@@ -245,13 +255,30 @@ export default function ChatContainer({
     }
   };
 
-  const handleCitationClick = (citationId: string) => {
-    console.log('Citation clicked:', citationId);
-    // TODO: Implement citation detail view or scroll to source
+  const handleCloseDocumentModal = () => {
+    setShowDocumentModal(false);
+    setModalQdrantDocId(null);
+    setModalHighlightId(null);
+  };
+
+  const handleCitationClick = (qdrantDocId: string, chunkId: string) => { // Updated parameter name for clarity
+    console.log('Citation clicked - qdrantDocId:', qdrantDocId, 'chunkId:', chunkId);
+    setModalQdrantDocId(qdrantDocId);
+    setModalHighlightId(chunkId);
+    setShowDocumentModal(true); // Open the modal
   };
 
   return (
     <div className={cn("flex flex-col h-full", className)} ref={containerRef}>
+      {/* Document Viewer Modal */}
+      {showDocumentModal && (
+        <DocumentViewerModal
+          isOpen={showDocumentModal}
+          onClose={handleCloseDocumentModal}
+          qdrantDocId={modalQdrantDocId}
+          highlightId={modalHighlightId}
+        />
+      )}
 
       {/* Messages Area */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4 min-h-0">

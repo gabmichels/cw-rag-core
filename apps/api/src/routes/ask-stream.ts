@@ -317,6 +317,7 @@ export async function askStreamRoute(fastify: FastifyInstance, options: AskStrea
 
         // Start streaming synthesis
         let answer = '';
+        let formattedAnswer = '';
         let citations: any = {};
         let metadata: any = {};
 
@@ -345,6 +346,8 @@ export async function askStreamRoute(fastify: FastifyInstance, options: AskStrea
              } else if (chunk.type === 'metadata') {
                metadata = chunk.data;
                sendEvent('metadata', chunk.data);
+             } else if (chunk.type === 'formatted_answer') {
+               formattedAnswer = chunk.data as string;
              } else if (chunk.type === 'error') {
                sendEvent('error', { message: (chunk.data as Error).message });
                reply.raw.end();
@@ -386,7 +389,8 @@ export async function askStreamRoute(fastify: FastifyInstance, options: AskStrea
              number: citation.number,
              source: citation.source,
              freshness: citation.freshness,
-             docId: citation.docId,
+             docId: citation.docId, // Human-readable ID
+             qdrantDocId: citation.qdrantDocId, // Actual Qdrant internal ID (hash)
              version: citation.version,
              url: citation.url,
              filepath: citation.filepath,
@@ -397,7 +401,7 @@ export async function askStreamRoute(fastify: FastifyInstance, options: AskStrea
 
            // Send final response completed event
            sendEvent('response_completed', {
-             answer,
+             answer: formattedAnswer || answer, // Use formatted answer with bibliography if available
              retrievedDocuments,
              queryId,
              guardrailDecision: {

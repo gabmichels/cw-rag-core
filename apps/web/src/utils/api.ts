@@ -1,4 +1,5 @@
 import { ApiError } from '../types';
+import { DocumentMetadata } from '@cw-rag-core/shared'; // Corrected import for DocumentMetadata
 
 export class APIError extends Error {
   constructor(
@@ -107,4 +108,29 @@ export function throttle<T extends (...args: any[]) => void>(
       setTimeout(() => (inThrottle = false), limit);
     }
   };
+}
+
+// Interface for document chunks, including information for highlighting
+export interface DocumentChunk {
+  id: string | number;
+  content: string;
+  position?: number;
+  sectionId?: string;
+  title?: string;
+  start_index?: number;
+  end_index?: number;
+}
+
+// Interface for the response from the document fetch API
+export interface DocumentFetchResponse {
+  success: boolean;
+  docId: string;
+  content: string;
+  metadata: DocumentMetadata;
+  chunks: DocumentChunk[];
+}
+
+export async function fetchDocumentById(qdrantDocId: string): Promise<DocumentFetchResponse> {
+  const response = await fetch(`/api/documents/${encodeURIComponent(qdrantDocId)}`);
+  return handleApiResponse<DocumentFetchResponse>(response);
 }

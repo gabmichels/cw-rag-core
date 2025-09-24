@@ -4,6 +4,7 @@ import React from 'react';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { cn } from '@/lib/utils';
+import { Citation } from './MessageBubble'; // Import Citation
 
 // Custom markdown components for dark theme
 export const MarkdownComponents = {
@@ -65,25 +66,114 @@ export const MarkdownComponents = {
   // Paragraphs
   p: ({ children, ...props }: React.HTMLAttributes<HTMLParagraphElement>) => (
     <p
-      className="text-muted-foreground leading-relaxed mb-6 last:mb-0"
+      className="text-muted-foreground leading-relaxed mb-4 last:mb-0"
       {...props}
     >
       {children}
     </p>
   ),
 
-  // Links
-  a: ({ children, href, ...props }: React.AnchorHTMLAttributes<HTMLAnchorElement>) => (
-    <a
-      href={href}
-      className="text-primary hover:text-primary/80 underline underline-offset-2 transition-colors"
-      target="_blank"
-      rel="noopener noreferrer"
-      {...props}
-    >
-      {children}
-    </a>
-  ),
+  // Links - Enhanced to handle citation footnote links
+  a: ({ children, href, citations = [], onCitationClick, ...props }: React.AnchorHTMLAttributes<HTMLAnchorElement> & {
+    citations?: Citation[];
+    onCitationClick?: (qdrantDocId: string, chunkId: string) => void;
+  }) => {
+    // Check if this is a footnote reference link (like #user-content-fnref-1)
+    if (href && href.startsWith('#') && href.includes('fnref-')) {
+      // Extract citation number from href like "#user-content-fnref-1" or "#user-content-fnref-1-3"
+      const match = href.match(/fnref-(\d+)/);
+      if (match) {
+        const citationNumber = match[1];
+        const citation = citations.find((c: Citation) => String(c.number) === citationNumber);
+
+        if (citation && citation.qdrantDocId && citation.id && onCitationClick) {
+          // This is a clickable citation, prevent default behavior and open modal
+          return (
+            <a
+              href="#"
+              onClick={(e) => {
+                e.preventDefault();
+                onCitationClick(citation.qdrantDocId, citation.id);
+              }}
+              className="align-super text-xs text-primary hover:text-primary/80 underline underline-offset-2 transition-colors cursor-pointer ml-0.5"
+              title={`View source: ${citation.source}`}
+              {...props}
+            >
+              {children}
+            </a>
+          );
+        }
+      }
+
+      // If it's a footnote but no citation data, make it non-clickable
+      return (
+        <span
+          className="align-super text-xs text-muted-foreground font-medium cursor-default ml-0.5"
+          title="Citation data not available"
+          {...props}
+        >
+          {children}
+        </span>
+      );
+    }
+
+    // For regular links, use the original behavior
+    return (
+      <a
+        href={href}
+        className="text-primary hover:text-primary/80 underline underline-offset-2 transition-colors"
+        target="_blank"
+        rel="noopener noreferrer"
+        {...props}
+      >
+        {children}
+      </a>
+    );
+  },
+
+  // Custom component for markdown footnote references (e.g., [^1])
+  // Custom component for markdown footnote references (e.g., [^1])
+  // `remark-gfm` will output 'footnoteReference' as the node type
+  footnoteReference: ({ identifier, label, citations = [], onCitationClick, ...props }: {
+    identifier: string;
+    label?: string; // label can be undefined if it's just [^1]
+    citations?: Citation[];
+    onCitationClick?: (qdrantDocId: string, chunkId: string) => void;
+  } & React.HTMLAttributes<HTMLElement>) => {
+    // The identifier from remark-gfm footnoteReference is the citation number (without ^)
+    // Find the citation object using the identifier (citation number)
+    const citation = citations.find((c: Citation) => String(c.number) === identifier);
+
+    if (citation && citation.qdrantDocId && citation.id) {
+      // If a valid citation with Qdrant IDs is found, render as a clickable link
+      return (
+        <a
+          href="#" // Prevent default navigation
+          onClick={(e) => {
+            e.preventDefault(); // Stop hash navigation
+            onCitationClick?.(citation.qdrantDocId, citation.id);
+          }}
+          className="align-super text-xs text-primary hover:text-primary/80 underline underline-offset-2 transition-colors cursor-pointer ml-0.5"
+          title={`View source: ${citation.source}`}
+          {...props}
+        >
+          [{label || identifier}]
+        </a>
+      );
+    } else {
+      // Fallback to non-clickable span if citation data is incomplete
+      return (
+        <span
+          id={`footnote-ref-${identifier}`}
+          className="align-super text-xs text-muted-foreground font-medium cursor-default ml-0.5"
+          title={`Source ${label || identifier} (Not clickable - citation data missing)`}
+          {...props}
+        >
+          [{label || identifier}]
+        </span>
+      );
+    }
+  },
 
   // Strong and emphasis
   strong: ({ children, ...props }: React.HTMLAttributes<HTMLElement>) => (
@@ -154,7 +244,7 @@ export const MarkdownComponents = {
   // Lists
   ul: ({ children, ...props }: React.HTMLAttributes<HTMLUListElement>) => (
     <ul
-      className="list-disc list-inside space-y-2 mb-6 text-muted-foreground pl-4"
+      className="list-disc list-outside space-y-2 mb-4 text-muted-foreground pl-4"
       {...props}
     >
       {children}
@@ -163,7 +253,7 @@ export const MarkdownComponents = {
 
   ol: ({ children, ...props }: React.HTMLAttributes<HTMLOListElement>) => (
     <ol
-      className="list-decimal list-inside space-y-2 mb-6 text-muted-foreground pl-4"
+      className="list-decimal list-outside space-y-2 mb-4 text-muted-foreground pl-4"
       {...props}
     >
       {children}

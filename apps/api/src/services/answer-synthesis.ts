@@ -430,6 +430,12 @@ export class AnswerSynthesisServiceImpl implements AnswerSynthesisService {
         }
       );
 
+      // Yield the formatted answer with bibliography
+      yield {
+        type: 'formatted_answer',
+        data: formattedAnswer
+      };
+
       yield {
         type: 'response_completed',
         data: responseCompletedEvent.data

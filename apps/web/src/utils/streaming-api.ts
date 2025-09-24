@@ -1,14 +1,20 @@
 import { AskRequest } from '@cw-rag-core/shared';
+import { Citation } from '@/components/ask/MessageBubble'; // Import Citation for CitationMap
+
+// Define CitationMap interface as it's used in streaming events
+export interface CitationMap {
+  [citationNumber: string]: Citation;
+}
 
 export interface StreamingEvent {
-  type: 'connection_opened' | 'chunk' | 'citations' | 'metadata' | 'response_completed' | 'error' | 'done';
-  data: any;
+  type: 'connection_opened' | 'chunk' | 'citations' | 'metadata' | 'response_completed' | 'error' | 'done' | 'formatted_answer';
+  data: any; // data type can be more specific based on `type` field, but for general case any is fine
 }
 
 export interface StreamingCallbacks {
   onConnectionOpen?: (data: any) => void;
   onChunk?: (text: string, accumulated: string) => void;
-  onCitations?: (citations: any[]) => void;
+  onCitations?: (citations: CitationMap) => void; // Expect CitationMap here
   onMetadata?: (metadata: any) => void;
   onResponseCompleted?: (response: any) => void;
   onError?: (error: string) => void;

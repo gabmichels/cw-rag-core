@@ -7,19 +7,24 @@ import rehypeRaw from 'rehype-raw';
 import { cn } from '@/lib/utils';
 import { processEmojis } from '@/utils/emoji';
 import { MarkdownComponents } from './MarkdownComponents';
+import { Citation } from './MessageBubble'; // Import Citation
 
 interface StreamingTextProps {
   text: string;
   isStreaming: boolean;
   className?: string;
   onStreamingComplete?: () => void;
+  citations?: Citation[]; // Pass citations down for inline linking
+  onCitationClick?: (qdrantDocId: string, chunkId: string) => void; // Pass click handler
 }
 
 export default function StreamingText({
   text,
   isStreaming,
   className,
-  onStreamingComplete
+  onStreamingComplete,
+  citations = [], // Destructure new prop
+  onCitationClick // Destructure new prop
 }: StreamingTextProps) {
   const [displayedText, setDisplayedText] = useState('');
   const [showCursor, setShowCursor] = useState(true);
@@ -93,7 +98,34 @@ export default function StreamingText({
         <ReactMarkdown
           remarkPlugins={[remarkGfm]}
           rehypePlugins={[rehypeRaw]}
-          components={MarkdownComponents}
+          components={
+            {
+              ...MarkdownComponents,
+              // Pass citations and onCitationClick to the anchor component
+              a: (props: any) => (
+                <MarkdownComponents.a
+                  {...props}
+                  citations={citations}
+                  onCitationClick={onCitationClick}
+                />
+              ),
+              footnoteReference: (props: any) => {
+                console.log('StreamingText: Custom `footnoteReference` receiving:', {
+                  identifier: props.identifier,
+                  label: props.label,
+                  citationsCount: citations.length,
+                  onCitationClickType: typeof onCitationClick // Log the type of the function
+                });
+                return (
+                  <MarkdownComponents.footnoteReference
+                    {...props}
+                    citations={citations}
+                    onCitationClick={onCitationClick}
+                  />
+                );
+              },
+            } as any // Use 'as any' to satisfy ReactMarkdown's generic component typing.
+          }
           className="prose prose-invert max-w-none"
         >
           {processedText}

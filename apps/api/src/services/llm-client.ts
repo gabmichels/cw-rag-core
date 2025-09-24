@@ -41,7 +41,8 @@ export interface LLMClient {
       isAnswerable: boolean;
       confidence: number;
       score: any;
-    }
+    },
+    signal?: AbortSignal
   ): AsyncGenerator<StreamingSynthesisResponse, void, unknown>;
 
   /**
@@ -136,7 +137,8 @@ export class LLMClientImpl implements LLMClient {
       isAnswerable: boolean;
       confidence: number;
       score: any;
-    }
+    },
+    signal?: AbortSignal
   ): AsyncGenerator<StreamingSynthesisResponse, void, unknown> {
     if (!this.supportsStreaming()) {
       throw new LLMProviderError(
@@ -148,13 +150,13 @@ export class LLMClientImpl implements LLMClient {
     try {
       // For vLLM streaming
       if (this.config.provider === 'vllm') {
-        yield* this.generateVLLMStreamingCompletion(prompt, context, maxTokens, guardrailDecision);
+        yield* this.generateVLLMStreamingCompletion(prompt, context, maxTokens, guardrailDecision, signal); // Pass signal
         return;
       }
 
       // For OpenAI and Anthropic providers using LangChain streaming
       if (this.config.provider === 'openai' || this.config.provider === 'anthropic' || this.config.provider === 'azure-openai') {
-        yield* this.generateLangChainStreamingCompletion(prompt, context, maxTokens, guardrailDecision);
+        yield* this.generateLangChainStreamingCompletion(prompt, context, maxTokens, guardrailDecision, signal); // Pass signal
         return;
       }
 
@@ -296,7 +298,8 @@ export class LLMClientImpl implements LLMClient {
       isAnswerable: boolean;
       confidence: number;
       score: any;
-    }
+    },
+    signal?: AbortSignal
   ): AsyncGenerator<StreamingSynthesisResponse, void, unknown> {
     const systemPrompt = this.buildSystemPrompt(guardrailDecision).replace('{context}', context);
 
@@ -313,9 +316,8 @@ export class LLMClientImpl implements LLMClient {
       stream: true
     };
 
-    const timeoutMs = this.config.timeoutMs || parseInt(process.env.LLM_TIMEOUT_MS || '25000');
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    const internalController = new AbortController();
+    const effectiveSignal = signal || internalController.signal;
 
     try {
       const response = await fetch(this.config.baseURL || process.env.LLM_ENDPOINT!, {
@@ -325,10 +327,8 @@ export class LLMClientImpl implements LLMClient {
           ...(this.config.apiKey && { 'Authorization': `Bearer ${this.config.apiKey}` })
         },
         body: JSON.stringify(requestBody),
-        signal: controller.signal
+        signal: effectiveSignal
       });
-
-      clearTimeout(timeoutId);
 
       if (!response.ok) {
         throw new Error(`vLLM API error: ${response.status} ${response.statusText}`);
@@ -338,9 +338,17 @@ export class LLMClientImpl implements LLMClient {
         throw new Error('No response body for streaming');
       }
 
+      let localTimeoutId: NodeJS.Timeout | null = null; // Declare here to make it accessible in catch block
+      if (!signal) { // If no external signal, manage local timeout
+        localTimeoutId = setTimeout(() => internalController.abort(new Error('vLLM Streaming timeout')), this.config.timeoutMs || 25000);
+      }
+
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let totalTokens = 0;
+
+      if (effectiveSignal.aborted) throw effectiveSignal.reason || new Error('Streaming aborted before start'); // Check if already aborted
+      effectiveSignal.addEventListener('abort', () => reader.cancel('Stream aborted due to timeout'), { once: true });
 
       try {
         while (true) {
@@ -380,16 +388,18 @@ export class LLMClientImpl implements LLMClient {
           }
         }
       } finally {
+        if (localTimeoutId) clearTimeout(localTimeoutId); // Clear local timeout
         reader.releaseLock();
       }
 
     } catch (error) {
-      clearTimeout(timeoutId);
       if ((error as Error).name === 'AbortError') {
         yield {
           type: 'error',
           data: new Error('Request timeout')
         };
+      } else if (error instanceof Error && error.message.includes('Stream aborted due to timeout')) {
+        yield { type: 'error', data: new Error(error.message) };
       } else {
         yield {
           type: 'error',
@@ -407,7 +417,8 @@ export class LLMClientImpl implements LLMClient {
       isAnswerable: boolean;
       confidence: number;
       score: any;
-    }
+    },
+    signal?: AbortSignal
   ): AsyncGenerator<StreamingSynthesisResponse, void, unknown> {
     const systemPrompt = this.buildSystemPrompt(guardrailDecision);
     const promptTemplate = ChatPromptTemplate.fromMessages([
@@ -424,14 +435,27 @@ export class LLMClientImpl implements LLMClient {
     let completionReason = 'stop';
     let modelUsed = this.config.model;
 
+    if (signal?.aborted) {
+      yield { type: 'error', data: signal.reason || new Error('Streaming aborted before start') };
+      return;
+    }
+    // LangChain's stream method may not directly support AbortSignal in its options.
+    // So we'll check signal.aborted manually within the loop.
+    signal?.addEventListener('abort', () => { /* no-op, relying on manual check */ }, { once: true });
+
     try {
-      // Use LangChain's streaming via stream method
+      // Use LangChain's streaming via stream method.
       const streamIterator = await this.model.stream(formattedPrompt);
 
       for await (const chunk of streamIterator) {
         const content = typeof chunk.content === 'string'
           ? chunk.content
           : chunk.content.toString();
+
+        if (signal?.aborted) {
+          yield { type: 'error', data: signal.reason || new Error('Streaming aborted during chunk processing') };
+          return; // Exit if aborted
+        }
 
         if (content) {
           totalTokens += this.estimateTokens(content);
@@ -522,7 +546,7 @@ export class LLMClientImpl implements LLMClient {
         return new ChatOpenAI({
           modelName: config.model,
           temperature: config.temperature || 0.1,
-          maxTokens: config.maxTokens || 1000,
+          maxTokens: 1000,
           openAIApiKey: 'mock-key-for-vllm'
         });
 
@@ -550,12 +574,17 @@ INSTRUCTIONS FOR HIGH-CONFIDENCE QUERIES:
 1. The system has determined this query is HIGHLY ANSWERABLE (confidence: ${(guardrailDecision?.confidence * 100).toFixed(1)}%)
 2. Use ALL relevant information provided in the context below to give a complete answer
 3. Be confident and comprehensive in your response - the relevant information IS present
-4. Include inline citations in your response using the format [^1], [^2], etc. for each source you reference
-5. Each piece of information should be cited to its source document
-6. Do NOT invent, hallucinate, or make up any citations
-7. Provide a clear, well-structured answer in markdown format
-8. If multiple sources support the same point, cite all relevant sources
-9. Since the system has high confidence, provide the best possible answer from the available context
+
+**CRITICAL CITATION REQUIREMENT:**
+4. You MUST include inline citations in your response using the format [^1], [^2], etc. for each source you reference
+5. EVERY factual statement should be cited to its source document (e.g., "The moon is made of cheese [^1]")
+6. Use the document numbers provided in the context (e.g., [Document 1], [Document 2]) to create corresponding citations [^1], [^2]
+7. Do NOT invent, hallucinate, or make up any citations - only use the numbered documents provided
+8. If multiple sources support the same point, cite all relevant sources (e.g., [^1][^2])
+
+FORMATTING REQUIREMENTS:
+9. Provide a clear, well-structured answer in markdown format
+10. Since the system has high confidence, provide the best possible answer from the available context
 
 SPECIAL INSTRUCTIONS FOR TABLES AND STRUCTURED CONTENT:
 - When showing skill tables, tier lists, or any structured data, include ALL tiers/rows/entries from the context
@@ -573,11 +602,16 @@ Context:
 STANDARD INSTRUCTIONS:
 1. Use ONLY the information provided in the context below
 2. If the context doesn't contain enough information to answer the question, respond with "I don't have enough information in the provided context to answer this question."
-3. Include inline citations in your response using the format [^1], [^2], etc. for each source you reference
-4. Each piece of information should be cited to its source document
-5. Do NOT invent, hallucinate, or make up any citations
-6. Provide a clear, well-structured answer in markdown format
-7. If multiple sources support the same point, cite all relevant sources
+
+**CRITICAL CITATION REQUIREMENT:**
+3. You MUST include inline citations in your response using the format [^1], [^2], etc. for each source you reference
+4. EVERY factual statement should be cited to its source document (e.g., "The moon is made of cheese [^1]")
+5. Use the document numbers provided in the context (e.g., [Document 1], [Document 2]) to create corresponding citations [^1], [^2]
+6. Do NOT invent, hallucinate, or make up any citations - only use the numbered documents provided
+7. If multiple sources support the same point, cite all relevant sources (e.g., [^1][^2])
+
+FORMATTING REQUIREMENTS:
+8. Provide a clear, well-structured answer in markdown format
 
 Context:
 {context}`;
@@ -895,61 +929,51 @@ class ResilientLLMClient implements LLMClient {
       const client = clients[i];
 
       if (!client.supportsStreaming()) {
-        continue; // Skip clients that don't support streaming
+        continue;
       }
 
       for (let retry = 0; retry < this.maxRetries; retry++) {
-        let timeoutId: NodeJS.Timeout | null = null;
-        let streamingCompleted = false;
+        let timeoutRef: NodeJS.Timeout | null = null;
+        const controller = new AbortController();
+
+        // Setup the initial timeout to abort the controller
+        const resetTimeout = () => {
+          if (timeoutRef) {
+            clearTimeout(timeoutRef);
+          }
+          timeoutRef = setTimeout(() => {
+            controller.abort(new Error('Streaming timeout: no chunk received for ' + this.timeoutMs + 'ms'));
+          }, this.timeoutMs);
+        };
+
+        resetTimeout(); // Start initial timeout
 
         try {
-          const timeoutMs = this.timeoutMs;
-          const generator = client.generateStreamingCompletion(prompt, context, maxTokens, guardrailDecision);
+          for await (const chunk of client.generateStreamingCompletion(prompt, context, maxTokens, guardrailDecision, controller.signal)) {
+            resetTimeout(); // Reset timeout on each chunk received
 
-          // Create a promise-based timeout that can be properly cancelled
-          const timeoutPromise = new Promise<never>((_, reject) => {
-            timeoutId = setTimeout(() => {
-              if (!streamingCompleted) {
-                reject(new Error('Streaming timeout'));
-              }
-            }, timeoutMs);
-          });
+            yield chunk;
 
-          // Create a generator wrapper that handles the timeout
-          const wrappedGenerator = async function* () {
-            try {
-              for await (const chunk of generator) {
-                yield chunk;
-
-                if (chunk.type === 'done' || chunk.type === 'error') {
-                  streamingCompleted = true;
-                  if (timeoutId) {
-                    clearTimeout(timeoutId);
-                    timeoutId = null;
-                  }
-                  return;
-                }
-              }
-              streamingCompleted = true;
-            } finally {
-              // Ensure timeout is always cleared
-              if (timeoutId) {
-                clearTimeout(timeoutId);
-                timeoutId = null;
-              }
+            if (chunk.type === 'done' || chunk.type === 'error' || controller.signal.aborted) {
+              // If the client explicitly signaled done/error, or if the controller was aborted internally,
+              // exit the loop and prepare to return.
+              break;
             }
-          };
+          }
 
-          // Execute the wrapped generator
-          yield* wrappedGenerator();
+          // After the loop, ensure the final timeout is cleared
+          if (timeoutRef) {
+            clearTimeout(timeoutRef);
+            timeoutRef = null;
+          }
+
           return;
 
         } catch (error) {
-          // Ensure timeout is cleared on any error
-          streamingCompleted = true;
-          if (timeoutId) {
-            clearTimeout(timeoutId);
-            timeoutId = null;
+          // Ensure timeout is cleared on any error or retry start
+          if (timeoutRef) {
+            clearTimeout(timeoutRef);
+            timeoutRef = null;
           }
 
           console.warn(`LLM streaming client ${i} attempt ${retry + 1} failed:`, error);
@@ -976,6 +1000,7 @@ class ResilientLLMClient implements LLMClient {
               return;
             }
           }
+
 
           // Wait before retry (exponential backoff)
           if (retry < this.maxRetries - 1) {

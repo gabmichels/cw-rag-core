@@ -17,7 +17,8 @@ interface Citation {
     humanReadable: string;
     ageInDays: number;
   };
-  docId?: string;
+  docId: string; // Human-readable ID
+  qdrantDocId: string; // Internal Qdrant document ID (content hash)
   version?: string;
   url?: string;
   filepath?: string;
@@ -43,7 +44,7 @@ interface ResponseMetadataProps {
     stalePercentage: number;
     avgAgeInDays: number;
   };
-  onCitationClick?: (citationId: string) => void;
+  onCitationClick?: (docId: string, chunkId: string) => void;
   className?: string;
 }
 
@@ -72,7 +73,11 @@ export default function ResponseMetadata({
 
   const handleCitationClick = (citation: Citation) => {
     setSelectedCitationId(citation.id);
-    onCitationClick?.(citation.id);
+    if (citation.qdrantDocId && citation.id) { // Use qdrantDocId for navigation
+      onCitationClick?.(citation.qdrantDocId, citation.id);
+    } else {
+      console.warn('Missing qdrantDocId or citation.id for clickable citation:', citation);
+    }
   };
 
   if (!citations.length && !confidence && !metrics && !freshnessStats) {

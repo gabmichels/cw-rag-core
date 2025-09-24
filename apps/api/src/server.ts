@@ -11,6 +11,7 @@ import { readyzRoute } from './routes/readyz.js';
 import { ingestNormalizeRoute } from './routes/ingestNormalize.js';
 import { askRoute } from './routes/ask.js';
 import { askStreamRoute } from './routes/ask-stream.js';
+import { documentFetchRoute } from './routes/document-fetch.js'; // Added import for new route
 import { ingestRoutes } from './routes/ingest/index.js';
 import { DOCUMENT_VECTOR_DIMENSION } from '@cw-rag-core/shared';
 import { BgeSmallEnV15EmbeddingService } from '@cw-rag-core/retrieval';
@@ -128,6 +129,7 @@ async function startServer() {
   server.register(ingestNormalizeRoute, { qdrantClient, collectionName: QDRANT_COLLECTION_NAME, embeddingService });
   server.register(askRoute, { qdrantClient, collectionName: QDRANT_COLLECTION_NAME, embeddingService });
   server.register(askStreamRoute, { qdrantClient, collectionName: QDRANT_COLLECTION_NAME, embeddingService });
+  server.register(documentFetchRoute, { qdrantClient, collectionName: QDRANT_COLLECTION_NAME }); // Register new document fetch route
   server.register(ingestRoutes, {
     qdrantClient,
     collectionName: QDRANT_COLLECTION_NAME,

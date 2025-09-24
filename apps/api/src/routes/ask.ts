@@ -763,6 +763,7 @@ export async function askRoute(fastify: FastifyInstance, options: AskRouteOption
         if (streamingEnabled) {
           // Handle streaming synthesis - collect all chunks then return
           let answer = '';
+          let formattedAnswer = '';
           let citations: any = {};
           let metadata: any = {};
 
@@ -786,6 +787,8 @@ export async function askRoute(fastify: FastifyInstance, options: AskRouteOption
                 citations = chunk.data;
               } else if (chunk.type === 'metadata') {
                 metadata = chunk.data;
+              } else if (chunk.type === 'formatted_answer') {
+                formattedAnswer = chunk.data as string;
               } else if (chunk.type === 'error') {
                 throw chunk.data as Error;
               } else if (chunk.type === 'done') {
@@ -835,7 +838,7 @@ export async function askRoute(fastify: FastifyInstance, options: AskRouteOption
             const totalTime = performance.now() - startTime;
 
             const streamingResponse: AskResponse = {
-              answer,
+              answer: formattedAnswer || answer, // Use formatted answer with bibliography if available
               retrievedDocuments,
               queryId,
               guardrailDecision: {

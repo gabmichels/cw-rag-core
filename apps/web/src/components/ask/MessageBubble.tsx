@@ -8,7 +8,7 @@ import ResponseMetadata from './ResponseMetadata';
 import LoadingSkeleton from './LoadingSkeleton';
 import { Bot, User, AlertCircle } from 'lucide-react';
 
-interface Citation {
+export interface Citation {
   id: string;
   number: number;
   source: string;
@@ -18,7 +18,8 @@ interface Citation {
     humanReadable: string;
     ageInDays: number;
   };
-  docId?: string;
+  docId: string; // This is the human-readable doc ID (e.g. "Skill Tables")
+  qdrantDocId: string; // This is the actual Qdrant document content hash ID
   version?: string;
   url?: string;
   filepath?: string;
@@ -48,7 +49,7 @@ interface MessageBubbleProps {
     avgAgeInDays: number;
   };
   error?: string;
-  onCitationClick?: (citationId: string) => void;
+  onCitationClick?: (docId: string, chunkId: string) => void;
   className?: string;
 }
 
@@ -115,6 +116,8 @@ export default function MessageBubble({
               isStreaming={isStreaming}
               className="leading-relaxed"
               onStreamingComplete={() => setShowMetadata(true)}
+              citations={citations} // Pass citations down
+              onCitationClick={onCitationClick} // Pass click handler down
             />
 
             {showMetadata && !isStreaming && (

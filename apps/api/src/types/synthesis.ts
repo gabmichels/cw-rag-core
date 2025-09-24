@@ -35,7 +35,8 @@ export interface Citation {
   id: string;
   number: number;
   source: string;
-  docId: string;
+  docId: string; // The human-readable or original doc ID
+  qdrantDocId: string; // The actual Qdrant document ID (content hash)
   version?: string;
   url?: string;
   filepath?: string;
@@ -122,7 +123,7 @@ export interface ProviderSpecificEvent<T = any> extends BaseStreamingEvent {
 
 // Backwards compatible streaming response types
 export interface StreamingSynthesisResponse {
-  type: 'chunk' | 'citations' | 'metadata' | 'error' | 'done' | 'completion' | 'response_completed' | 'provider_specific';
+  type: 'chunk' | 'citations' | 'metadata' | 'error' | 'done' | 'completion' | 'response_completed' | 'provider_specific' | 'formatted_answer';
   data: string | CitationMap | SynthesisMetadata | Error | null | StreamingCompletionEvent['data'] | ResponseCompletedEvent['data'] | any;
 }
 
