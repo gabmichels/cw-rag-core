@@ -19,6 +19,8 @@ out/
 .env*.local
 .env.production.local
 .env.development.local
+.env.gabmichels
+.env.zenithfall
 
 # Docker
 !ops/compose/.env

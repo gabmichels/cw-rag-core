@@ -143,21 +143,50 @@ if [[ -f ".env.$TENANT_ID" ]]; then
     exit 1
 fi
 
-# Find available ports
+# Get next tenant index based on existing tenants
+get_next_tenant_index() {
+    local existing_tenants=$(find . -maxdepth 1 -name ".env.*" -type f 2>/dev/null | wc -l)
+    echo $((existing_tenants))
+}
+
+# Calculate port based on tenant index
+calculate_tenant_port() {
+    local base_port=$1
+    local tenant_index=$2
+    echo $((base_port + (tenant_index * 100)))
+}
+
+# Find available ports - Windows compatible with automatic tenant indexing
 find_available_port() {
     local base_port=$1
-    local increment=0
+    local tenant_index=$(get_next_tenant_index)
+    local port=$(calculate_tenant_port $base_port $tenant_index)
 
-    while [[ $increment -lt 100 ]]; do
-        local port=$((base_port + increment * 100))
-        if ! netstat -tuln 2>/dev/null | grep -q ":$port "; then
-            echo $port
+    # Ensure port is not in use
+    local increment=0
+    while [[ $increment -lt 10 ]]; do
+        local test_port=$((port + increment))
+
+        # Windows-compatible port check
+        if command -v netstat &> /dev/null; then
+            if ! netstat -an 2>/dev/null | grep -q ":$test_port "; then
+                echo $test_port
+                return
+            fi
+        elif command -v powershell &> /dev/null; then
+            if ! powershell -Command "(Get-NetTCPConnection -LocalPort $test_port -ErrorAction SilentlyContinue)" 2>/dev/null | grep -q "$test_port"; then
+                echo $test_port
+                return
+            fi
+        else
+            # Simple fallback - use calculated port
+            echo $test_port
             return
         fi
         increment=$((increment + 1))
     done
 
-    log_error "Could not find available port starting from $base_port"
+    log_error "Could not find available port starting from $port"
     exit 1
 }
 
@@ -273,6 +302,19 @@ QDRANT_COLLECTION=docs_v1
 
 # Public API URL (adjust for production)
 NEXT_PUBLIC_API_URL=http://localhost:$API_PORT
+
+# LLM Configuration - OpenAI Default (vLLM available for future clients)
+LLM_ENABLED=true
+LLM_PROVIDER=openai
+LLM_MODEL=gpt-4.1-2025-04-14
+LLM_STREAMING=true
+LLM_TIMEOUT_MS=25000
+
+# OpenAI API Configuration (shared across tenants)
+OPENAI_API_KEY=your-openai-api-key-here
+
+# Answerability Guardrail Configuration
+ANSWERABILITY_THRESHOLD=0.01
 EOF
 
 # Create Docker Compose file

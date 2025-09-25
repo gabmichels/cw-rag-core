@@ -69,7 +69,7 @@ get_tenants() {
     find . -maxdepth 1 -name ".env.*" -type f | sed 's/\.\///g' | sed 's/\.env\.//g' | sort
 }
 
-# Get tenant configuration
+# Get tenant configuration - Windows safe environment loading
 get_tenant_config() {
     local tenant_id="$1"
     local config_file=".env.$tenant_id"
@@ -79,7 +79,17 @@ get_tenant_config() {
         return 1
     fi
 
-    source "$config_file"
+    # Windows-safe environment loading
+    while IFS= read -r line; do
+        # Skip comments and empty lines
+        [[ $line =~ ^[[:space:]]*# ]] && continue
+        [[ -z "${line// }" ]] && continue
+
+        # Export valid environment variables
+        if [[ $line =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; then
+            export "$line"
+        fi
+    done < "$config_file"
 }
 
 # Check if tenant exists
