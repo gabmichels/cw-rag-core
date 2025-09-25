@@ -7,3 +7,8 @@ export * from './utils/normalization.js';
 export * from './utils/freshness.js';
 export * from './schemas/index.js';
 export * from './constants.js';
+
+// Firebase and configuration exports
+export * from './config/firebase-config.js';
+export * from './services/environment-detector.js';
+export * from './services/configuration-service.js';

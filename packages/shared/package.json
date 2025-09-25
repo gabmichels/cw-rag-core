@@ -18,7 +18,12 @@
     "typecheck": "tsc --noEmit",
     "test": "node --experimental-vm-modules node_modules/jest/bin/jest"
   },
-  "dependencies": { "zod": "^3.22.4" },
+  "dependencies": {
+    "zod": "^3.22.4",
+    "firebase-admin": "^12.0.0",
+    "@google-cloud/firestore": "^7.1.0",
+    "@google-cloud/storage": "^7.7.0"
+  },
   "devDependencies": {
     "typescript": "^5.0.0",
     "eslint": "^8.57.0",

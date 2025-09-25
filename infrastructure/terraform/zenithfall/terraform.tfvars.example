@@ -1,0 +1,21 @@
+# Terraform Variables for Zenithfall Firebase Deployment
+# Copy this file to terraform.tfvars and fill in your actual values
+
+# REQUIRED: Your GCP billing account ID
+# Find this in: https://console.cloud.google.com/billing
+billing_account = "0X0X0X-0X0X0X-0X0X0X"
+
+# OPTIONAL: Override default region (defaults to Frankfurt, Germany)
+# region = "europe-west3"
+
+# OPTIONAL: Override Firebase location (defaults to Europe)
+# firebase_location = "eur3"
+
+# OPTIONAL: Override tier (defaults to development)
+# tier = "development"
+
+# Example values:
+# billing_account = "01AB23-4CD567-89EF01"
+# region = "europe-west3"          # Frankfurt, Germany
+# firebase_location = "eur3"       # Europe multi-region
+# tier = "development"             # development, basic, premium, enterprise
