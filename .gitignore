@@ -22,6 +22,14 @@ out/
 .env.gabmichels
 .env.zenithfall
 
+# Firebase deployment environment files (contain project IDs and secrets)
+.env*.firebase
+*-deployment.json
+firebase.json
+firestore.rules
+firestore.indexes.json
+.firebaserc
+
 # Docker
 !ops/compose/.env
 *.swp
@@ -38,3 +46,14 @@ packages/evals/dist/
 packages/ingestion-sdk/dist/
 packages/retrieval/dist/
 packages/shared/dist/
+
+# Terraform
+**/.terraform/
+*.tfstate
+*.tfstate.backup
+*.tfvars
+*.tfplan
+.terraform.lock.hcl
+
+# Firebase/GCP sensitive files
+*-deployment.json
