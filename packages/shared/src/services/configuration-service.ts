@@ -331,7 +331,13 @@ export class ConfigurationService {
    */
   private async loadLocalConfiguration(tenantId: string): Promise<TenantConfiguration> {
     try {
-      // Load from tenants/registry.json
+      // Check if we're in a browser environment
+      if (typeof window !== 'undefined') {
+        // Browser environment - return default configuration
+        return this.createDefaultConfiguration(tenantId);
+      }
+
+      // Load from tenants/registry.json (Node.js only)
       const fs = await import('fs');
       const path = await import('path');
 

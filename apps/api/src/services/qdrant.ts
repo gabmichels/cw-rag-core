@@ -27,7 +27,9 @@ export async function bootstrapQdrant(
   for (let i = 0; i < maxRetries; i++) {
     try {
       logger.info(`Attempt ${i + 1}/${maxRetries} to connect to Qdrant and bootstrap collection...`);
+      logger.info('🔍 Attempting qdrantClient.getCollections()...');
       const collections = await qdrantClient.getCollections();
+      logger.info('✅ qdrantClient.getCollections() successful');
 
       // Enhanced logging for debugging collection persistence
       const existingCollectionNames = collections.collections.map(c => c.name);
@@ -118,7 +120,13 @@ export async function bootstrapQdrant(
       logger.info('Qdrant bootstrap complete.');
       return;
     } catch (error) {
-      logger.error(`Failed to connect to Qdrant or bootstrap collection: ${(error as Error).message}`);
+      logger.error(`❌ Failed to connect to Qdrant or bootstrap collection: ${(error as Error).message}`);
+      logger.error(`❌ Error details: ${JSON.stringify({
+        name: (error as Error).name,
+        message: (error as Error).message,
+        stack: (error as Error).stack,
+        cause: (error as any).cause
+      }, null, 2)}`);
       if (i < maxRetries - 1) {
         logger.info(`Retrying in ${retryDelay / 1000} seconds...`);
         await new Promise((resolve) => setTimeout(resolve, retryDelay));

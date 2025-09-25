@@ -9,6 +9,25 @@ const nextConfig = {
   transpilePackages: ['@cw-rag-core/shared', '@cw-rag-core/retrieval', '@cw-rag-core/ingestion-sdk'],
   // optional: quiet noisy warnings
   typescript: { ignoreBuildErrors: false },
+  // Webpack configuration to handle Node.js modules
+  webpack: (config, { isServer }) => {
+    if (!isServer) {
+      // Exclude Node.js modules from client bundle
+      config.resolve.fallback = {
+        ...config.resolve.fallback,
+        fs: false,
+        path: false,
+        os: false,
+        crypto: false,
+        stream: false,
+        http: false,
+        https: false,
+        zlib: false,
+        url: false,
+      };
+    }
+    return config;
+  },
   // Environment variables for build-time configuration
   env: {
     NEXT_PUBLIC_FIREBASE_PROJECT_ID: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,

@@ -22,6 +22,14 @@ const QDRANT_API_KEY = process.env.QDRANT_API_KEY;
 // QDRANT_COLLECTION_NAME is now imported from services/qdrant.js to ensure consistency
 const INGEST_TOKEN = process.env.INGEST_TOKEN;
 
+// Debug logging for environment variables
+console.log('🔍 Environment Variables Debug:');
+console.log('PORT:', PORT);
+console.log('QDRANT_URL:', QDRANT_URL);
+console.log('QDRANT_API_KEY:', QDRANT_API_KEY ? '[SET]' : '[NOT SET]');
+console.log('INGEST_TOKEN:', INGEST_TOKEN ? '[SET]' : '[NOT SET]');
+console.log('NODE_ENV:', process.env.NODE_ENV);
+
 // Security configuration
 const ALLOWED_ORIGINS = [
   'http://localhost:3001', // Web frontend
@@ -39,10 +47,36 @@ const logger = pino({
   } : undefined,
 });
 
+console.log('🔗 Creating QdrantClient with:');
+console.log('URL:', QDRANT_URL);
+console.log('API Key:', QDRANT_API_KEY ? `[${QDRANT_API_KEY.substring(0, 10)}...]` : '[NONE]');
+
 const qdrantClient = new QdrantClient({
   url: QDRANT_URL,
-  apiKey: QDRANT_API_KEY,
+  port: QDRANT_URL.startsWith('https://') ? 443 : 6333, // Use HTTPS port for Cloud Run
+  apiKey: QDRANT_API_KEY || undefined, // Explicitly set to undefined if empty
+  timeout: 30000, // 30 second timeout
+  // Skip client-server compatibility check for HTTPS connections
+  ...(QDRANT_URL.startsWith('https://') && { checkCompatibility: false })
 });
+
+console.log('✅ QdrantClient created successfully');
+
+// Test direct connection before bootstrap
+console.log('🧪 Testing direct Qdrant connection...');
+qdrantClient.getCollections()
+  .then(result => {
+    console.log('🎉 Direct connection SUCCESS:', JSON.stringify(result, null, 2));
+  })
+  .catch(err => {
+    console.log('❌ Direct connection FAILED:', err.message);
+    console.log('❌ Error details:', {
+      name: err.name,
+      message: err.message,
+      cause: err.cause,
+      stack: err.stack?.split('\n').slice(0, 3).join('\n')
+    });
+  });
 
 const embeddingService = new BgeSmallEnV15EmbeddingService();
 
