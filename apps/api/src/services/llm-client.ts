@@ -563,17 +563,29 @@ export class LLMClientImpl implements LLMClient {
     confidence: number;
     score: any;
   }): string {
-    const isHighConfidence = guardrailDecision?.confidence && guardrailDecision.confidence > 0.7;
     const isAnswerable = guardrailDecision?.isAnswerable;
+    const confidence = guardrailDecision?.confidence || 0;
 
-    if (isAnswerable && isHighConfidence) {
-      // High confidence: encourage confident answers, remove IDK instruction
-      return `You are a helpful AI assistant that provides comprehensive answers based on the provided context.
+    if (isAnswerable) {
+      // Guardrail says it's answerable - always answer, adjust tone based on confidence
+      // Use ANSWERABILITY_THRESHOLD as base for tone determination
+      const baseThreshold = parseFloat(process.env.ANSWERABILITY_THRESHOLD || '0.6');
+      const highThreshold = Math.min(baseThreshold * 1.3, 0.9); // 1.3x base, max 0.9
+      const mediumThreshold = baseThreshold; // Use base threshold for medium confidence
 
-INSTRUCTIONS FOR HIGH-CONFIDENCE QUERIES:
-1. The system has determined this query is HIGHLY ANSWERABLE (confidence: ${(guardrailDecision?.confidence * 100).toFixed(1)}%)
-2. Use ALL relevant information provided in the context below to give a complete answer
-3. Be confident and comprehensive in your response - the relevant information IS present
+      const confidenceLevel = confidence >= highThreshold ? 'HIGH' : confidence >= mediumThreshold ? 'MEDIUM' : 'LOW';
+      const confidenceNote = confidenceLevel === 'HIGH' ?
+        'Be confident and comprehensive in your response - the relevant information IS present.' :
+        confidenceLevel === 'MEDIUM' ?
+        'Provide a helpful and complete answer based on the available information.' :
+        'Answer the question using the provided context, being appropriately cautious about the confidence level.';
+
+      return `You are a helpful AI assistant that provides answers based on the provided context.
+
+INSTRUCTIONS FOR ANSWERABLE QUERIES:
+1. The system has determined this query is ANSWERABLE (confidence: ${(confidence * 100).toFixed(1)}%)
+2. Use the information provided in the context below to answer the question
+3. ${confidenceNote}
 
 **CRITICAL CITATION REQUIREMENT:**
 4. You MUST include inline citations in your response using the format [^1], [^2], etc. for each source you reference
@@ -584,7 +596,7 @@ INSTRUCTIONS FOR HIGH-CONFIDENCE QUERIES:
 
 FORMATTING REQUIREMENTS:
 9. Provide a clear, well-structured answer in markdown format
-10. Since the system has high confidence, provide the best possible answer from the available context
+10. Answer the question to the best of your ability using the provided context
 
 SPECIAL INSTRUCTIONS FOR TABLES AND STRUCTURED CONTENT:
 - When showing skill tables, tier lists, or any structured data, include ALL tiers/rows/entries from the context
@@ -596,7 +608,7 @@ SPECIAL INSTRUCTIONS FOR TABLES AND STRUCTURED CONTENT:
 Context:
 {context}`;
     } else {
-      // Lower confidence or not answerable: use conservative approach
+      // Not answerable: use conservative approach with IDK instruction
       return `You are a helpful AI assistant that answers questions based only on the provided context.
 
 STANDARD INSTRUCTIONS:

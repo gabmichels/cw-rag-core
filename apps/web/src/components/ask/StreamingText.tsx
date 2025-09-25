@@ -56,7 +56,7 @@ export default function StreamingText({
               intervalRef.current = null;
             }
           }
-        }, 20); // Adjust speed here (20ms = 50 chars/second)
+        }, 10); // Adjust speed here (10ms = 100 chars/second)
       } else if (!isStreaming) {
         // If not streaming, show text immediately
         setDisplayedText(text);
