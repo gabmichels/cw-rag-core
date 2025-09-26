@@ -22,30 +22,30 @@ These are tackled together for synergy: Spaces provide high-level routing, while
 ### Phase 1: Spaces Implementation (Foundation Layer)
 Focus on data structure and ingestion. Build registries, resolvers, and UI for space management.
 
-- [ ] **Design Space Registry Schema**: Define YAML structure per tenant (spaces with id, name, description, owner, status, authorityScore, autoCreated). Include seed catalog (business/personal spaces).
-- [ ] **Implement Space Registry Loader/Persister**: Create tenant-scoped loader (read/write YAML), with versioning and overlay repo support. Handle defaults on first run.
-- [ ] **Build Space Resolver**: Core logic for catalog matching (semantic similarity + keywords), guarded auto-creation (thresholds for cluster size/theme confidence), fallback to "General" with needs_review flag.
-- [ ] **Expose /spaces/resolve API**: Fastify endpoint for ingestion (n8n), accepts text sample + hints, returns spaceId + metadata. Cache hits <50ms.
+- [x] **Design Space Registry Schema**: Define YAML structure per tenant (spaces with id, name, description, owner, status, authorityScore, autoCreated). Include seed catalog (business/personal spaces).
+- [x] **Implement Space Registry Loader/Persister**: Create tenant-scoped loader (read/write YAML), with versioning and overlay repo support. Handle defaults on first run.
+- [x] **Build Space Resolver**: Core logic for catalog matching (semantic similarity + keywords), guarded auto-creation (thresholds for cluster size/theme confidence), fallback to "General" with needs_review flag.
+- [x] **Expose /spaces/resolve API**: Fastify endpoint for ingestion (n8n), accepts text sample + hints, returns spaceId + metadata. Cache hits <50ms.
 
 #### Test Phase 1.1: Space Registry and Resolver Testing
-- [ ] **Unit Tests**: Test registry loader/persister with mock YAML; verify schema validation and versioning.
-- [ ] **Resolver Integration Tests**: Use the provided chunked "Skill Progression Framework" document—ingest sample chunks, test catalog matching (e.g., map to "Knowledge" or "Crafting" spaces), auto-create thresholds, and fallback to "General".
-- [ ] **API Tests**: Hit /spaces/resolve with text samples from the chunked doc (e.g., "Knowledge Domain abilities"); assert <50ms latency, correct spaceId, and needs_review flags.
-- [ ] **Eval Check**: Query for "skill progression" post-ingestion; verify space assignment improves relevance (e.g., chunks grouped by domain).
+- [x] **Unit Tests**: Test registry loader/persister with mock YAML; verify schema validation and versioning.
+- [x] **Resolver Integration Tests**: Use the provided chunked "Skill Progression Framework" document—ingest sample chunks, test catalog matching (e.g., map to "Knowledge" or "Crafting" spaces), auto-create thresholds, and fallback to "General".
+- [x] **API Tests**: Hit /spaces/resolve with text samples from the chunked doc (e.g., "Knowledge Domain abilities"); assert <50ms latency, correct spaceId, and needs_review flags. Test /documents API includes space field.
+- [x] **Eval Check**: Query for "skill progression" post-ingestion; verify space assignment improves relevance (e.g., chunks grouped by domain).
 
-- [ ] **Integrate with Ingestion (n8n)**: Update workflows to call resolver before indexing, attach space/persona/needs_review to Qdrant payloads.
-- [ ] **Update Library UI**: Add editable Space column, batch change support with confirmation dialog. Persist via reassign API.
-- [ ] **Implement Background Reindex Job**: Idempotent job for space reassignment—update Qdrant payloads, refresh caches, audit changes. Non-blocking UI with toasts.
+- [x] **Integrate with Ingestion (n8n)**: Update workflows to call resolver before indexing, attach space/persona/needs_review to Qdrant payloads.
+- [x] **Update Library UI**: Add editable Space column, batch change support with confirmation dialog. Persist via reassign API.
+- [x] **Implement Background Reindex Job**: Idempotent job for space reassignment—update Qdrant payloads, refresh caches, audit changes. Non-blocking UI with toasts.
 
 #### Test Phase 1.2: UI and Reindex Testing
-- [ ] **UI Unit Tests**: Test Library table with editable Space column; verify batch change confirmation and toast notifications.
-- [ ] **Reindex Integration Tests**: Simulate space reassignment on chunked doc chunks (e.g., reassign "Knowledge" chunks to "Education" space); verify Qdrant payload updates, cache refreshes, and audit logs.
-- [ ] **End-to-End UI Test**: Ingest chunked doc, edit spaces in Library UI, trigger reindex, query for "crafting abilities"—assert updated spaces reflect in results without data loss.
-- [ ] **Performance Eval**: Run reindex on 100 chunks; ensure P95 latency <5s, no blocking UI.
+- [x] **UI Unit Tests**: Test Library table with editable Space column; verify batch change confirmation and toast notifications.
+- [x] **Reindex Integration Tests**: Simulate space reassignment on chunked doc chunks (e.g., reassign "Knowledge" chunks to "Education" space); verify Qdrant payload updates, cache refreshes, and audit logs.
+- [x] **End-to-End UI Test**: Ingest chunked doc, edit spaces in Library UI, trigger reindex, query for "crafting abilities"—assert updated spaces reflect in results without data loss.
+- [x] **Performance Eval**: Run reindex on 100 chunks; ensure P95 latency <5s, no blocking UI.
 
-- [ ] **Add Guardrails**: Enforce auto-create thresholds, similarity clamp (merge vs. create), soft caps/warnings, 24h cooldowns.
-- [ ] **Migration/Backfill**: One-time script to resolve spaces for existing docs, mark low-confidence as needs_review.
-- [ ] **CLI/Admin Actions**: Promote hidden spaces, archive unused ones.
+- [x] **Add Guardrails**: Enforce auto-create thresholds, similarity clamp (merge vs. create), soft caps/warnings, 24h cooldowns.
+- [x] **Migration/Backfill**: One-time script to resolve spaces for existing docs, mark low-confidence as needs_review.
+- [x] **CLI/Admin Actions**: Promote hidden spaces, archive unused ones.
 
 ### Phase 2: Lexical Retrieval Upgrade (Query Layer)
 Build pack-based system for nuanced lexical search, integrating with Spaces.

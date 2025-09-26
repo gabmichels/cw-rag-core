@@ -45,6 +45,7 @@ export async function documentFetchRoute(fastify: FastifyInstance, options: Docu
             type: 'object',
             properties: {
               docId: { type: 'string' },
+              space: { type: 'string' },
               createdAt: { type: 'string' },
               updatedAt: { type: 'string' },
               chunkCount: { type: 'number' },
@@ -86,6 +87,7 @@ export async function documentFetchRoute(fastify: FastifyInstance, options: Docu
         // Group points by docId and extract metadata
         const documentsMap = new Map<string, {
           docId: string;
+          space: string;
           chunks: any[];
           createdAt: string;
           updatedAt: string;
@@ -95,6 +97,7 @@ export async function documentFetchRoute(fastify: FastifyInstance, options: Docu
           if (!point.payload?.docId) continue;
 
           const docId = point.payload.docId as string;
+          const space = (point.payload.space || point.payload.spaceId || 'general') as string;
           const createdAtRaw = point.payload.createdAt as string | undefined;
           const modifiedAtRaw = point.payload.modifiedAt as string | undefined;
 
@@ -105,6 +108,7 @@ export async function documentFetchRoute(fastify: FastifyInstance, options: Docu
           if (!documentsMap.has(docId)) {
             documentsMap.set(docId, {
               docId,
+              space,
               chunks: [point],
               createdAt,
               updatedAt
@@ -163,6 +167,7 @@ export async function documentFetchRoute(fastify: FastifyInstance, options: Docu
 
           return {
             docId: doc.docId,
+            space: doc.space,
             createdAt: doc.createdAt,
             updatedAt: doc.updatedAt,
             chunkCount: doc.chunks.length,

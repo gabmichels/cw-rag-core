@@ -7,13 +7,14 @@ import { calculateFreshnessInfo, type FreshnessInfo } from '@cw-rag-core/shared'
 
 interface DocumentInfo {
   docId: string;
+  space: string;
   createdAt: string;
   updatedAt: string;
   chunkCount: number;
   freshness: FreshnessInfo;
 }
 
-type SortField = 'docId' | 'createdAt' | 'updatedAt' | 'freshness';
+type SortField = 'docId' | 'space' | 'createdAt' | 'updatedAt' | 'freshness';
 type SortDirection = 'asc' | 'desc';
 
 interface DeleteDialogProps {
@@ -136,6 +137,10 @@ export default function LibraryTable() {
           aVal = a.docId.toLowerCase();
           bVal = b.docId.toLowerCase();
           break;
+        case 'space':
+          aVal = a.space.toLowerCase();
+          bVal = b.space.toLowerCase();
+          break;
         case 'createdAt':
           aVal = new Date(a.createdAt).getTime();
           bVal = new Date(b.createdAt).getTime();
@@ -256,6 +261,15 @@ export default function LibraryTable() {
               </th>
               <th className="text-left p-4">
                 <button
+                  onClick={() => handleSort('space')}
+                  className="group flex items-center space-x-1 font-medium text-foreground hover:text-primary"
+                >
+                  <span>Space</span>
+                  <SortIcon field="space" />
+                </button>
+              </th>
+              <th className="text-left p-4">
+                <button
                   onClick={() => handleSort('createdAt')}
                   className="group flex items-center space-x-1 font-medium text-foreground hover:text-primary"
                 >
@@ -289,7 +303,7 @@ export default function LibraryTable() {
           <tbody className="divide-y divide-border">
             {filteredAndSortedDocuments.length === 0 ? (
               <tr>
-                <td colSpan={5} className="p-8 text-center text-muted-foreground">
+                <td colSpan={6} className="p-8 text-center text-muted-foreground">
                   {searchQuery ? 'No documents match your search.' : 'No documents found.'}
                 </td>
               </tr>
@@ -307,6 +321,18 @@ export default function LibraryTable() {
                     <div className="text-xs text-muted-foreground mt-1">
                       {doc.chunkCount} chunks
                     </div>
+                  </td>
+                  <td className="p-4">
+                    <input
+                      type="text"
+                      value={doc.space}
+                      onChange={(e) => {
+                        // TODO: Implement space update
+                        console.log('Update space for', doc.docId, 'to', e.target.value);
+                      }}
+                      className="w-full px-2 py-1 text-sm border border-border rounded bg-background text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                      placeholder="Space"
+                    />
                   </td>
                   <td className="p-4 text-sm text-muted-foreground">
                     {new Date(doc.createdAt).toLocaleDateString('en-US', {
