@@ -120,31 +120,56 @@ export function detectLanguage(text: string): string {
 
   const normalizedText = text.toLowerCase();
 
+  // For mixed-language queries, prioritize question structure over quoted content
+  // Remove quoted strings to focus on the question language
+  const withoutQuotes = normalizedText.replace(/"[^"]*"/g, '').replace(/'[^']*'/g, '');
+
   // Simple keyword-based detection for common languages
   // This is a basic implementation - in production you might want
   // to use a more sophisticated language detection library
 
+  // German indicators (check first due to umlauts and common words)
+  if (containsGermanIndicators(withoutQuotes)) {
+    return 'de';
+  }
+
   // Spanish indicators
-  if (containsSpanishIndicators(normalizedText)) {
+  if (containsSpanishIndicators(withoutQuotes)) {
     return 'es';
   }
 
   // French indicators
-  if (containsFrenchIndicators(normalizedText)) {
+  if (containsFrenchIndicators(withoutQuotes)) {
     return 'fr';
   }
 
-  // German indicators
-  if (containsGermanIndicators(normalizedText)) {
-    return 'de';
-  }
-
   // Italian indicators
-  if (containsItalianIndicators(normalizedText)) {
+  if (containsItalianIndicators(withoutQuotes)) {
     return 'it';
   }
 
   // Portuguese indicators
+  if (containsPortugueseIndicators(withoutQuotes)) {
+    return 'pt';
+  }
+
+  // If no clear language detected in question structure, check entire text
+  if (containsGermanIndicators(normalizedText)) {
+    return 'de';
+  }
+
+  if (containsSpanishIndicators(normalizedText)) {
+    return 'es';
+  }
+
+  if (containsFrenchIndicators(normalizedText)) {
+    return 'fr';
+  }
+
+  if (containsItalianIndicators(normalizedText)) {
+    return 'it';
+  }
+
   if (containsPortugueseIndicators(normalizedText)) {
     return 'pt';
   }
@@ -177,7 +202,7 @@ function containsFrenchIndicators(text: string): boolean {
  * Checks for German language indicators
  */
 function containsGermanIndicators(text: string): boolean {
-  const germanWords = ['der', 'die', 'und', 'in', 'den', 'von', 'zu', 'das', 'mit', 'sich', 'des', 'auf', 'für', 'ist', 'im', 'dem', 'nicht', 'ein', 'eine', 'als', 'auch', 'es', 'an', 'werden', 'aus', 'er', 'hat', 'dass', 'sie', 'nach', 'wird', 'bei', 'einer', 'um', 'am', 'sind', 'noch', 'wie', 'einem', 'über'];
+  const germanWords = ['der', 'die', 'und', 'in', 'den', 'von', 'zu', 'das', 'mit', 'sich', 'des', 'auf', 'für', 'ist', 'im', 'dem', 'nicht', 'ein', 'eine', 'als', 'auch', 'es', 'an', 'werden', 'aus', 'er', 'hat', 'dass', 'sie', 'nach', 'wird', 'bei', 'einer', 'um', 'am', 'sind', 'noch', 'wie', 'einem', 'über', 'was', 'ich', 'du', 'er', 'sie', 'es', 'wir', 'ihr', 'sie', 'mich', 'dich', 'ihn', 'uns', 'euch', 'ihnen'];
   const germanChars = /[äöüß]/;
 
   return hasLanguageIndicators(text, germanWords, germanChars);
