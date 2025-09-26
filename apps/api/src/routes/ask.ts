@@ -4,7 +4,8 @@ import {
   RetrievedDocument,
   AskRequestSchema,
   // AskResponseSchema, // Removed as it's defined inline now for clarity and direct control
-  validateUserAuthorization
+  validateUserAuthorization,
+  detectLanguage
 } from '@cw-rag-core/shared';
 import {
   HybridSearchRequest,
@@ -757,6 +758,9 @@ export async function askRoute(fastify: FastifyInstance, options: AskRouteOption
           debugSteps.push('Proceeding with answer synthesis');
         }
 
+        // Detect query language for LLM response
+        const detectedLanguage = detectLanguage(query).toUpperCase();
+
         // Check if streaming is enabled
         const streamingEnabled = process.env.LLM_STREAMING === 'true';
 
@@ -779,6 +783,9 @@ export async function askRoute(fastify: FastifyInstance, options: AskRouteOption
                 isAnswerable: retrievalResult.isAnswerable,
                 confidence: retrievalResult.guardrailDecision.score?.confidence || 0,
                 score: retrievalResult.guardrailDecision.score
+              },
+              languageContext: {
+                detectedLanguage
               }
             })) {
               if (chunk.type === 'chunk' && typeof chunk.data === 'string') {
@@ -914,6 +921,9 @@ export async function askRoute(fastify: FastifyInstance, options: AskRouteOption
               isAnswerable: retrievalResult.isAnswerable,
               confidence: retrievalResult.guardrailDecision.score?.confidence || 0,
               score: retrievalResult.guardrailDecision.score
+            },
+            languageContext: {
+              detectedLanguage
             }
           }),
           timeouts.llm,

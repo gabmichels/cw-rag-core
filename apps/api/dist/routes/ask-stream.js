@@ -71,7 +71,7 @@ export async function askStreamRoute(fastify, options) {
     options.qdrantClient, // Pass qdrantClient for section awareness
     {
         enabled: process.env.SECTION_AWARE_SEARCH !== 'false', // Enable by default
-        maxSectionsToComplete: 2,
+        maxSectionsToComplete: 10, // Increased to handle more sections
         sectionCompletionTimeoutMs: 2500,
         mergeStrategy: 'interleave',
         preserveOriginalRanking: false,
@@ -226,6 +226,7 @@ export async function askStreamRoute(fastify, options) {
                 }
                 // Start streaming synthesis
                 let answer = '';
+                let formattedAnswer = '';
                 let citations = {};
                 let metadata = {};
                 try {
@@ -255,6 +256,9 @@ export async function askStreamRoute(fastify, options) {
                         else if (chunk.type === 'metadata') {
                             metadata = chunk.data;
                             sendEvent('metadata', chunk.data);
+                        }
+                        else if (chunk.type === 'formatted_answer') {
+                            formattedAnswer = chunk.data;
                         }
                         else if (chunk.type === 'error') {
                             sendEvent('error', { message: chunk.data.message });
@@ -296,7 +300,8 @@ export async function askStreamRoute(fastify, options) {
                         number: citation.number,
                         source: citation.source,
                         freshness: citation.freshness,
-                        docId: citation.docId,
+                        docId: citation.docId, // Human-readable ID
+                        qdrantDocId: citation.qdrantDocId, // Actual Qdrant internal ID (hash)
                         version: citation.version,
                         url: citation.url,
                         filepath: citation.filepath,
@@ -305,7 +310,7 @@ export async function askStreamRoute(fastify, options) {
                     const totalTime = performance.now() - startTime;
                     // Send final response completed event
                     sendEvent('response_completed', {
-                        answer,
+                        answer: formattedAnswer || answer, // Use formatted answer with bibliography if available
                         retrievedDocuments,
                         queryId,
                         guardrailDecision: {

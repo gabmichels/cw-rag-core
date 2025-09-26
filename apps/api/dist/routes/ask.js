@@ -1,6 +1,6 @@
 import { 
 // AskResponseSchema, // Removed as it's defined inline now for clarity and direct control
-validateUserAuthorization } from '@cw-rag-core/shared';
+validateUserAuthorization, detectLanguage } from '@cw-rag-core/shared';
 import { createGuardedRetrievalService, QdrantKeywordSearchService, ReciprocalRankFusionService, HttpRerankerService, SentenceTransformersRerankerService, DEFAULT_RERANKER_CONFIG, RERANKER_MODELS, createSectionAwareHybridSearchService } from '@cw-rag-core/retrieval';
 import { createAnswerSynthesisService } from '../services/answer-synthesis.js';
 import { createCitationService } from '../services/citation.js';
@@ -105,7 +105,7 @@ export async function askRoute(fastify, options) {
     const hybridSearchService = createSectionAwareHybridSearchService(vectorSearchService, keywordSearchService, rrfFusionService, options.embeddingService, createRerankerService(true), // Enable reranker by default
     options.qdrantClient, {
         enabled: process.env.SECTION_AWARE_SEARCH !== 'false', // Enable by default
-        maxSectionsToComplete: 2,
+        maxSectionsToComplete: 10, // Increased to handle more sections
         sectionCompletionTimeoutMs: 2500,
         mergeStrategy: 'interleave',
         preserveOriginalRanking: false,
@@ -643,11 +643,14 @@ export async function askRoute(fastify, options) {
                 if (includeDebugInfo) {
                     debugSteps.push('Proceeding with answer synthesis');
                 }
+                // Detect query language for LLM response
+                const detectedLanguage = detectLanguage(query).toUpperCase();
                 // Check if streaming is enabled
                 const streamingEnabled = process.env.LLM_STREAMING === 'true';
                 if (streamingEnabled) {
                     // Handle streaming synthesis - collect all chunks then return
                     let answer = '';
+                    let formattedAnswer = '';
                     let citations = {};
                     let metadata = {};
                     try {
@@ -662,6 +665,9 @@ export async function askRoute(fastify, options) {
                                 isAnswerable: retrievalResult.isAnswerable,
                                 confidence: retrievalResult.guardrailDecision.score?.confidence || 0,
                                 score: retrievalResult.guardrailDecision.score
+                            },
+                            languageContext: {
+                                detectedLanguage
                             }
                         })) {
                             if (chunk.type === 'chunk' && typeof chunk.data === 'string') {
@@ -672,6 +678,9 @@ export async function askRoute(fastify, options) {
                             }
                             else if (chunk.type === 'metadata') {
                                 metadata = chunk.data;
+                            }
+                            else if (chunk.type === 'formatted_answer') {
+                                formattedAnswer = chunk.data;
                             }
                             else if (chunk.type === 'error') {
                                 throw chunk.data;
@@ -719,7 +728,7 @@ export async function askRoute(fastify, options) {
                         }));
                         const totalTime = performance.now() - startTime;
                         const streamingResponse = {
-                            answer,
+                            answer: formattedAnswer || answer, // Use formatted answer with bibliography if available
                             retrievedDocuments,
                             queryId,
                             guardrailDecision: {
@@ -792,6 +801,9 @@ export async function askRoute(fastify, options) {
                         isAnswerable: retrievalResult.isAnswerable,
                         confidence: retrievalResult.guardrailDecision.score?.confidence || 0,
                         score: retrievalResult.guardrailDecision.score
+                    },
+                    languageContext: {
+                        detectedLanguage
                     }
                 }), timeouts.llm, 'LLM synthesis');
                 const synthesisResponse = synthesisResult;

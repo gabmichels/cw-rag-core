@@ -12,14 +12,14 @@ export class LLMClientImpl {
         this.model = this.createModel(config);
         this.streamingEventHandler = createStreamingEventHandler();
     }
-    async generateCompletion(prompt, context, maxTokens, guardrailDecision) {
+    async generateCompletion(prompt, context, maxTokens, guardrailDecision, languageContext) {
         try {
             // For vLLM, use direct HTTP API
             if (this.config.provider === 'vllm') {
-                return this.generateVLLMCompletion(prompt, context, maxTokens, false, guardrailDecision);
+                return this.generateVLLMCompletion(prompt, context, maxTokens, false, guardrailDecision, languageContext);
             }
             // Create the chat prompt template for LangChain providers
-            const systemPrompt = this.buildSystemPrompt(guardrailDecision);
+            const systemPrompt = this.buildSystemPrompt(guardrailDecision, languageContext);
             const promptTemplate = ChatPromptTemplate.fromMessages([
                 ['system', systemPrompt.replace('{context}', context)],
                 ['human', '{query}']
@@ -47,23 +47,23 @@ export class LLMClientImpl {
             throw new LLMProviderError(`Failed to generate completion: ${error.message}`, this.config.provider, error);
         }
     }
-    async *generateStreamingCompletion(prompt, context, maxTokens, guardrailDecision) {
+    async *generateStreamingCompletion(prompt, context, maxTokens, guardrailDecision, signal, languageContext) {
         if (!this.supportsStreaming()) {
             throw new LLMProviderError(`Streaming not supported for provider: ${this.config.provider}`, this.config.provider);
         }
         try {
             // For vLLM streaming
             if (this.config.provider === 'vllm') {
-                yield* this.generateVLLMStreamingCompletion(prompt, context, maxTokens, guardrailDecision);
+                yield* this.generateVLLMStreamingCompletion(prompt, context, maxTokens, guardrailDecision, signal, languageContext); // Pass signal and languageContext
                 return;
             }
             // For OpenAI and Anthropic providers using LangChain streaming
             if (this.config.provider === 'openai' || this.config.provider === 'anthropic' || this.config.provider === 'azure-openai') {
-                yield* this.generateLangChainStreamingCompletion(prompt, context, maxTokens, guardrailDecision);
+                yield* this.generateLangChainStreamingCompletion(prompt, context, maxTokens, guardrailDecision, signal, languageContext); // Pass signal and languageContext
                 return;
             }
             // Fallback to non-streaming for unsupported providers
-            const result = await this.generateCompletion(prompt, context, maxTokens, guardrailDecision);
+            const result = await this.generateCompletion(prompt, context, maxTokens, guardrailDecision, languageContext);
             yield {
                 type: 'chunk',
                 data: result.text
@@ -108,8 +108,8 @@ export class LLMClientImpl {
         // For other providers, check the streaming config
         return this.config.streaming === true;
     }
-    async generateVLLMCompletion(prompt, context, maxTokens, streaming = false, guardrailDecision) {
-        const systemPrompt = this.buildSystemPrompt(guardrailDecision).replace('{context}', context);
+    async generateVLLMCompletion(prompt, context, maxTokens, streaming = false, guardrailDecision, languageContext) {
+        const systemPrompt = this.buildSystemPrompt(guardrailDecision, languageContext).replace('{context}', context);
         const messages = [
             { role: 'system', content: systemPrompt },
             { role: 'user', content: prompt }
@@ -159,8 +159,8 @@ export class LLMClientImpl {
             throw error;
         }
     }
-    async *generateVLLMStreamingCompletion(prompt, context, maxTokens, guardrailDecision) {
-        const systemPrompt = this.buildSystemPrompt(guardrailDecision).replace('{context}', context);
+    async *generateVLLMStreamingCompletion(prompt, context, maxTokens, guardrailDecision, signal, languageContext) {
+        const systemPrompt = this.buildSystemPrompt(guardrailDecision, languageContext).replace('{context}', context);
         const messages = [
             { role: 'system', content: systemPrompt },
             { role: 'user', content: prompt }
@@ -172,9 +172,8 @@ export class LLMClientImpl {
             temperature: this.config.temperature || (guardrailDecision?.confidence && guardrailDecision.confidence > 0.7 ? 0.3 : 0.1),
             stream: true
         };
-        const timeoutMs = this.config.timeoutMs || parseInt(process.env.LLM_TIMEOUT_MS || '25000');
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+        const internalController = new AbortController();
+        const effectiveSignal = signal || internalController.signal;
         try {
             const response = await fetch(this.config.baseURL || process.env.LLM_ENDPOINT, {
                 method: 'POST',
@@ -183,18 +182,24 @@ export class LLMClientImpl {
                     ...(this.config.apiKey && { 'Authorization': `Bearer ${this.config.apiKey}` })
                 },
                 body: JSON.stringify(requestBody),
-                signal: controller.signal
+                signal: effectiveSignal
             });
-            clearTimeout(timeoutId);
             if (!response.ok) {
                 throw new Error(`vLLM API error: ${response.status} ${response.statusText}`);
             }
             if (!response.body) {
                 throw new Error('No response body for streaming');
             }
+            let localTimeoutId = null; // Declare here to make it accessible in catch block
+            if (!signal) { // If no external signal, manage local timeout
+                localTimeoutId = setTimeout(() => internalController.abort(new Error('vLLM Streaming timeout')), this.config.timeoutMs || 25000);
+            }
             const reader = response.body.getReader();
             const decoder = new TextDecoder();
             let totalTokens = 0;
+            if (effectiveSignal.aborted)
+                throw effectiveSignal.reason || new Error('Streaming aborted before start'); // Check if already aborted
+            effectiveSignal.addEventListener('abort', () => reader.cancel('Stream aborted due to timeout'), { once: true });
             try {
                 while (true) {
                     const { done, value } = await reader.read();
@@ -233,16 +238,20 @@ export class LLMClientImpl {
                 }
             }
             finally {
+                if (localTimeoutId)
+                    clearTimeout(localTimeoutId); // Clear local timeout
                 reader.releaseLock();
             }
         }
         catch (error) {
-            clearTimeout(timeoutId);
             if (error.name === 'AbortError') {
                 yield {
                     type: 'error',
                     data: new Error('Request timeout')
                 };
+            }
+            else if (error instanceof Error && error.message.includes('Stream aborted due to timeout')) {
+                yield { type: 'error', data: new Error(error.message) };
             }
             else {
                 yield {
@@ -252,8 +261,8 @@ export class LLMClientImpl {
             }
         }
     }
-    async *generateLangChainStreamingCompletion(prompt, context, maxTokens, guardrailDecision) {
-        const systemPrompt = this.buildSystemPrompt(guardrailDecision);
+    async *generateLangChainStreamingCompletion(prompt, context, maxTokens, guardrailDecision, signal, languageContext) {
+        const systemPrompt = this.buildSystemPrompt(guardrailDecision, languageContext);
         const promptTemplate = ChatPromptTemplate.fromMessages([
             ['system', systemPrompt.replace('{context}', context)],
             ['human', '{query}']
@@ -265,13 +274,24 @@ export class LLMClientImpl {
         let totalTokens = 0;
         let completionReason = 'stop';
         let modelUsed = this.config.model;
+        if (signal?.aborted) {
+            yield { type: 'error', data: signal.reason || new Error('Streaming aborted before start') };
+            return;
+        }
+        // LangChain's stream method may not directly support AbortSignal in its options.
+        // So we'll check signal.aborted manually within the loop.
+        signal?.addEventListener('abort', () => { }, { once: true });
         try {
-            // Use LangChain's streaming via stream method
+            // Use LangChain's streaming via stream method.
             const streamIterator = await this.model.stream(formattedPrompt);
             for await (const chunk of streamIterator) {
                 const content = typeof chunk.content === 'string'
                     ? chunk.content
                     : chunk.content.toString();
+                if (signal?.aborted) {
+                    yield { type: 'error', data: signal.reason || new Error('Streaming aborted during chunk processing') };
+                    return; // Exit if aborted
+                }
                 if (content) {
                     totalTokens += this.estimateTokens(content);
                     // Emit chunk event
@@ -346,52 +366,83 @@ export class LLMClientImpl {
                 return new ChatOpenAI({
                     modelName: config.model,
                     temperature: config.temperature || 0.1,
-                    maxTokens: config.maxTokens || 1000,
+                    maxTokens: 1000,
                     openAIApiKey: 'mock-key-for-vllm'
                 });
             default:
                 throw new LLMProviderError(`Unsupported LLM provider: ${config.provider}`, config.provider);
         }
     }
-    buildSystemPrompt(guardrailDecision) {
-        const isHighConfidence = guardrailDecision?.confidence && guardrailDecision.confidence > 0.7;
+    buildSystemPrompt(guardrailDecision, languageContext) {
         const isAnswerable = guardrailDecision?.isAnswerable;
-        if (isAnswerable && isHighConfidence) {
-            // High confidence: encourage confident answers, remove IDK instruction
-            return `You are a helpful AI assistant that provides comprehensive answers based on the provided context.
+        const confidence = guardrailDecision?.confidence || 0;
+        const detectedLanguage = languageContext?.detectedLanguage || 'EN';
+        // Language instructions
+        const languageInstructions = `
+LANGUAGE INSTRUCTIONS:
+- Query language detected: ${detectedLanguage}
+- Respond in ${detectedLanguage} as the query was made in that language
+- If translating content, preserve technical terms and proper names
+- For mixed-language contexts, indicate source language in citations`;
+        if (isAnswerable) {
+            // Guardrail says it's answerable - always answer, adjust tone based on confidence
+            // Use ANSWERABILITY_THRESHOLD as base for tone determination
+            const baseThreshold = parseFloat(process.env.ANSWERABILITY_THRESHOLD || '0.6');
+            const highThreshold = Math.min(baseThreshold * 1.3, 0.9); // 1.3x base, max 0.9
+            const mediumThreshold = baseThreshold; // Use base threshold for medium confidence
+            const confidenceLevel = confidence >= highThreshold ? 'HIGH' : confidence >= mediumThreshold ? 'MEDIUM' : 'LOW';
+            const confidenceNote = confidenceLevel === 'HIGH' ?
+                'Be confident and comprehensive in your response - the relevant information IS present.' :
+                confidenceLevel === 'MEDIUM' ?
+                    'Provide a helpful and complete answer based on the available information.' :
+                    'Answer the question using the provided context, being appropriately cautious about the confidence level.';
+            return `You are a helpful AI assistant that provides answers based on the provided context.
+${languageInstructions}
 
-INSTRUCTIONS FOR HIGH-CONFIDENCE QUERIES:
-1. The system has determined this query is HIGHLY ANSWERABLE (confidence: ${(guardrailDecision?.confidence * 100).toFixed(1)}%)
-2. Use ALL relevant information provided in the context below to give a complete answer
-3. Be confident and comprehensive in your response - the relevant information IS present
-4. Include inline citations in your response using the format [^1], [^2], etc. for each source you reference
-5. Each piece of information should be cited to its source document
-6. Do NOT invent, hallucinate, or make up any citations
-7. Provide a clear, well-structured answer in markdown format
-8. If multiple sources support the same point, cite all relevant sources
-9. Since the system has high confidence, provide the best possible answer from the available context
+INSTRUCTIONS FOR ANSWERABLE QUERIES:
+1. The system has determined this query is ANSWERABLE (confidence: ${(confidence * 100).toFixed(1)}%)
+2. Use the information provided in the context below to answer the question
+3. ${confidenceNote}
+
+**CRITICAL CITATION REQUIREMENT:**
+4. You MUST include inline citations in your response using the format [^1], [^2], etc. for each source you reference
+5. EVERY factual statement should be cited to its source document (e.g., "The moon is made of cheese [^1]")
+6. Use the document numbers provided in the context (e.g., [Document 1], [Document 2]) to create corresponding citations [^1], [^2]
+7. Do NOT invent, hallucinate, or make up any citations - only use the numbered documents provided
+8. If multiple sources support the same point, cite all relevant sources (e.g., [^1][^2])
+
+FORMATTING REQUIREMENTS:
+9. Provide a clear, well-structured answer in markdown format
+10. Answer the question to the best of your ability using the provided context
 
 SPECIAL INSTRUCTIONS FOR TABLES AND STRUCTURED CONTENT:
-- When showing tables, lists, or any structured data, include ALL rows/entries/information from the context
+- When showing skill tables, tier lists, or any structured data, include ALL tiers/rows/entries from the context
+- Do NOT omit any skill tiers (Novice, Apprentice, Journeyman, Master, Grandmaster, Legendary, Mythic)
 - If the context contains multiple parts of the same table, combine them into one complete table
 - Preserve the original structure and formatting of tables as much as possible
-- When reconstructing tables, maintain the logical order (e.g., 1. First Section to N. Last Section)
+- When reconstructing tables, maintain the logical order (e.g., skill progression from lowest to highest tier)
 
 Context:
 {context}`;
         }
         else {
-            // Lower confidence or not answerable: use conservative approach
+            // Not answerable: use conservative approach with IDK instruction
             return `You are a helpful AI assistant that answers questions based only on the provided context.
+${languageInstructions}
 
 STANDARD INSTRUCTIONS:
 1. Use ONLY the information provided in the context below
 2. If the context doesn't contain enough information to answer the question, respond with "I don't have enough information in the provided context to answer this question."
-3. Include inline citations in your response using the format [^1], [^2], etc. for each source you reference
-4. Each piece of information should be cited to its source document
-5. Do NOT invent, hallucinate, or make up any citations
-6. Provide a clear, well-structured answer in markdown format
-7. If multiple sources support the same point, cite all relevant sources
+
+**CRITICAL CITATION REQUIREMENT:**
+3. You MUST include inline citations in your response using the format [^1], [^2], etc. for each source you reference
+4. EVERY factual statement should be cited to its source document (e.g., "The moon is made of cheese [^1]")
+5. Use the document numbers provided in the context (e.g., [Document 1], [Document 2]) to create corresponding citations [^1], [^2]
+6. Do NOT invent, hallucinate, or make up any citations - only use the numbered documents provided
+7. If multiple sources support the same point, cite all relevant sources (e.g., [^1][^2])
+
+FORMATTING REQUIREMENTS:
+8. Provide a clear, well-structured answer in markdown format
 
 Context:
 {context}`;
@@ -589,7 +640,7 @@ class ResilientLLMClient {
         this.primaryClient = new LLMClientImpl(primaryConfig);
         this.fallbackClients = fallbackConfigs.map(config => new LLMClientImpl(config));
     }
-    async generateCompletion(prompt, context, maxTokens, guardrailDecision) {
+    async generateCompletion(prompt, context, maxTokens, guardrailDecision, languageContext) {
         const clients = [this.primaryClient, ...this.fallbackClients];
         for (let i = 0; i < clients.length; i++) {
             const client = clients[i];
@@ -598,7 +649,7 @@ class ResilientLLMClient {
                     const timeoutPromise = new Promise((_, reject) => {
                         setTimeout(() => reject(new Error('Request timeout')), this.timeoutMs);
                     });
-                    const completionPromise = client.generateCompletion(prompt, context, maxTokens, guardrailDecision);
+                    const completionPromise = client.generateCompletion(prompt, context, maxTokens, guardrailDecision, languageContext);
                     const result = await Promise.race([completionPromise, timeoutPromise]);
                     return result;
                 }
@@ -617,68 +668,55 @@ class ResilientLLMClient {
         }
         throw new LLMProviderError('All LLM clients failed', this.primaryConfig.provider);
     }
-    async *generateStreamingCompletion(prompt, context, maxTokens, guardrailDecision) {
+    async *generateStreamingCompletion(prompt, context, maxTokens, guardrailDecision, signal, languageContext) {
         const clients = [this.primaryClient, ...this.fallbackClients];
         for (let i = 0; i < clients.length; i++) {
             const client = clients[i];
             if (!client.supportsStreaming()) {
-                continue; // Skip clients that don't support streaming
+                continue;
             }
             for (let retry = 0; retry < this.maxRetries; retry++) {
-                let timeoutId = null;
-                let streamingCompleted = false;
+                let timeoutRef = null;
+                const controller = new AbortController();
+                // Setup the initial timeout to abort the controller
+                const resetTimeout = () => {
+                    if (timeoutRef) {
+                        clearTimeout(timeoutRef);
+                    }
+                    timeoutRef = setTimeout(() => {
+                        controller.abort(new Error('Streaming timeout: no chunk received for ' + this.timeoutMs + 'ms'));
+                    }, this.timeoutMs);
+                };
+                resetTimeout(); // Start initial timeout
                 try {
-                    const timeoutMs = this.timeoutMs;
-                    const generator = client.generateStreamingCompletion(prompt, context, maxTokens, guardrailDecision);
-                    // Create a promise-based timeout that can be properly cancelled
-                    const timeoutPromise = new Promise((_, reject) => {
-                        timeoutId = setTimeout(() => {
-                            if (!streamingCompleted) {
-                                reject(new Error('Streaming timeout'));
-                            }
-                        }, timeoutMs);
-                    });
-                    // Create a generator wrapper that handles the timeout
-                    const wrappedGenerator = async function* () {
-                        try {
-                            for await (const chunk of generator) {
-                                yield chunk;
-                                if (chunk.type === 'done' || chunk.type === 'error') {
-                                    streamingCompleted = true;
-                                    if (timeoutId) {
-                                        clearTimeout(timeoutId);
-                                        timeoutId = null;
-                                    }
-                                    return;
-                                }
-                            }
-                            streamingCompleted = true;
+                    for await (const chunk of client.generateStreamingCompletion(prompt, context, maxTokens, guardrailDecision, controller.signal, languageContext)) {
+                        resetTimeout(); // Reset timeout on each chunk received
+                        yield chunk;
+                        if (chunk.type === 'done' || chunk.type === 'error' || controller.signal.aborted) {
+                            // If the client explicitly signaled done/error, or if the controller was aborted internally,
+                            // exit the loop and prepare to return.
+                            break;
                         }
-                        finally {
-                            // Ensure timeout is always cleared
-                            if (timeoutId) {
-                                clearTimeout(timeoutId);
-                                timeoutId = null;
-                            }
-                        }
-                    };
-                    // Execute the wrapped generator
-                    yield* wrappedGenerator();
+                    }
+                    // After the loop, ensure the final timeout is cleared
+                    if (timeoutRef) {
+                        clearTimeout(timeoutRef);
+                        timeoutRef = null;
+                    }
                     return;
                 }
                 catch (error) {
-                    // Ensure timeout is cleared on any error
-                    streamingCompleted = true;
-                    if (timeoutId) {
-                        clearTimeout(timeoutId);
-                        timeoutId = null;
+                    // Ensure timeout is cleared on any error or retry start
+                    if (timeoutRef) {
+                        clearTimeout(timeoutRef);
+                        timeoutRef = null;
                     }
                     console.warn(`LLM streaming client ${i} attempt ${retry + 1} failed:`, error);
                     // If this is the last client and last retry, fall back to non-streaming
                     if (i === clients.length - 1 && retry === this.maxRetries - 1) {
                         // Fallback to non-streaming completion
                         try {
-                            const result = await this.generateCompletion(prompt, context, maxTokens, guardrailDecision);
+                            const result = await this.generateCompletion(prompt, context, maxTokens, guardrailDecision, languageContext);
                             yield {
                                 type: 'chunk',
                                 data: result.text
@@ -706,7 +744,7 @@ class ResilientLLMClient {
         }
         // If no streaming clients are available, fallback to non-streaming
         try {
-            const result = await this.generateCompletion(prompt, context, maxTokens, guardrailDecision);
+            const result = await this.generateCompletion(prompt, context, maxTokens, guardrailDecision, languageContext);
             yield {
                 type: 'chunk',
                 data: result.text

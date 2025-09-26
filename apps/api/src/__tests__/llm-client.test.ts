@@ -386,4 +386,67 @@ describe('LLMClient', () => {
       expect(tokens).toBe(Math.ceil('This is a test message'.length / 4));
     });
   });
+
+  describe('Language context integration', () => {
+    it('should include language instructions in system prompt when languageContext is provided', () => {
+      const config: LLMConfig = {
+        provider: 'openai',
+        model: 'gpt-4.1-2025-04-14',
+        temperature: 0.1,
+        maxTokens: 1000
+      };
+
+      const client = new LLMClientImpl(config);
+      const systemPrompt = (client as any).buildSystemPrompt(
+        { isAnswerable: true, confidence: 0.8, score: {} },
+        { detectedLanguage: 'DE' }
+      );
+
+      expect(systemPrompt).toContain('LANGUAGE INSTRUCTIONS:');
+      expect(systemPrompt).toContain('Query language detected: DE');
+      expect(systemPrompt).toContain('Respond in DE as the query was made in that language');
+    });
+
+    it('should default to EN when no languageContext is provided', () => {
+      const config: LLMConfig = {
+        provider: 'openai',
+        model: 'gpt-4.1-2025-04-14',
+        temperature: 0.1,
+        maxTokens: 1000
+      };
+
+      const client = new LLMClientImpl(config);
+      const systemPrompt = (client as any).buildSystemPrompt(
+        { isAnswerable: true, confidence: 0.8, score: {} }
+      );
+
+      expect(systemPrompt).toContain('Query language detected: EN');
+      expect(systemPrompt).toContain('Respond in EN as the query was made in that language');
+    });
+
+    it('should include language instructions for both answerable and not answerable cases', () => {
+      const config: LLMConfig = {
+        provider: 'openai',
+        model: 'gpt-4.1-2025-04-14',
+        temperature: 0.1,
+        maxTokens: 1000
+      };
+
+      const client = new LLMClientImpl(config);
+
+      // Test answerable case
+      const answerablePrompt = (client as any).buildSystemPrompt(
+        { isAnswerable: true, confidence: 0.8, score: {} },
+        { detectedLanguage: 'DE' }
+      );
+      expect(answerablePrompt).toContain('LANGUAGE INSTRUCTIONS:');
+
+      // Test not answerable case
+      const notAnswerablePrompt = (client as any).buildSystemPrompt(
+        { isAnswerable: false, confidence: 0.2, score: {} },
+        { detectedLanguage: 'DE' }
+      );
+      expect(notAnswerablePrompt).toContain('LANGUAGE INSTRUCTIONS:');
+    });
+  });
 });

@@ -1,6 +1,6 @@
-import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import { pino } from 'pino';
+import Fastify from 'fastify'; // Import all necessary Fastify types explicitly from stub
 import { QdrantClient } from '@qdrant/js-client-rest';
 import 'dotenv/config';
 import { healthzRoute } from './routes/healthz.js';
@@ -8,6 +8,8 @@ import { readyzRoute } from './routes/readyz.js';
 import { ingestNormalizeRoute } from './routes/ingestNormalize.js';
 import { askRoute } from './routes/ask.js';
 import { askStreamRoute } from './routes/ask-stream.js';
+import { documentFetchRoute } from './routes/document-fetch.js'; // Added import for new route
+import { spacesRoute } from './routes/spaces.js';
 import { ingestRoutes } from './routes/ingest/index.js';
 import { BgeSmallEnV15EmbeddingService } from '@cw-rag-core/retrieval';
 import { bootstrapQdrant as comprehensiveBootstrapQdrant, QDRANT_COLLECTION_NAME } from './services/qdrant.js';
@@ -16,6 +18,13 @@ const QDRANT_URL = process.env.QDRANT_URL || 'http://localhost:6333';
 const QDRANT_API_KEY = process.env.QDRANT_API_KEY;
 // QDRANT_COLLECTION_NAME is now imported from services/qdrant.js to ensure consistency
 const INGEST_TOKEN = process.env.INGEST_TOKEN;
+// Debug logging for environment variables
+console.log('🔍 Environment Variables Debug:');
+console.log('PORT:', PORT);
+console.log('QDRANT_URL:', QDRANT_URL);
+console.log('QDRANT_API_KEY:', QDRANT_API_KEY ? '[SET]' : '[NOT SET]');
+console.log('INGEST_TOKEN:', INGEST_TOKEN ? '[SET]' : '[NOT SET]');
+console.log('NODE_ENV:', process.env.NODE_ENV);
 // Security configuration
 const ALLOWED_ORIGINS = [
     'http://localhost:3001', // Web frontend
@@ -31,9 +40,32 @@ const logger = pino({
         },
     } : undefined,
 });
+console.log('🔗 Creating QdrantClient with:');
+console.log('URL:', QDRANT_URL);
+console.log('API Key:', QDRANT_API_KEY ? `[${QDRANT_API_KEY.substring(0, 10)}...]` : '[NONE]');
 const qdrantClient = new QdrantClient({
     url: QDRANT_URL,
-    apiKey: QDRANT_API_KEY,
+    port: QDRANT_URL.startsWith('https://') ? 443 : 6333, // Use HTTPS port for Cloud Run
+    apiKey: QDRANT_API_KEY || undefined, // Explicitly set to undefined if empty
+    timeout: 30000, // 30 second timeout
+    // Skip client-server compatibility check for HTTPS connections
+    ...(QDRANT_URL.startsWith('https://') && { checkCompatibility: false })
+});
+console.log('✅ QdrantClient created successfully');
+// Test direct connection before bootstrap
+console.log('🧪 Testing direct Qdrant connection...');
+qdrantClient.getCollections()
+    .then(result => {
+    console.log('🎉 Direct connection SUCCESS:', JSON.stringify(result, null, 2));
+})
+    .catch(err => {
+    console.log('❌ Direct connection FAILED:', err.message);
+    console.log('❌ Error details:', {
+        name: err.name,
+        message: err.message,
+        cause: err.cause,
+        stack: err.stack?.split('\n').slice(0, 3).join('\n')
+    });
 });
 const embeddingService = new BgeSmallEnV15EmbeddingService();
 // Bootstrap function is now imported from services/qdrant.js for better consistency and maintenance
@@ -103,6 +135,8 @@ async function startServer() {
     server.register(ingestNormalizeRoute, { qdrantClient, collectionName: QDRANT_COLLECTION_NAME, embeddingService });
     server.register(askRoute, { qdrantClient, collectionName: QDRANT_COLLECTION_NAME, embeddingService });
     server.register(askStreamRoute, { qdrantClient, collectionName: QDRANT_COLLECTION_NAME, embeddingService });
+    server.register(documentFetchRoute, { qdrantClient, collectionName: QDRANT_COLLECTION_NAME }); // Register new document fetch route
+    server.register(spacesRoute);
     server.register(ingestRoutes, {
         qdrantClient,
         collectionName: QDRANT_COLLECTION_NAME,

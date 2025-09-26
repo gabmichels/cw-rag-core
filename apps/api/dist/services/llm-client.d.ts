@@ -8,6 +8,8 @@ export interface LLMClient {
         isAnswerable: boolean;
         confidence: number;
         score: any;
+    }, languageContext?: {
+        detectedLanguage: string;
     }): Promise<{
         text: string;
         tokensUsed: number;
@@ -20,6 +22,8 @@ export interface LLMClient {
         isAnswerable: boolean;
         confidence: number;
         score: any;
+    }, signal?: AbortSignal, languageContext?: {
+        detectedLanguage: string;
     }): AsyncGenerator<StreamingSynthesisResponse, void, unknown>;
     /**
      * Get the underlying LangChain model
@@ -43,6 +47,8 @@ export declare class LLMClientImpl implements LLMClient {
         isAnswerable: boolean;
         confidence: number;
         score: any;
+    }, languageContext?: {
+        detectedLanguage: string;
     }): Promise<{
         text: string;
         tokensUsed: number;
@@ -52,6 +58,8 @@ export declare class LLMClientImpl implements LLMClient {
         isAnswerable: boolean;
         confidence: number;
         score: any;
+    }, signal?: AbortSignal, languageContext?: {
+        detectedLanguage: string;
     }): AsyncGenerator<StreamingSynthesisResponse, void, unknown>;
     getModel(): BaseLanguageModel;
     getConfig(): LLMConfig;

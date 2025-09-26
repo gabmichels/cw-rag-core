@@ -1,4 +1,5 @@
 import { ingestDocument } from '../services/qdrant.js';
+import { SpaceResolver } from '@cw-rag-core/shared';
 export async function ingestNormalizeRoute(fastify, options) {
     fastify.post('/ingest/normalize', {
         schema: {
@@ -58,9 +59,17 @@ export async function ingestNormalizeRoute(fastify, options) {
             const { documents } = request.body;
             const documentIds = [];
             const failedDocuments = [];
+            const spaceResolver = new SpaceResolver();
             for (const doc of documents) {
                 try {
-                    const id = await ingestDocument(options.qdrantClient, options.embeddingService, options.collectionName, doc);
+                    // Resolve space for the document
+                    const spaceResult = await spaceResolver.resolveSpace({
+                        tenantId: doc.metadata.tenantId,
+                        text: doc.content,
+                        source: 'api',
+                        owner: doc.metadata.authors?.[0] || 'system',
+                    });
+                    const id = await ingestDocument(options.qdrantClient, options.embeddingService, options.collectionName, doc, spaceResult.spaceId, spaceResult.lexicalHints);
                     documentIds.push(id);
                 }
                 catch (error) {

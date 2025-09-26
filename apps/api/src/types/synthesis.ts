@@ -61,6 +61,9 @@ export interface SynthesisRequest {
     confidence: number;
     score: any;
   };
+  languageContext?: {
+    detectedLanguage: string;
+  };
 }
 
 export interface SynthesisResponse {

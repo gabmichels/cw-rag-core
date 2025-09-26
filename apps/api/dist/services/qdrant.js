@@ -7,7 +7,9 @@ export async function bootstrapQdrant(qdrantClient, logger, maxRetries = 5, retr
     for (let i = 0; i < maxRetries; i++) {
         try {
             logger.info(`Attempt ${i + 1}/${maxRetries} to connect to Qdrant and bootstrap collection...`);
+            logger.info('🔍 Attempting qdrantClient.getCollections()...');
             const collections = await qdrantClient.getCollections();
+            logger.info('✅ qdrantClient.getCollections() successful');
             // Enhanced logging for debugging collection persistence
             const existingCollectionNames = collections.collections.map(c => c.name);
             logger.info(`Qdrant connection successful. Found ${collections.collections.length} existing collections: [${existingCollectionNames.join(', ')}]. Target collection: '${QDRANT_COLLECTION_NAME}'`);
@@ -71,6 +73,27 @@ export async function bootstrapQdrant(qdrantClient, logger, maxRetries = 5, retr
                     field_schema: 'keyword',
                     wait: true
                 });
+                // Spaces and lexical indexes
+                await qdrantClient.createPayloadIndex(QDRANT_COLLECTION_NAME, {
+                    field_name: 'spaceId',
+                    field_schema: 'keyword',
+                    wait: true
+                });
+                await qdrantClient.createPayloadIndex(QDRANT_COLLECTION_NAME, {
+                    field_name: 'lexicalCoreTokens',
+                    field_schema: 'keyword',
+                    wait: true
+                });
+                await qdrantClient.createPayloadIndex(QDRANT_COLLECTION_NAME, {
+                    field_name: 'lexicalPhrases',
+                    field_schema: 'keyword',
+                    wait: true
+                });
+                await qdrantClient.createPayloadIndex(QDRANT_COLLECTION_NAME, {
+                    field_name: 'lexicalLanguage',
+                    field_schema: 'keyword',
+                    wait: true
+                });
                 logger.info('Payload indexes and full-text index created successfully.');
             }
             else {
@@ -88,7 +111,13 @@ export async function bootstrapQdrant(qdrantClient, logger, maxRetries = 5, retr
             return;
         }
         catch (error) {
-            logger.error(`Failed to connect to Qdrant or bootstrap collection: ${error.message}`);
+            logger.error(`❌ Failed to connect to Qdrant or bootstrap collection: ${error.message}`);
+            logger.error(`❌ Error details: ${JSON.stringify({
+                name: error.name,
+                message: error.message,
+                stack: error.stack,
+                cause: error.cause
+            }, null, 2)}`);
             if (i < maxRetries - 1) {
                 logger.info(`Retrying in ${retryDelay / 1000} seconds...`);
                 await new Promise((resolve) => setTimeout(resolve, retryDelay));
@@ -99,7 +128,7 @@ export async function bootstrapQdrant(qdrantClient, logger, maxRetries = 5, retr
         }
     }
 }
-export async function ingestDocument(qdrantClient, embeddingService, collectionName, document) {
+export async function ingestDocument(qdrantClient, embeddingService, collectionName, document, spaceId, lexicalHints) {
     const docId = crypto.createHash('sha256').update(document.content).digest('hex');
     const vector = await embeddingService.embed(document.content);
     // Ensure temporal metadata is captured
@@ -122,6 +151,11 @@ export async function ingestDocument(qdrantClient, embeddingService, collectionN
             createdAt: createdAt,
             modifiedAt: modifiedAt,
             content: document.content,
+            // Spaces and lexical features
+            spaceId: spaceId || 'general',
+            lexicalCoreTokens: lexicalHints?.coreTokens || [],
+            lexicalPhrases: lexicalHints?.phrases || [],
+            lexicalLanguage: lexicalHints?.language || 'en',
         },
     };
     await qdrantClient.upsert(collectionName, {

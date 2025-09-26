@@ -139,7 +139,8 @@ export class AnswerSynthesisServiceImpl implements AnswerSynthesisService {
           isAnswerable: guardrailDecision.isAnswerable,
           confidence: guardrailDecision.score.confidence,
           score: guardrailDecision.score
-        }
+        },
+        request.languageContext
       );
 
       // Format answer with citations
@@ -339,7 +340,9 @@ export class AnswerSynthesisServiceImpl implements AnswerSynthesisService {
           isAnswerable: guardrailDecision.isAnswerable,
           confidence: guardrailDecision.score.confidence,
           score: guardrailDecision.score
-        }
+        },
+        undefined, // signal
+        request.languageContext
       )) {
         if (chunk.type === 'chunk' && typeof chunk.data === 'string') {
           fullAnswer += chunk.data;

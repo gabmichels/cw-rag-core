@@ -436,7 +436,8 @@ async function publishDocument(doc, maskedText, options) {
                 ...payload,
                 content: chunk.text,
                 chunkIndex: i,
-                totalChunks: chunks.length
+                totalChunks: chunks.length,
+                isTable: chunk.isTable || false
             }
         });
     }
@@ -452,7 +453,7 @@ async function publishDocument(doc, maskedText, options) {
     return points.length;
 }
 // TOKEN-AWARE chunking function that respects embedding service limits
-async function createTokenAwareChunks(doc, maxTokensPerChunk) {
+export async function createTokenAwareChunks(doc, maxTokensPerChunk) {
     const chunks = [];
     for (let blockIndex = 0; blockIndex < doc.blocks.length; blockIndex++) {
         const block = doc.blocks[blockIndex];
@@ -461,8 +462,10 @@ async function createTokenAwareChunks(doc, maxTokensPerChunk) {
             continue; // Skip empty blocks
         // SPECIAL HANDLING: Detect pathological patterns (repeated characters like dashes)
         text = preprocessPathologicalContent(text);
+        // Check if this is a table block or contains table content
+        const isTable = block.type === 'table' || isTableContent(text);
         // Estimate tokens (ULTRA conservative for table content: 1 token ≈ 1.5 characters)
-        const estimatedTokens = isTableContent(text)
+        const estimatedTokens = isTable
             ? Math.ceil(text.length / 1.5) // Ultra conservative for tables
             : Math.ceil(text.length / 2.2); // Very conservative for other content
         if (estimatedTokens <= maxTokensPerChunk) {
@@ -472,12 +475,15 @@ async function createTokenAwareChunks(doc, maxTokensPerChunk) {
                 text: text,
                 sectionPath: `block_${blockIndex}`,
                 index: chunks.length,
-                estimatedTokens
+                estimatedTokens,
+                isTable
             });
         }
         else {
-            // Split large block using token-aware strategy
-            const blockChunks = await createTokenAwareBlockChunks(text, blockIndex, maxTokensPerChunk);
+            // Split large block using table-aware strategy
+            const blockChunks = isTable
+                ? await createTableAwareBlockChunks(text, blockIndex, maxTokensPerChunk)
+                : await createTokenAwareBlockChunks(text, blockIndex, maxTokensPerChunk);
             chunks.push(...blockChunks);
         }
     }
@@ -579,6 +585,61 @@ async function createTokenAwareBlockChunks(text, blockIndex, maxTokensPerChunk) 
             estimatedTokens: isTableContent(currentChunk)
                 ? Math.ceil(currentChunk.length / 1.5)
                 : Math.ceil(currentChunk.length / 2.2)
+        });
+    }
+    return chunks;
+}
+// Table-aware chunking: Split tables by rows to preserve structure
+async function createTableAwareBlockChunks(text, blockIndex, maxTokensPerChunk) {
+    const chunks = [];
+    // Split table into lines (rows)
+    const lines = text.split('\n').filter(line => line.trim().length > 0);
+    let currentChunk = '';
+    let subChunkIndex = 0;
+    for (const line of lines) {
+        const testChunk = currentChunk ? currentChunk + '\n' + line : line;
+        const estimatedTokens = Math.ceil(testChunk.length / 1.5); // Ultra conservative for tables
+        if (estimatedTokens <= maxTokensPerChunk) {
+            // Safe to add this row
+            currentChunk = testChunk;
+        }
+        else {
+            // Would exceed limit, save current chunk and start new one
+            if (currentChunk.trim()) {
+                chunks.push({
+                    id: `chunk_${blockIndex}_${subChunkIndex}`,
+                    text: currentChunk.trim(),
+                    sectionPath: `block_${blockIndex}/part_${subChunkIndex}`,
+                    index: chunks.length,
+                    estimatedTokens: Math.ceil(currentChunk.length / 1.5),
+                    isTable: true
+                });
+                subChunkIndex++;
+            }
+            // Handle oversized single row (rare for tables)
+            const rowTokens = Math.ceil(line.length / 1.5);
+            if (rowTokens > maxTokensPerChunk) {
+                // Split the row by words as last resort
+                const wordChunks = await createWordLevelChunks(line, blockIndex, subChunkIndex, maxTokensPerChunk);
+                chunks.push(...wordChunks.map(chunk => ({ ...chunk, isTable: true })));
+                subChunkIndex += wordChunks.length;
+                currentChunk = '';
+            }
+            else {
+                // Start new chunk with current row
+                currentChunk = line;
+            }
+        }
+    }
+    // Add final chunk if exists
+    if (currentChunk.trim()) {
+        chunks.push({
+            id: `chunk_${blockIndex}_${subChunkIndex}`,
+            text: currentChunk.trim(),
+            sectionPath: `block_${blockIndex}/part_${subChunkIndex}`,
+            index: chunks.length,
+            estimatedTokens: Math.ceil(currentChunk.length / 1.5),
+            isTable: true
         });
     }
     return chunks;

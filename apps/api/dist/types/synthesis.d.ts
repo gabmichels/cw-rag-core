@@ -30,6 +30,7 @@ export interface Citation {
     number: number;
     source: string;
     docId: string;
+    qdrantDocId: string;
     version?: string;
     url?: string;
     filepath?: string;
@@ -50,6 +51,9 @@ export interface SynthesisRequest {
         isAnswerable: boolean;
         confidence: number;
         score: any;
+    };
+    languageContext?: {
+        detectedLanguage: string;
     };
 }
 export interface SynthesisResponse {
@@ -104,7 +108,7 @@ export interface ProviderSpecificEvent<T = any> extends BaseStreamingEvent {
     data: T;
 }
 export interface StreamingSynthesisResponse {
-    type: 'chunk' | 'citations' | 'metadata' | 'error' | 'done' | 'completion' | 'response_completed' | 'provider_specific';
+    type: 'chunk' | 'citations' | 'metadata' | 'error' | 'done' | 'completion' | 'response_completed' | 'provider_specific' | 'formatted_answer';
     data: string | CitationMap | SynthesisMetadata | Error | null | StreamingCompletionEvent['data'] | ResponseCompletedEvent['data'] | any;
 }
 export type EnhancedStreamingEvent = StreamingChunkEvent | StreamingCompletionEvent | ResponseCompletedEvent | ProviderSpecificEvent | BaseStreamingEvent;

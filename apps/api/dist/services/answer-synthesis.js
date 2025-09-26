@@ -64,7 +64,7 @@ export class AnswerSynthesisServiceImpl {
                     confidence: guardrailDecision.score.confidence, // Use confidence from guardrailDecision
                     modelUsed: 'guardrail',
                     contextTruncated: false,
-                    freshnessStats: this.calculateFreshnessStats(request.documents, tenantId)
+                    freshnessStats: this.calculateFreshnessStats(request.documents || [], tenantId)
                 };
             }
             // Extract citations from documents with freshness information
@@ -79,7 +79,7 @@ export class AnswerSynthesisServiceImpl {
                 isAnswerable: guardrailDecision.isAnswerable,
                 confidence: guardrailDecision.score.confidence,
                 score: guardrailDecision.score
-            });
+            }, request.languageContext);
             // Format answer with citations
             const formattedAnswer = this.formatAnswerWithCitations(completion.text, citations, request.answerFormat || 'markdown');
             // Calculate freshness statistics
@@ -168,7 +168,7 @@ export class AnswerSynthesisServiceImpl {
                         confidence: guardrailDecision.score.confidence, // Use confidence from guardrailDecision
                         modelUsed: 'guardrail',
                         contextTruncated: false,
-                        freshnessStats: this.calculateFreshnessStats(request.documents, tenantId)
+                        freshnessStats: this.calculateFreshnessStats(request.documents || [], tenantId)
                     }
                 };
                 yield {
@@ -222,7 +222,8 @@ export class AnswerSynthesisServiceImpl {
                 isAnswerable: guardrailDecision.isAnswerable,
                 confidence: guardrailDecision.score.confidence,
                 score: guardrailDecision.score
-            })) {
+            }, undefined, // signal
+            request.languageContext)) {
                 if (chunk.type === 'chunk' && typeof chunk.data === 'string') {
                     fullAnswer += chunk.data;
                     totalChunks++;
@@ -248,7 +249,7 @@ export class AnswerSynthesisServiceImpl {
             // Format answer with citations
             const formattedAnswer = this.formatAnswerWithCitations(fullAnswer, citations, request.answerFormat || 'markdown');
             // Calculate freshness statistics
-            const freshnessStats = this.calculateFreshnessStats(request.documents, tenantId);
+            const freshnessStats = this.calculateFreshnessStats(request.documents || [], tenantId);
             // Calculate confidence (this confidence is for the LLM's raw answer, distinct from guardrail's overall decision)
             const confidence = this.calculateConfidence(request.documents, contextResult.contextTruncated, fullAnswer, freshnessStats);
             const synthesisTime = performance.now() - startTime;
@@ -292,6 +293,11 @@ export class AnswerSynthesisServiceImpl {
                 synthesisMetadata,
                 qualityMetrics: this.lastQualityMetrics
             });
+            // Yield the formatted answer with bibliography
+            yield {
+                type: 'formatted_answer',
+                data: formattedAnswer
+            };
             yield {
                 type: 'response_completed',
                 data: responseCompletedEvent.data

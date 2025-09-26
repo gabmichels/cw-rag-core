@@ -23,6 +23,9 @@ export interface LLMClient {
       isAnswerable: boolean;
       confidence: number;
       score: any;
+    },
+    languageContext?: {
+      detectedLanguage: string;
     }
   ): Promise<{
     text: string;
@@ -42,7 +45,10 @@ export interface LLMClient {
       confidence: number;
       score: any;
     },
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    languageContext?: {
+      detectedLanguage: string;
+    }
   ): AsyncGenerator<StreamingSynthesisResponse, void, unknown>;
 
   /**
@@ -78,6 +84,9 @@ export class LLMClientImpl implements LLMClient {
       isAnswerable: boolean;
       confidence: number;
       score: any;
+    },
+    languageContext?: {
+      detectedLanguage: string;
     }
   ): Promise<{
     text: string;
@@ -87,11 +96,11 @@ export class LLMClientImpl implements LLMClient {
     try {
       // For vLLM, use direct HTTP API
       if (this.config.provider === 'vllm') {
-        return this.generateVLLMCompletion(prompt, context, maxTokens, false, guardrailDecision);
+        return this.generateVLLMCompletion(prompt, context, maxTokens, false, guardrailDecision, languageContext);
       }
 
       // Create the chat prompt template for LangChain providers
-      const systemPrompt = this.buildSystemPrompt(guardrailDecision);
+      const systemPrompt = this.buildSystemPrompt(guardrailDecision, languageContext);
       const promptTemplate = ChatPromptTemplate.fromMessages([
         ['system', systemPrompt.replace('{context}', context)],
         ['human', '{query}']
@@ -138,7 +147,10 @@ export class LLMClientImpl implements LLMClient {
       confidence: number;
       score: any;
     },
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    languageContext?: {
+      detectedLanguage: string;
+    }
   ): AsyncGenerator<StreamingSynthesisResponse, void, unknown> {
     if (!this.supportsStreaming()) {
       throw new LLMProviderError(
@@ -150,18 +162,18 @@ export class LLMClientImpl implements LLMClient {
     try {
       // For vLLM streaming
       if (this.config.provider === 'vllm') {
-        yield* this.generateVLLMStreamingCompletion(prompt, context, maxTokens, guardrailDecision, signal); // Pass signal
+        yield* this.generateVLLMStreamingCompletion(prompt, context, maxTokens, guardrailDecision, signal, languageContext); // Pass signal and languageContext
         return;
       }
 
       // For OpenAI and Anthropic providers using LangChain streaming
       if (this.config.provider === 'openai' || this.config.provider === 'anthropic' || this.config.provider === 'azure-openai') {
-        yield* this.generateLangChainStreamingCompletion(prompt, context, maxTokens, guardrailDecision, signal); // Pass signal
+        yield* this.generateLangChainStreamingCompletion(prompt, context, maxTokens, guardrailDecision, signal, languageContext); // Pass signal and languageContext
         return;
       }
 
       // Fallback to non-streaming for unsupported providers
-      const result = await this.generateCompletion(prompt, context, maxTokens, guardrailDecision);
+      const result = await this.generateCompletion(prompt, context, maxTokens, guardrailDecision, languageContext);
       yield {
         type: 'chunk',
         data: result.text
@@ -224,13 +236,16 @@ export class LLMClientImpl implements LLMClient {
       isAnswerable: boolean;
       confidence: number;
       score: any;
+    },
+    languageContext?: {
+      detectedLanguage: string;
     }
   ): Promise<{
     text: string;
     tokensUsed: number;
     model: string;
   }> {
-    const systemPrompt = this.buildSystemPrompt(guardrailDecision).replace('{context}', context);
+    const systemPrompt = this.buildSystemPrompt(guardrailDecision, languageContext).replace('{context}', context);
 
     const messages = [
       { role: 'system', content: systemPrompt },
@@ -299,9 +314,12 @@ export class LLMClientImpl implements LLMClient {
       confidence: number;
       score: any;
     },
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    languageContext?: {
+      detectedLanguage: string;
+    }
   ): AsyncGenerator<StreamingSynthesisResponse, void, unknown> {
-    const systemPrompt = this.buildSystemPrompt(guardrailDecision).replace('{context}', context);
+    const systemPrompt = this.buildSystemPrompt(guardrailDecision, languageContext).replace('{context}', context);
 
     const messages = [
       { role: 'system', content: systemPrompt },
@@ -418,9 +436,12 @@ export class LLMClientImpl implements LLMClient {
       confidence: number;
       score: any;
     },
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    languageContext?: {
+      detectedLanguage: string;
+    }
   ): AsyncGenerator<StreamingSynthesisResponse, void, unknown> {
-    const systemPrompt = this.buildSystemPrompt(guardrailDecision);
+    const systemPrompt = this.buildSystemPrompt(guardrailDecision, languageContext);
     const promptTemplate = ChatPromptTemplate.fromMessages([
       ['system', systemPrompt.replace('{context}', context)],
       ['human', '{query}']
@@ -562,9 +583,20 @@ export class LLMClientImpl implements LLMClient {
     isAnswerable: boolean;
     confidence: number;
     score: any;
+  }, languageContext?: {
+    detectedLanguage: string;
   }): string {
     const isAnswerable = guardrailDecision?.isAnswerable;
     const confidence = guardrailDecision?.confidence || 0;
+    const detectedLanguage = languageContext?.detectedLanguage || 'EN';
+
+    // Language instructions
+    const languageInstructions = `
+LANGUAGE INSTRUCTIONS:
+- Query language detected: ${detectedLanguage}
+- Respond in ${detectedLanguage} as the query was made in that language
+- If translating content, preserve technical terms and proper names
+- For mixed-language contexts, indicate source language in citations`;
 
     if (isAnswerable) {
       // Guardrail says it's answerable - always answer, adjust tone based on confidence
@@ -581,6 +613,7 @@ export class LLMClientImpl implements LLMClient {
         'Answer the question using the provided context, being appropriately cautious about the confidence level.';
 
       return `You are a helpful AI assistant that provides answers based on the provided context.
+${languageInstructions}
 
 INSTRUCTIONS FOR ANSWERABLE QUERIES:
 1. The system has determined this query is ANSWERABLE (confidence: ${(confidence * 100).toFixed(1)}%)
@@ -610,6 +643,7 @@ Context:
     } else {
       // Not answerable: use conservative approach with IDK instruction
       return `You are a helpful AI assistant that answers questions based only on the provided context.
+${languageInstructions}
 
 STANDARD INSTRUCTIONS:
 1. Use ONLY the information provided in the context below
@@ -883,6 +917,9 @@ class ResilientLLMClient implements LLMClient {
       isAnswerable: boolean;
       confidence: number;
       score: any;
+    },
+    languageContext?: {
+      detectedLanguage: string;
     }
   ): Promise<{
     text: string;
@@ -900,7 +937,7 @@ class ResilientLLMClient implements LLMClient {
             setTimeout(() => reject(new Error('Request timeout')), this.timeoutMs);
           });
 
-          const completionPromise = client.generateCompletion(prompt, context, maxTokens, guardrailDecision);
+          const completionPromise = client.generateCompletion(prompt, context, maxTokens, guardrailDecision, languageContext);
 
           const result = await Promise.race([completionPromise, timeoutPromise]);
 
@@ -933,6 +970,10 @@ class ResilientLLMClient implements LLMClient {
       isAnswerable: boolean;
       confidence: number;
       score: any;
+    },
+    signal?: AbortSignal,
+    languageContext?: {
+      detectedLanguage: string;
     }
   ): AsyncGenerator<StreamingSynthesisResponse, void, unknown> {
     const clients = [this.primaryClient, ...this.fallbackClients];
@@ -961,7 +1002,7 @@ class ResilientLLMClient implements LLMClient {
         resetTimeout(); // Start initial timeout
 
         try {
-          for await (const chunk of client.generateStreamingCompletion(prompt, context, maxTokens, guardrailDecision, controller.signal)) {
+          for await (const chunk of client.generateStreamingCompletion(prompt, context, maxTokens, guardrailDecision, controller.signal, languageContext)) {
             resetTimeout(); // Reset timeout on each chunk received
 
             yield chunk;
@@ -994,7 +1035,7 @@ class ResilientLLMClient implements LLMClient {
           if (i === clients.length - 1 && retry === this.maxRetries - 1) {
             // Fallback to non-streaming completion
             try {
-              const result = await this.generateCompletion(prompt, context, maxTokens, guardrailDecision);
+              const result = await this.generateCompletion(prompt, context, maxTokens, guardrailDecision, languageContext);
               yield {
                 type: 'chunk',
                 data: result.text
@@ -1024,7 +1065,7 @@ class ResilientLLMClient implements LLMClient {
 
     // If no streaming clients are available, fallback to non-streaming
     try {
-      const result = await this.generateCompletion(prompt, context, maxTokens, guardrailDecision);
+      const result = await this.generateCompletion(prompt, context, maxTokens, guardrailDecision, languageContext);
       yield {
         type: 'chunk',
         data: result.text

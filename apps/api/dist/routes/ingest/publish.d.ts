@@ -7,4 +7,5 @@ interface PublishRouteOptions {
     auditLogger: AuditLogger;
 }
 export declare function publishRoute(fastify: FastifyInstance, options: PublishRouteOptions): Promise<void>;
+export declare function createTokenAwareChunks(doc: any, maxTokensPerChunk: number): Promise<any[]>;
 export {};

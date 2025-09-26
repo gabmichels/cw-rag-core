@@ -5,7 +5,11 @@ import { Document, RetrievalRequest, UserContext } from '@cw-rag-core/shared';
 export { QdrantClient };
 export declare const QDRANT_COLLECTION_NAME = "docs_v1";
 export declare function bootstrapQdrant(qdrantClient: QdrantClient, logger: FastifyBaseLogger, maxRetries?: number, retryDelay?: number): Promise<void>;
-export declare function ingestDocument(qdrantClient: QdrantClient, embeddingService: EmbeddingService, collectionName: string, document: Document): Promise<string>;
+export declare function ingestDocument(qdrantClient: QdrantClient, embeddingService: EmbeddingService, collectionName: string, document: Document, spaceId?: string, lexicalHints?: {
+    coreTokens: string[];
+    phrases: string[];
+    language: string;
+}): Promise<string>;
 export declare function searchDocuments(qdrantClient: QdrantClient, collectionName: string, request: RetrievalRequest, userContext: UserContext, vector?: number[]): Promise<any[]>;
 /**
  * Legacy compatibility function - maintains backward compatibility

@@ -15,16 +15,19 @@ export class CitationServiceImpl {
                 // Calculate freshness information
                 const freshness = calculateFreshnessInfoSafe(payload.modifiedAt, tenantId, undefined, payload.createdAt);
                 const citation = {
-                    id: doc.id,
+                    id: doc.id, // This is the chunk ID from Qdrant point
                     number: citationNumber,
                     source,
-                    docId: payload.docId || doc.id,
+                    docId: String(payload.originalDocId || payload.docId), // Human readable document ID for display
+                    qdrantDocId: String(payload.docId), // Actual document ID for fetching the full document
                     version: payload.version,
                     url: payload.url,
                     filepath: payload.filepath,
                     authors: Array.isArray(payload.authors) ? payload.authors : undefined,
                     freshness
                 };
+                // Log for debugging chunk ID inconsistency
+                console.log(`Citation ${citationNumber}: chunkId=${doc.id}, docId=${payload.docId}, source=${source}`);
                 citations[citationNumber.toString()] = citation;
             }
             catch (error) {
