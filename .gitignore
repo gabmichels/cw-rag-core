@@ -40,12 +40,17 @@ firestore.indexes.json
 *.bak
 docker-compose.yml.bak
 
-# API coverage reports
-apps/api/coverage/
-packages/evals/dist/
-packages/ingestion-sdk/dist/
-packages/retrieval/dist/
-packages/shared/dist/
+# Coverage reports
+coverage/
+**/coverage/
+
+# Build outputs
+packages/*/dist/
+apps/*/dist/
+
+# Test artifacts
+packages/shared/tenants/test-*/
+packages/shared/test-registries/
 
 # Terraform
 **/.terraform/
