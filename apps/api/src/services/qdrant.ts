@@ -105,6 +105,28 @@ export async function bootstrapQdrant(
           wait: true
         });
 
+        // Spaces and lexical indexes
+        await qdrantClient.createPayloadIndex(QDRANT_COLLECTION_NAME, {
+          field_name: 'spaceId',
+          field_schema: 'keyword',
+          wait: true
+        });
+        await qdrantClient.createPayloadIndex(QDRANT_COLLECTION_NAME, {
+          field_name: 'lexicalCoreTokens',
+          field_schema: 'keyword',
+          wait: true
+        });
+        await qdrantClient.createPayloadIndex(QDRANT_COLLECTION_NAME, {
+          field_name: 'lexicalPhrases',
+          field_schema: 'keyword',
+          wait: true
+        });
+        await qdrantClient.createPayloadIndex(QDRANT_COLLECTION_NAME, {
+          field_name: 'lexicalLanguage',
+          field_schema: 'keyword',
+          wait: true
+        });
+
         logger.info('Payload indexes and full-text index created successfully.');
       } else {
         logger.info(`Collection '${QDRANT_COLLECTION_NAME}' already exists - skipping creation and index setup.`);
@@ -142,7 +164,13 @@ export async function ingestDocument(
   qdrantClient: QdrantClient,
   embeddingService: EmbeddingService,
   collectionName: string,
-  document: Document
+  document: Document,
+  spaceId?: string,
+  lexicalHints?: {
+    coreTokens: string[];
+    phrases: string[];
+    language: string;
+  }
 ): Promise<string> {
   const docId = crypto.createHash('sha256').update(document.content).digest('hex');
   const vector = await embeddingService.embed(document.content);
@@ -168,6 +196,11 @@ export async function ingestDocument(
       createdAt: createdAt,
       modifiedAt: modifiedAt,
       content: document.content,
+      // Spaces and lexical features
+      spaceId: spaceId || 'general',
+      lexicalCoreTokens: lexicalHints?.coreTokens || [],
+      lexicalPhrases: lexicalHints?.phrases || [],
+      lexicalLanguage: lexicalHints?.language || 'en',
     },
   };
 

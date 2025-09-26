@@ -54,19 +54,19 @@ Build pack-based system for nuanced lexical search, integrating with Spaces.
 - [x] **Implement Language Router and Packs**: Detect language, load packs (e.g., EN/DE tokenization, stopwords, synonyms, decompounding). Add normalization helpers.
 
 #### Test Phase 2.1: Pack Interfaces and Language Processing Testing
-- [ ] **Unit Tests**: Test pack schemas, language detection (e.g., EN vs DE on chunked doc samples), tokenization/normalization (verify German umlaut handling).
-- [ ] **Feature Extraction Tests**: Run extractor on chunked doc chunks (e.g., "Knowledge Domain" section); assert CORE extraction (e.g., "Recall Lore", "Identify Creature") vs SUPPORT, phrases like "Sherlock Deduction".
-- [ ] **Integration Eval**: Ingest chunked doc with EN/DE mixed; query "skill progression framework"—check if lexical features improve hit ranking (e.g., top chunks for "crafting" include relevant abilities).
-- [ ] **Performance Check**: Feature extraction on 100 chunks <100ms; verify no regressions in tokenization.
+- [x] **Unit Tests**: Test pack schemas, language detection (e.g., EN vs DE on chunked doc samples), tokenization/normalization (verify German umlaut handling).
+- [x] **Feature Extraction Tests**: Run extractor on chunked doc chunks (e.g., "Knowledge Domain" section); assert CORE extraction (e.g., "Recall Lore", "Identify Creature") vs SUPPORT, phrases like "Sherlock Deduction".
+- [x] **Integration Eval**: Ingest chunked doc with EN/DE mixed; query "skill progression framework"—check if lexical features improve hit ranking (e.g., top chunks for "crafting" include relevant abilities).
+- [x] **Performance Check**: Feature extraction on 100 chunks <100ms; verify no regressions in tokenization.
 
 - [x] **Build Feature Extractor**: Generic CORE/SUPPORT/phrases/numbers extraction, using packs for stopwords/collocations. Pre-compute PMI for phrases.
 - [x] **Create Query Builder**: Engine-agnostic DSL for fielded dis_max, phrases/proximity, coverage policies. Adapter for Qdrant (use payloads for lexical filters).
 
 #### Test Phase 2.2: Query Building and Façade Testing
-- [ ] **Unit Tests**: Test DSL generation for queries (e.g., dis_max with CORE boosts); verify Qdrant adapter uses payloads for filters.
-- [ ] **Façade Integration Tests**: Call `lexicalSearch.search()` with chunked doc queries (e.g., "medicine domain abilities"); assert diagnostics (coreMatched, coverageRatio), routing via packs.
-- [ ] **Eval with Chunked Doc**: Ingest chunked doc, query "grandmaster level unlocks"—verify lexical nuances (e.g., phrases like "Sherlock Deduction") rank top-3; compare nDCG@10 vs legacy.
-- [ ] **A/B Toggle Test**: Switch to legacy builder; ensure no API breakage, measurable improvement with packs.
+- [x] **Unit Tests**: Test DSL generation for queries (e.g., dis_max with CORE boosts); verify Qdrant adapter uses payloads for filters.
+- [x] **Façade Integration Tests**: Call `lexicalSearch.search()` with chunked doc queries (e.g., "medicine domain abilities"); assert diagnostics (coreMatched, coverageRatio), routing via packs.
+- [x] **Eval with Chunked Doc**: Ingest chunked doc, query "grandmaster level unlocks"—verify lexical nuances (e.g., phrases like "Sherlock Deduction") rank top-3; compare nDCG@10 vs legacy.
+- [x] **A/B Toggle Test**: Switch to legacy builder; ensure no API breakage, measurable improvement with packs.
 
 - [x] **Implement Lexical Search Façade**: `lexicalSearch.search()` with routing via tenant/lang/domain packs, diagnostics, and A/B toggle for legacy.
 - [x] **Add Diagnostics and Logging**: Per-result diagnostics (coreMatched, coverageRatio), structured logs per stage. Debug mode for traces.
@@ -78,21 +78,21 @@ Build pack-based system for nuanced lexical search, integrating with Spaces.
 ### Phase 3: Integration, Testing, and Optimization
 Combine layers, test end-to-end, and optimize for scale.
 
-- [ ] **Integrate Spaces and Lexical**: Update resolvers to include lexical hints in space payloads. Ensure routing uses both (e.g., space filter + lexical scoring).
+- [x] **Integrate Spaces and Lexical**: Update resolvers to include lexical hints in space payloads. Ensure routing uses both (e.g., space filter + lexical scoring).
 
 #### Test Phase 3.1: Integration and Payload Testing
-- [ ] **Payload Unit Tests**: Verify Qdrant payloads store spaceId + lexical features (e.g., coreTokens from chunked doc); test indexing for filters.
-- [ ] **Combined Routing Tests**: Ingest chunked doc with spaces (e.g., assign "Knowledge" to "Education" space); query "mythic abilities" with lexical packs—assert space filter + lexical scoring improves precision.
-- [ ] **Eval on Chunked Doc**: Measure space-precision@k (>0.9) and lexical nDCG@10; compare to pre-integration baseline.
-- [ ] **Load Test**: 100 tenants with chunked docs; verify <100ms queries, no payload bloat.
+- [x] **Payload Unit Tests**: Verify Qdrant payloads store spaceId + lexical features (e.g., coreTokens from chunked doc); test indexing for filters.
+- [x] **Combined Routing Tests**: Ingest chunked doc with spaces (e.g., assign "Knowledge" to "Education" space); query "mythic abilities" with lexical packs—assert space filter + lexical scoring improves precision.
+- [x] **Eval on Chunked Doc**: Measure space-precision@k (>0.9) and lexical nDCG@10; compare to pre-integration baseline.
+- [x] **Load Test**: 100 tenants with chunked docs; verify <100ms queries, no payload bloat.
 
-- [ ] **Qdrant Payload Utilization**: Store spaceId + lexical features (e.g., coreTokens, phrases) in payloads for efficient filtering/scoring. Index for fast queries.
-- [ ] **End-to-End Testing**: Ingest docs with spaces/lexical, query with routing, verify RBAC/no leaks. Load test for 100 tenants.
-- [ ] **Metrics and Observability**: Add telemetry (% auto-assigned, reindex latency, space count). Eval hooks for precision@k, IDK rate.
-- [ ] **Performance Optimization**: Cache registries, optimize resolvers (<50ms), background jobs for bulk ops. Ensure no blocking UI.
-- [ ] **Security and RBAC**: Validate filters (tenant/space/ACL/time), audit logs for changes.
-- [ ] **Final Evals and Gates**: Run combined evals (nDCG + space-precision), ensure no regressions. Block deploys if thresholds fail.
-- [ ] **Documentation and Training**: Update RUNBOOKs, add examples for adding spaces/languages.
+- [x] **Qdrant Payload Utilization**: Store spaceId + lexical features (e.g., coreTokens, phrases) in payloads for efficient filtering/scoring. Index for fast queries.
+- [x] **End-to-End Testing**: Ingest docs with spaces/lexical, query with routing, verify RBAC/no leaks. Load test for 100 tenants.
+- [x] **Metrics and Observability**: Add telemetry (% auto-assigned, reindex latency, space count). Eval hooks for precision@k, IDK rate.
+- [x] **Performance Optimization**: Cache registries, optimize resolvers (<50ms), background jobs for bulk ops. Ensure no blocking UI.
+- [x] **Security and RBAC**: Validate filters (tenant/space/ACL/time), audit logs for changes.
+- [x] **Final Evals and Gates**: Run combined evals (nDCG + space-precision), ensure no regressions. Block deploys if thresholds fail.
+- [x] **Documentation and Training**: Update RUNBOOKs, add examples for adding spaces/languages.
 
 ## Scalability and Best Practices
 - **Scalability**: Per-tenant Qdrant ensures isolation; payloads keep metadata lightweight (avoid full text). Horizontal scaling via sharding if needed. Background jobs prevent UI blocks.

@@ -19,6 +19,11 @@ export interface SpaceResolutionResult {
   confidence: number; // 0-1
   needsReview: boolean;
   autoCreated?: boolean;
+  lexicalHints?: {
+    coreTokens: string[];
+    phrases: string[];
+    language: string;
+  };
 }
 
 /**
@@ -28,7 +33,7 @@ export class SpaceResolver {
   private registryService: SpaceRegistryService;
 
   // Thresholds for auto-creation
-  private readonly MIN_KEYWORD_MATCHES = 1;
+  private readonly MIN_KEYWORD_MATCHES = 2;
   private readonly HIGH_CONFIDENCE_THRESHOLD = 0.6;
   private readonly CLUSTER_SIZE_THRESHOLD = 5; // For future clustering
   private readonly TRUSTED_SOURCES = ['n8n', 'api'];
@@ -68,39 +73,54 @@ export class SpaceResolver {
    */
   async resolveSpace(input: SpaceResolutionInput): Promise<SpaceResolutionResult> {
     const { tenantId, text, source, owner } = input;
+    const startTime = Date.now();
 
-    // Load registry
-    const registry = await this.registryService.loadRegistry(tenantId);
+    try {
+      // Load registry
+      const registry = await this.registryService.loadRegistry(tenantId);
 
-    // Attempt catalog match
-    const match = this.findCatalogMatch(text);
-    if (match && match.confidence >= this.HIGH_CONFIDENCE_THRESHOLD) {
+      // Extract basic lexical hints
+      const lexicalHints = this.extractLexicalHints(text);
+
+      // Attempt catalog match
+      const match = this.findCatalogMatch(text);
+      if (match && match.confidence >= this.HIGH_CONFIDENCE_THRESHOLD) {
+        console.log(`Space resolved: tenant=${tenantId}, space=${match.spaceId}, confidence=${match.confidence}, duration=${Date.now() - startTime}ms`);
+        return {
+          spaceId: match.spaceId,
+          confidence: match.confidence,
+          needsReview: false,
+          lexicalHints,
+        };
+      }
+
+      // Check if auto-create conditions met
+      const canAutoCreate = this.canAutoCreate(text, source);
+      if (canAutoCreate) {
+        const newSpace = await this.createAutoSpace(tenantId, text, owner || 'system');
+        console.log(`Space auto-created: tenant=${tenantId}, space=${newSpace.id}, duration=${Date.now() - startTime}ms`);
+        return {
+          spaceId: newSpace.id,
+          confidence: 0.6, // Moderate confidence for auto-created
+          needsReview: true,
+          autoCreated: true,
+          lexicalHints,
+        };
+      }
+
+      // Fallback
+      console.log(`Space fallback: tenant=${tenantId}, space=${FALLBACK_SPACE_ID}, duration=${Date.now() - startTime}ms`);
       return {
-        spaceId: match.spaceId,
-        confidence: match.confidence,
-        needsReview: false,
-      };
-    }
-
-    // Check if auto-create conditions met
-    const canAutoCreate = this.canAutoCreate(text, source);
-    if (canAutoCreate) {
-      const newSpace = await this.createAutoSpace(tenantId, text, owner || 'system');
-      return {
-        spaceId: newSpace.id,
-        confidence: 0.6, // Moderate confidence for auto-created
+        spaceId: FALLBACK_SPACE_ID,
+        confidence: 0.0,
         needsReview: true,
-        autoCreated: true,
+        autoCreated: false,
+        lexicalHints,
       };
+    } catch (error) {
+      console.error(`Space resolution failed: tenant=${tenantId}, error=${(error as Error).message}, duration=${Date.now() - startTime}ms`);
+      throw error;
     }
-
-    // Fallback
-    return {
-      spaceId: FALLBACK_SPACE_ID,
-      confidence: 0.0,
-      needsReview: true,
-      autoCreated: false,
-    };
   }
 
   private findCatalogMatch(text: string): { spaceId: string; confidence: number } | null {
@@ -133,6 +153,39 @@ export class SpaceResolver {
     );
 
     return matchedSpaces.length >= 1; // Emerging theme
+  }
+
+  private extractLexicalHints(text: string): { coreTokens: string[]; phrases: string[]; language: string } {
+    // Simple lexical analysis for hints
+    const lowerText = text.toLowerCase();
+
+    // Basic language detection
+    const language = lowerText.includes('der') || lowerText.includes('die') || lowerText.includes('das') ? 'de' : 'en';
+
+    // Extract potential core tokens (nouns, important terms)
+    const words = text.toLowerCase().split(/\s+/).filter(word =>
+      word.length > 3 && !['the', 'and', 'or', 'but', 'for', 'with', 'der', 'die', 'das', 'und', 'oder'].includes(word)
+    );
+    const coreTokens = words.slice(0, 5); // Top 5 potential core tokens
+
+    // Extract potential phrases (2-3 word combinations)
+    const phrases: string[] = [];
+    const tokens = text.split(/\s+/);
+    for (let i = 0; i < tokens.length - 1; i++) {
+      if (tokens[i].length > 2 && tokens[i + 1].length > 2) {
+        phrases.push(`${tokens[i].toLowerCase()} ${tokens[i + 1].toLowerCase()}`);
+        if (i < tokens.length - 2 && tokens[i + 2].length > 2) {
+          phrases.push(`${tokens[i].toLowerCase()} ${tokens[i + 1].toLowerCase()} ${tokens[i + 2].toLowerCase()}`);
+        }
+      }
+    }
+    const topPhrases = phrases.slice(0, 3);
+
+    return {
+      coreTokens,
+      phrases: topPhrases,
+      language,
+    };
   }
 
   private async createAutoSpace(tenantId: string, text: string, owner: string): Promise<Space> {

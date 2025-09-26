@@ -1,7 +1,7 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { ingestDocument, QdrantClient } from '../services/qdrant.js';
 import { BgeSmallEnV15EmbeddingService, EmbeddingService } from '@cw-rag-core/retrieval';
-import { IngestDocumentRequest, IngestDocumentResponse, Document } from '@cw-rag-core/shared';
+import { IngestDocumentRequest, IngestDocumentResponse, Document, SpaceResolver } from '@cw-rag-core/shared';
 
 interface IngestNormalizeOptions {
   qdrantClient: QdrantClient;
@@ -68,10 +68,26 @@ export async function ingestNormalizeRoute(fastify: FastifyInstance, options: In
       const { documents } = request.body;
       const documentIds: string[] = [];
       const failedDocuments: { document: Omit<Document, 'id'>; error: string }[] = [];
+      const spaceResolver = new SpaceResolver();
 
       for (const doc of documents) {
         try {
-          const id = await ingestDocument(options.qdrantClient, options.embeddingService, options.collectionName, doc as Document);
+          // Resolve space for the document
+          const spaceResult = await spaceResolver.resolveSpace({
+            tenantId: doc.metadata.tenantId,
+            text: doc.content,
+            source: 'api',
+            owner: doc.metadata.authors?.[0] || 'system',
+          });
+
+          const id = await ingestDocument(
+            options.qdrantClient,
+            options.embeddingService,
+            options.collectionName,
+            doc as Document,
+            spaceResult.spaceId,
+            spaceResult.lexicalHints
+          );
           documentIds.push(id);
         } catch (error) {
           fastify.log.error({ error }, `Failed to ingest document: ${doc.metadata?.url || 'unknown'}`);

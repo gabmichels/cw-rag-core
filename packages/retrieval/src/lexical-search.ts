@@ -5,6 +5,7 @@ export interface LexicalSearchContext {
   tenantId: string;
   langHint?: string;
   debug?: boolean;
+  spaceIds?: string[]; // Optional space filtering
 }
 
 export interface LexicalResult {
@@ -48,46 +49,62 @@ export class LexicalSearch {
    * Perform lexical search.
    */
   async search(query: string, ctx: LexicalSearchContext): Promise<LexicalResults> {
-    const { tenantId, langHint, debug } = ctx;
+    const { tenantId, langHint, debug, spaceIds } = ctx;
+    const startTime = Date.now();
 
-    // Detect language
-    const lang = await this.languageRouter.detect(query, { tenantId, langHint });
-    const languagePack = await this.languageRouter.getLanguagePack(tenantId, lang);
-    if (!languagePack) throw new Error(`Language pack not found for ${lang}`);
+    try {
+      // Detect language
+      const lang = await this.languageRouter.detect(query, { tenantId, langHint });
+      const languagePack = await this.languageRouter.getLanguagePack(tenantId, lang);
+      if (!languagePack) throw new Error(`Language pack not found for ${lang}`);
 
-    // Load packs
-    const tenantPack = await this.registryService.getTenantPack(tenantId);
-    const domainPack = await this.registryService.getDomainPack(tenantId, tenantPack.domainId);
-    if (!domainPack) throw new Error(`Domain pack not found for ${tenantPack.domainId}`);
+      // Load packs
+      const tenantPack = await this.registryService.getTenantPack(tenantId);
+      const domainPack = await this.registryService.getDomainPack(tenantId, tenantPack.domainId);
+      if (!domainPack) throw new Error(`Domain pack not found for ${tenantPack.domainId}`);
 
-    // Extract features
-    const features = this.featureExtractor.run(query, { languagePack, domainPack });
+      // Extract features
+      const features = this.featureExtractor.run(query, { languagePack, domainPack });
 
-    // Build query
-    const dsl = this.queryBuilder.build(features, { tenantPack, languagePack, domainPack });
+      // Build query
+      const dsl = this.queryBuilder.build(features, { tenantPack, languagePack, domainPack });
 
-    // Execute search (placeholder: adapt DSL to Qdrant)
-    const results = await this.executeQuery(dsl, tenantId);
+      // Execute search (placeholder: adapt DSL to Qdrant)
+      const results = await this.executeQuery(dsl, tenantId, spaceIds);
 
-    // Diagnostics
-    const diagnostics = {
-      lang,
-      coreMatched: features.core,
-      phrasesMatched: features.phrases,
-      fieldsHit: { content: true }, // Placeholder
-      coverageRatio: features.core.length / features.stats.len,
-      notes: debug ? [`Query: ${query}`, `Features: ${JSON.stringify(features)}`] : undefined,
-    };
+      // Diagnostics
+      const diagnostics = {
+        lang,
+        coreMatched: features.core,
+        phrasesMatched: features.phrases,
+        fieldsHit: { content: true }, // Placeholder
+        coverageRatio: features.core.length / features.stats.len,
+        notes: debug ? [`Query: ${query}`, `Features: ${JSON.stringify(features)}`] : undefined,
+      };
 
-    return { results, diagnostics };
+      console.log(`Lexical search: tenant=${tenantId}, query="${query}", lang=${lang}, results=${results.length}, spaces=${spaceIds?.join(',') || 'all'}, duration=${Date.now() - startTime}ms`);
+
+      return { results, diagnostics };
+    } catch (error) {
+      console.error(`Lexical search failed: tenant=${tenantId}, query="${query}", error=${(error as Error).message}, duration=${Date.now() - startTime}ms`);
+      throw error;
+    }
   }
 
-  private async executeQuery(dsl: any, tenantId: string): Promise<LexicalResult[]> {
+  private async executeQuery(dsl: any, tenantId: string, spaceIds?: string[]): Promise<LexicalResult[]> {
     // Placeholder: convert DSL to Qdrant scroll with filters
-    const filters = dsl.filters.map((f: any) => ({
+    const filters: any[] = dsl.filters.map((f: any) => ({
       key: f.key,
       match: f.match,
     }));
+
+    // Add space filter if provided
+    if (spaceIds && spaceIds.length > 0) {
+      filters.push({
+        key: 'spaceId',
+        match: { any: spaceIds },
+      });
+    }
 
     const scrollResult = await this.qdrantClient.scroll(`${tenantId}_collection`, {
       filter: { must: filters },
