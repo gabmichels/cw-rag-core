@@ -122,7 +122,19 @@ curl http://localhost:3101
 
 ## Step 4: Configure Tenant Data Access
 
-### 4.1 Create Initial User Context
+### 4.1 Initialize Corpus Statistics
+
+The system uses domainless ranking features that require corpus statistics (IDF, co-occurrence, PMI) computed from the tenant's documents. These statistics are automatically computed and stored per-tenant.
+
+**Note:** No manual initialization is required. The system will:
+- Start with empty statistics for new tenants
+- Automatically compute statistics as documents are ingested
+- Store statistics in `data/corpus-stats-{tenant}.json`
+- Update statistics incrementally with new documents
+
+If you need to force recomputation of corpus statistics (e.g., after bulk document ingestion), you can trigger this through the ingestion API or contact the development team.
+
+### 4.2 Create Initial User Context
 
 Create a test user context for the new tenant:
 

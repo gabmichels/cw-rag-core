@@ -2,6 +2,12 @@ import { KeywordSearchService } from './keyword-search.js';
 import { RrfFusionService } from './rrf-fusion.js';
 import { fuse, FusionConfig, FusionStrategyName, FusionInput } from './fusion.js';
 import { RerankerService } from './reranker.js';
+import { extractQueryTerms } from '../nlp/keyphrase-extract.js';
+import { loadCorpusStats } from '../stats/corpus-stats.js';
+import { getAliasCluster } from '../sem/alias-cluster.js';
+import { computeMatchFeatures, Candidate, CandidateFields } from '../rank/coverage-proximity.js';
+import { exclusivityPenalty } from '../rank/exclusivity.js';
+import { computeKeywordPoints, KeywordPointsConfig, CandidateSignals, TermWeight } from '../rank/keyword-points.js';
 import { VectorSearchResult, VectorSearchParams } from '../types/vector.js';
 import { createQueryIntentDetector, QueryIntentDetector } from '../retrieval/intent.js';
 import { createNoveltyScorer } from '../context/novelty.js';
@@ -73,6 +79,9 @@ export class HybridSearchServiceImpl implements HybridSearchService {
   private tenantConfigs = new Map<string, TenantSearchConfig>();
   private timeoutConfigs = new Map<string, TimeoutConfig>();
   private intentDetector: QueryIntentDetector;
+  // Domainless ranking telemetry data
+  private domainlessQueryTerms: any = null;
+  private domainlessGroups: any[] = [];
 
   constructor(
     private vectorSearchService: VectorSearchService,
@@ -152,6 +161,9 @@ export class HybridSearchServiceImpl implements HybridSearchService {
     const keywordSearchEnabled = request.enableKeywordSearch ?? adaptiveConfig.keywordSearchEnabled;
     console.log(`🔄 Hybrid search mode: vector + ${keywordSearchEnabled ? 'keyword' : 'vector-only'}`);
 
+    // Check if domainless ranking is enabled for retrieval expansion
+    const domainlessEnabled = process.env.FEATURES_ENABLED === 'on' || process.env.DOMAINLESS_RANKING_ENABLED === 'on';
+
     const rbacFilter = buildQdrantRBACFilter(userContext);
 
     if (request.filter && Object.keys(request.filter).length > 0) {
@@ -180,11 +192,18 @@ export class HybridSearchServiceImpl implements HybridSearchService {
       const timeouts = this.getTimeoutConfig(request.tenantId);
 
       const vectorStartTime = performance.now();
+
+      // Use expanded query for embedding if available (intentConfig is set later, so we need to check here)
+      const preliminaryIntent = this.intentDetector.detectIntent(request.query);
+      const preliminaryConfig = this.intentDetector.getIntentConfig(preliminaryIntent, request.query);
+      const effectiveQuery = preliminaryConfig.expandedQuery || request.query;
+
       console.log('🔍 Hybrid search: Starting embedding generation...');
-      console.log('Query:', request.query);
+      console.log('Original query:', request.query);
+      console.log('Effective query:', effectiveQuery);
 
       const embeddingResult = await this.executeWithTimeout(
-        () => this.embeddingService.embed(request.query),
+        () => this.embeddingService.embed(effectiveQuery),
         timeouts.embedding,
         'Embedding generation'
       );
@@ -196,9 +215,9 @@ export class HybridSearchServiceImpl implements HybridSearchService {
       console.log('Limit:', request.limit);
       console.log('Filter:', JSON.stringify(rbacFilter, null, 2));
 
-      // Increase pre-fusion k for better diversity when adaptive weighting enabled
-      const baseRetrievalK = queryAdaptiveEnabled ?
-        Math.max(request.limit, intentConfig?.retrievalK || parseInt(process.env.RETRIEVAL_K_BASE || '12')) :
+      // Increase pre-fusion k for better diversity when adaptive weighting or domainless ranking enabled
+      const baseRetrievalK = (queryAdaptiveEnabled || domainlessEnabled) ?
+        Math.max(request.limit, parseInt(process.env.RETRIEVAL_K_BASE || '12')) :
         request.limit;
 
       const vectorSearchResult = await this.executeWithTimeout(
@@ -214,6 +233,15 @@ export class HybridSearchServiceImpl implements HybridSearchService {
 
       vectorSearchResults = vectorSearchResult.result;
       console.log('✅ Vector search completed:', vectorSearchResults?.length, 'results');
+
+      // Debug: Check if target chunk is in vector results
+      const targetId = '67001fb9-f2f7-adb3-712b-5df9dc00c772';
+      const foundInVector = vectorSearchResults?.find(r => r.id === targetId);
+      if (foundInVector) {
+        console.log('🎯 TARGET CHUNK FOUND IN VECTOR RESULTS:', foundInVector.id, 'Score:', foundInVector.score);
+      } else {
+        console.log('❌ TARGET CHUNK NOT FOUND IN VECTOR RESULTS');
+      }
 
       if (vectorSearchResults && vectorSearchResults.length > 0) {
         console.log('📋 Vector search results:');
@@ -269,6 +297,14 @@ export class HybridSearchServiceImpl implements HybridSearchService {
         metrics.keywordSearchDuration = performance.now() - keywordStartTime;
         metrics.keywordResultCount = keywordSearchResults.length;
 
+        // Debug: Check if target chunk is in keyword results
+        const foundInKeyword = keywordSearchResults?.find(r => r.id === targetId);
+        if (foundInKeyword) {
+          console.log('🎯 TARGET CHUNK FOUND IN KEYWORD RESULTS:', foundInKeyword.id, 'Score:', foundInKeyword.score);
+        } else {
+          console.log('❌ TARGET CHUNK NOT FOUND IN KEYWORD RESULTS');
+        }
+
         if (keywordSearchResult.timedOut) {
           console.warn('StructuredLog:KeywordSearchTimeout', {
             timeoutMs: timeouts.keywordSearch,
@@ -310,7 +346,7 @@ export class HybridSearchServiceImpl implements HybridSearchService {
       const fusionResults = fuse(vectorInputs, keywordInputs, fusionConfig);
 
       // Convert fusion results back to HybridSearchResult format
-      fusedResults = fusionResults.map(fusionResult => {
+      let baseFusedResults = fusionResults.map(fusionResult => {
         // Find original result data
         const vectorResult = dedupedVectorResults.find(r => r.id === fusionResult.id);
         const keywordResult = dedupedKeywordResults.find(r => r.id === fusionResult.id);
@@ -325,11 +361,104 @@ export class HybridSearchServiceImpl implements HybridSearchService {
           keywordScore: fusionResult.components.keyword,
           fusionScore: fusionResult.fusedScore,
           searchType: vectorResult && keywordResult ? 'hybrid' :
-                     vectorResult ? 'vector_only' : 'keyword_only',
+                      vectorResult ? 'vector_only' : 'keyword_only',
           payload: sourceResult.payload,
           content: this.extractContent(sourceResult)
         };
       }).filter(Boolean) as HybridSearchResult[];
+
+      // Apply domainless ranking if enabled
+      console.log('🔍 Domainless ranking enabled:', domainlessEnabled);
+      if (domainlessEnabled) {
+        console.log('🚀 Applying domainless ranking for query:', request.query);
+        baseFusedResults = await this.applyDomainlessRanking(baseFusedResults, request.query, this.embeddingService, request.tenantId || 'default');
+        console.log('✅ Domainless ranking applied, results count:', baseFusedResults.length);
+      }
+
+      // Check if keyword points ranking is enabled
+      const keywordPointsEnabled = process.env.KW_POINTS_ENABLED === 'on';
+
+      // Apply keyword points ranking if enabled
+      console.log('🔍 Keyword points ranking enabled:', keywordPointsEnabled);
+      let keywordPointsResults: any[] = [];
+      if (keywordPointsEnabled) {
+        console.log('🚀 Applying keyword points ranking for query:', request.query);
+        const kwConfig = this.loadKeywordPointsConfig();
+        const terms = this.extractTermWeights(request.query, request.tenantId || 'default');
+
+        // Debug keyword points term extraction
+        console.log('🎯 KEYWORD POINTS DEBUG - Extracted terms:', terms);
+        console.log('🎯 KEYWORD POINTS DEBUG - Terms count:', terms.length);
+        if (terms.length === 0) {
+          console.log('❌ NO TERMS EXTRACTED FOR KEYWORD POINTS RANKING - This is the problem!');
+        }
+
+        const candidateSignals = this.buildCandidateSignals(baseFusedResults, keywordSearchResults, fusedResults);
+
+        // Create wrapper for exclusivity penalty function
+        const exclusivityWrapper = (candTerms: string[], topTerms: string[]) => {
+          const groups = [topTerms]; // Convert to expected format
+          return exclusivityPenalty(candTerms, groups, loadCorpusStats(request.tenantId || 'default'));
+        };
+
+        keywordPointsResults = computeKeywordPoints(terms, candidateSignals, kwConfig, exclusivityWrapper);
+
+        // Update scores with keyword points
+        baseFusedResults = baseFusedResults.map(result => {
+          const kwResult = keywordPointsResults.find(kw => kw.id === result.id);
+          if (kwResult) {
+            return {
+              ...result,
+              score: kwResult.finalAfterKw,
+              fusionScore: kwResult.finalAfterKw,
+              keywordPoints: kwResult.breakdown
+            };
+          }
+          return result;
+        });
+
+        // Record telemetry for keyword points ranking
+        const { telemetry } = await import('../telemetry.js');
+        const retrievalTrace: any = {
+          queryId: `query-${Date.now()}`,
+          tenantId: request.tenantId,
+          query: request.query,
+          terms: terms.map(t => ({ term: t.term, weight: t.weight, rank: t.rank })),
+          candidates: keywordPointsResults.map(kw => ({
+            id: kw.id,
+            fusedScore: kw.finalAfterKw - kw.breakdown.lambda * kw.kwNorm, // Original fused score
+            keywordPoints: {
+              raw_kw: kw.rawKw,
+              kw_norm: kw.kwNorm,
+              lambda: kw.breakdown.lambda,
+              final_after_kw: kw.finalAfterKw,
+              perTerm: kw.breakdown.perTerm,
+              proximity_bonus: kw.breakdown.proximity_bonus,
+              coverage_bonus: kw.breakdown.coverage_bonus,
+              exclusivity_multiplier: kw.breakdown.exclusivity_multiplier
+            }
+          })),
+          kwStats: {
+            median_raw_kw: keywordPointsResults.length > 0 ?
+              keywordPointsResults.map(kw => kw.rawKw).sort((a, b) => a - b)[Math.floor(keywordPointsResults.length / 2)] : 0,
+            min_norm: Math.min(...keywordPointsResults.map(kw => kw.kwNorm)),
+            max_norm: Math.max(...keywordPointsResults.map(kw => kw.kwNorm))
+          }
+        };
+        telemetry.recordRetrievalTrace(retrievalTrace);
+
+        console.log('✅ Keyword points ranking applied, results count:', baseFusedResults.length);
+      }
+
+      fusedResults = baseFusedResults;
+
+      // Debug: Check if target chunk survived fusion and ranking
+      const foundInFused = fusedResults?.find(r => r.id === targetId);
+      if (foundInFused) {
+        console.log('🎯 TARGET CHUNK FOUND IN FINAL FUSED RESULTS:', foundInFused.id, 'Score:', foundInFused.score);
+      } else {
+        console.log('❌ TARGET CHUNK NOT FOUND IN FINAL FUSED RESULTS');
+      }
 
       metrics.fusionDuration = performance.now() - fusionStartTime;
       metrics.finalResultCount = fusedResults.length;
@@ -445,7 +574,23 @@ export class HybridSearchServiceImpl implements HybridSearchService {
             id: result.id,
             fusedScore: result.fusedScore,
             components: result.components
-          }))
+          })),
+          // Add domainless ranking telemetry if enabled
+          domainlessEnabled,
+          ...(domainlessEnabled && {
+            queryTerms: this.domainlessQueryTerms,
+            groups: this.domainlessGroups,
+            domainlessResults: filteredResults.slice(0, 10).map(result => ({
+              id: result.id,
+              docId: result.payload?.docId,
+              fused: result.fusionScore,
+              coverage: (result as any).domainlessFeatures?.coverage,
+              proximity: (result as any).domainlessFeatures?.proximity,
+              fieldBoost: (result as any).domainlessFeatures?.fieldBoost,
+              exclusivityPenalty: (result as any).domainlessFeatures?.exclusivityPenalty,
+              final: result.score
+            }))
+          })
         };
       }
 
@@ -623,6 +768,113 @@ export class HybridSearchServiceImpl implements HybridSearchService {
   /**
      * Deduplicate results by docId, keeping the top 3 highest scoring chunks per document
      */
+    /**
+     * Apply domainless ranking features to fusion results
+     */
+    private async applyDomainlessRanking(
+      fusedResults: HybridSearchResult[],
+      query: string,
+      embeddingService: { embed(text: string): Promise<number[]> },
+      tenantId: string
+    ): Promise<HybridSearchResult[]> {
+      try {
+        console.log('📊 Loading corpus stats...');
+        const stats = loadCorpusStats(tenantId);
+        console.log('📊 Corpus stats loaded:', { totalDocs: stats.totalDocs, totalTokens: stats.totalTokens });
+
+        console.log('🔍 Extracting query terms...');
+        const qt = extractQueryTerms(query, stats);
+        console.log('🔍 Query terms extracted:', qt);
+
+        // Store for telemetry
+        this.domainlessQueryTerms = qt;
+
+        // Build groups from top phrases
+        const topN = parseInt(process.env.KEYPHRASE_TOP_N || '3');
+        console.log('🔗 Building alias clusters for top', topN, 'phrases...');
+        const groups: string[][] = [];
+
+        for (const phrase of qt.phrases.slice(0, topN)) {
+          console.log('🔗 Getting cluster for phrase:', phrase);
+          const cluster = await getAliasCluster(phrase, stats, embeddingService);
+          console.log('🔗 Cluster for', phrase, ':', cluster);
+          groups.push(cluster.members);
+        }
+
+        console.log('🔗 Final groups:', groups);
+
+        // Store for telemetry
+        this.domainlessGroups = groups;
+
+        if (groups.length === 0) {
+          return fusedResults; // No groups to rank with
+        }
+
+        // Apply ranking to each result
+        const rankedResults = await Promise.all(
+          fusedResults.map(async (result) => {
+            const candidate: Candidate = {
+              id: result.id,
+              content: result.content,
+              payload: result.payload
+            };
+
+            const fields: CandidateFields = {
+              title: result.payload?.title,
+              header: result.payload?.header,
+              sectionPath: result.payload?.sectionPath
+            };
+
+            const features = computeMatchFeatures(candidate, groups, fields);
+            const candidateTerms = candidate.content ? candidate.content.toLowerCase().split(/\s+/) : [];
+            const pen = exclusivityPenalty(candidateTerms, groups, stats);
+
+            // Debug logging for domainless ranking
+            if (features.coverage > 0 || features.proximity > 0) {
+              console.log(`🎯 CRITICAL ANSWER BOOST: Chunk ${candidate.id} contains direct answer to query "${query}"`);
+              console.log(`   Coverage: ${features.coverage}, Proximity: ${features.proximity}, FieldBoost: ${features.fieldBoost}, Penalty: ${pen}`);
+              console.log(`   Content preview: ${(candidate.content || '').substring(0, 200)}...`);
+            }
+
+            // Apply aggressive feature weights for domainless ranking
+            const coverageAlpha = parseFloat(process.env.COVERAGE_ALPHA || '0.50');
+            const proximityBeta = parseFloat(process.env.PROXIMITY_BETA || '0.30');
+            const fieldBoostDelta = parseFloat(process.env.FIELD_BOOST_DELTA || '0.20');
+            const exclusivityGamma = parseFloat(process.env.EXCLUSIVITY_GAMMA || '0.10');
+
+            const fusedScore = result.fusionScore || result.score;
+            const finalScore = fusedScore *
+              (1 + coverageAlpha * features.coverage) *
+              (1 + proximityBeta * features.proximity) *
+              (1 + fieldBoostDelta * features.fieldBoost) *
+              (1 - exclusivityGamma * pen);
+
+            return {
+              ...result,
+              score: finalScore,
+              fusionScore: finalScore,
+              // Store features for telemetry
+              domainlessFeatures: {
+                coverage: features.coverage,
+                proximity: features.proximity,
+                fieldBoost: features.fieldBoost,
+                exclusivityPenalty: pen,
+                fusedScoreBefore: fusedScore,
+                finalScoreAfter: finalScore
+              }
+            };
+          })
+        );
+
+        // Sort by final score
+        return rankedResults.sort((a, b) => (b.score || 0) - (a.score || 0));
+
+      } catch (error) {
+        console.warn('Domainless ranking failed, using original results:', error);
+        return fusedResults;
+      }
+    }
+
     private deduplicateResults<T extends { id: string; score?: number; payload?: any }>(results: T[], query?: string): T[] {
       const seen = new Map<string, T[]>();
 
@@ -657,7 +909,116 @@ export class HybridSearchServiceImpl implements HybridSearchService {
 
       return Array.from(seen.values()).flat();
     }
-}
+
+    private loadKeywordPointsConfig(): KeywordPointsConfig {
+      // Parse field weights from combined format: "body:3,title:2.2,header:1.8,section:1.3,docId:1.1"
+      const fieldWeightsStr = process.env.KW_FIELD_WEIGHTS || 'body:3,title:2.2,header:1.8,section:1.3,docId:1.1';
+      const fieldWeights: { [key: string]: number } = {};
+      fieldWeightsStr.split(',').forEach(pair => {
+        const [key, value] = pair.split(':');
+        if (key && value) {
+          fieldWeights[key.trim()] = parseFloat(value.trim());
+        }
+      });
+
+      return {
+        fieldWeights: {
+          body: fieldWeights.body || 3.0,
+          title: fieldWeights.title || 2.2,
+          header: fieldWeights.header || 1.8,
+          sectionPath: fieldWeights.section || 1.3,
+          docId: fieldWeights.docId || 1.1
+        },
+        idfGamma: parseFloat(process.env.KW_IDF_GAMMA || '0.35'),
+        rankDecay: parseFloat(process.env.KW_RANK_DECAY || '0.85'),
+        bodySatC: parseFloat(process.env.KW_BODY_SAT_C || '0.6'),
+        earlyPosTokens: parseFloat(process.env.KW_EARLY_POS_TOKENS || '250'),
+        earlyPosNudge: parseFloat(process.env.KW_EARLY_POS_NUDGE || '1.08'),
+        proxWin: parseFloat(process.env.KW_PROX_WIN || '30'),
+        proximityBeta: parseFloat(process.env.KW_PROXIMITY_BETA || '0.25'),
+        coverageAlpha: parseFloat(process.env.KW_COVERAGE_ALPHA || '0.25'),
+        exclusivityGamma: parseFloat(process.env.KW_EXCLUSIVITY_GAMMA || '0.25'),
+        lambdaKw: parseFloat(process.env.KW_LAMBDA || '0.25'),
+        clampKwNorm: parseFloat(process.env.KW_CLAMP_KW_NORM || '2.0'),
+        topKCoverage: parseInt(process.env.KW_TOPK_COVERAGE || '2'),
+        softAndStrict: process.env.KW_SOFTAND_STRICT === 'on',
+        softAndOverridePct: parseFloat(process.env.KW_SOFTAND_OVERRIDE_PCTL || '95')
+      };
+    }
+
+    private extractTermWeights(query: string, tenantId: string): TermWeight[] {
+      // Use the same term extraction as keyword search for consistency
+      const stopwords = new Set(['what', 'is', 'the', 'of', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'with', 'by']);
+      const rawTerms = query.toLowerCase().split(/\s+/);
+      const simpleTerms = rawTerms
+        .map(term => term.replace(/[^\w]/g, '')) // Remove punctuation
+        .filter(term => term.length > 2 && !stopwords.has(term)); // Filter stopwords and short terms
+
+      console.log('🎯 KEYWORD POINTS - Simple terms extracted:', simpleTerms);
+
+      // Also try complex phrase extraction as fallback
+      const qt = extractQueryTerms(query, loadCorpusStats(tenantId));
+      console.log('🎯 KEYWORD POINTS - Complex phrases extracted:', qt.phrases);
+
+      const terms: TermWeight[] = [];
+
+      // Use simple terms if no phrases found, or combine both
+      const termsToUse = qt.phrases.length > 0 ? qt.phrases : simpleTerms;
+      console.log('🎯 KEYWORD POINTS - Final terms to use:', termsToUse);
+
+      // Calculate weights for terms
+      for (let i = 0; i < termsToUse.length; i++) {
+        const term = termsToUse[i];
+        const normalizedTerm = term.toLowerCase();
+        const baseWeight = 1.0;
+        const idfWeight = Math.pow(this.calculateIDF(normalizedTerm, qt), this.loadKeywordPointsConfig().idfGamma);
+        const phraseBonus = termsToUse.length > 1 ? 1.25 : 1.0;
+        const weight = baseWeight * idfWeight * phraseBonus;
+
+        terms.push({
+          term: normalizedTerm,
+          weight,
+          rank: i + 1
+        });
+      }
+
+      console.log('🎯 KEYWORD POINTS - Final TermWeight array:', terms);
+      return terms;
+    }
+
+    private calculateIDF(term: string, qt: any): number {
+      // Simplified IDF calculation - could be enhanced
+      const totalDocs = qt.totalDocs || 10000;
+      const docFreq = Math.max(1, totalDocs * 0.1); // Assume 10% of docs contain common terms
+      return Math.log(totalDocs / docFreq);
+    }
+
+    private buildCandidateSignals(fusedResults: HybridSearchResult[], keywordResults: HybridSearchResult[], originalFused: HybridSearchResult[]): CandidateSignals[] {
+      return fusedResults.map(result => {
+        // Find corresponding keyword result for term hits from keyword search results
+        const keywordResult = keywordResults.find((r: any) => r.id === result.id && r.termHits);
+
+        const signals: CandidateSignals = {
+          id: result.id,
+          docId: result.payload?.docId,
+          sectionPath: result.payload?.sectionPath,
+          title: result.payload?.title,
+          header: result.payload?.header,
+          body: result.content,
+          tokenPositions: (keywordResult as any)?.tokenPositions || {},
+          termHits: (keywordResult as any)?.termHits || {},
+          fusedScore: result.fusionScore || result.score
+        };
+
+        // Debug for target chunk
+        if (result.id === '67001fb9-f2f7-adb3-712b-5df9dc00c772') {
+          console.log('🎯 TARGET CHUNK CANDIDATE SIGNALS:', JSON.stringify(signals, null, 2));
+        }
+
+        return signals;
+      });
+    }
+  }
 
 export function createHybridSearchService(
   vectorSearchService: VectorSearchService,

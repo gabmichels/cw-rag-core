@@ -16,6 +16,7 @@ export interface IntentConfig {
   retrievalK: number;
   strategy: FusionStrategyName;
   kParam?: number;
+  expandedQuery?: string;
 }
 
 /**
@@ -82,8 +83,18 @@ export class QueryIntentDetector {
   /**
    * Get configuration for detected intent
    */
-  getIntentConfig(intent: QueryIntent): IntentConfig {
-    return QueryIntentDetector.INTENT_CONFIGS[intent];
+  getIntentConfig(intent: QueryIntent, query?: string): IntentConfig {
+    const baseConfig = QueryIntentDetector.INTENT_CONFIGS[intent];
+    if (query) {
+      const expandedQuery = this.expandQueryForIntent(query, intent);
+      if (expandedQuery) {
+        return {
+          ...baseConfig,
+          expandedQuery
+        };
+      }
+    }
+    return baseConfig;
   }
 
   /**
@@ -93,6 +104,9 @@ export class QueryIntentDetector {
     const intent = this.detectIntent(query);
     const baseConfig = this.getIntentConfig(intent);
 
+    // Query expansion for class-specific ability queries
+    const expandedQuery = this.expandQueryForIntent(query, intent);
+
     // High-confidence shortcut: if top vector normalized ≥ 0.70 and intent ∈ {definition, measurement, exact-lookup},
     // temporarily set strategy "max_confidence" for top-K=3 fusion
     if (topVectorScore !== undefined &&
@@ -101,11 +115,23 @@ export class QueryIntentDetector {
          intent === QueryIntent.ENTITY_LOOKUP)) {
       return {
         ...baseConfig,
-        strategy: "max_confidence"
+        strategy: "max_confidence",
+        expandedQuery
       };
     }
 
-    return baseConfig;
+    return {
+      ...baseConfig,
+      expandedQuery
+    };
+  }
+
+  /**
+   * Expand query for better retrieval of class-specific abilities
+   */
+  private expandQueryForIntent(query: string, intent: QueryIntent): string | undefined {
+    // Domainless: no query expansion
+    return undefined;
   }
 }
 

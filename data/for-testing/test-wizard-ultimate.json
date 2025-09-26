@@ -1,0 +1,13 @@
+{
+  "query": "What is the Ultimate of the Wizard?",
+  "userContext": {
+    "id": "test-user",
+    "groupIds": ["default"],
+    "tenantId": "zenithfall"
+  },
+  "k": 20,
+  "includeDebugInfo": true,
+  "hybridSearch": {
+    "rrfK": 5
+  }
+}

@@ -20,6 +20,84 @@ export interface RetrievalRequest {
   filter?: Record<string, any>;
 }
 
+// Keyword Points Ranker types
+export interface KeywordPointsConfig {
+  fieldWeights: { body: number; title: number; header: number; sectionPath: number; docId: number; };
+  idfGamma: number;
+  rankDecay: number;
+  bodySatC: number;
+  earlyPosTokens: number;
+  earlyPosNudge: number;
+  proxWin: number;
+  proximityBeta: number;
+  coverageAlpha: number;
+  exclusivityGamma: number;
+  lambdaKw: number;
+  clampKwNorm?: number;
+  topKCoverage?: number;
+  softAndStrict?: boolean;
+  softAndOverridePct?: number;
+}
+
+export interface TermHit {
+  field: "body"|"title"|"header"|"sectionPath"|"docId";
+  match: "exact"|"lemma"|"fuzzy";
+  positions?: number[];
+}
+
+export interface CandidateSignals {
+  id: string;
+  docId?: string;
+  sectionPath?: string;
+  title?: string;
+  header?: string;
+  body?: string;
+  tokenPositions?: Record<string, number[]>;
+  termHits: Record<string, TermHit[]>;
+  fusedScore: number;
+}
+
+export interface TermWeight { term: string; weight: number; rank: number; }
+
+// Keyword Points Ranker types
+export interface KeywordPointsConfig {
+  fieldWeights: { body: number; title: number; header: number; sectionPath: number; docId: number; };
+  idfGamma: number;
+  rankDecay: number;
+  bodySatC: number;
+  earlyPosTokens: number;
+  earlyPosNudge: number;
+  proxWin: number;
+  proximityBeta: number;
+  coverageAlpha: number;
+  exclusivityGamma: number;
+  lambdaKw: number;
+  clampKwNorm?: number;
+  topKCoverage?: number;
+  softAndStrict?: boolean;
+  softAndOverridePct?: number;
+}
+
+export interface TermHit {
+  field: "body"|"title"|"header"|"sectionPath"|"docId";
+  match: "exact"|"lemma"|"fuzzy";
+  positions?: number[];
+}
+
+export interface CandidateSignals {
+  id: string;
+  docId?: string;
+  sectionPath?: string;
+  title?: string;
+  header?: string;
+  body?: string;
+  tokenPositions?: Record<string, number[]>;
+  termHits: Record<string, TermHit[]>;
+  fusedScore: number;
+}
+
+export interface TermWeight { term: string; weight: number; rank: number; }
+
 // Ask API types with Phase 2 pipeline support
 export interface AskRequest {
   query: string;

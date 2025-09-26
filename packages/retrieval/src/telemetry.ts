@@ -4,6 +4,41 @@
 
 import { configManager } from './config-manager.js';
 
+export interface RetrievalTrace {
+  queryId: string;
+  tenantId?: string;
+  query: string;
+  terms: Array<{ term: string; weight: number; rank: number }>;
+  candidates: Array<{
+    id: string;
+    fusedScore: number;
+    keywordPoints?: {
+      raw_kw: number;
+      kw_norm: number;
+      lambda: number;
+      final_after_kw: number;
+      perTerm: Array<{
+        term: string;
+        rank: number;
+        weight: number;
+        rankDecay: number;
+        bestField: string;
+        match: string;
+        bodyHits: number;
+        points: number;
+      }>;
+      proximity_bonus: number;
+      coverage_bonus: number;
+      exclusivity_multiplier: number;
+    };
+  }>;
+  kwStats?: {
+    median_raw_kw: number;
+    min_norm: number;
+    max_norm: number;
+  };
+}
+
 export interface TelemetryEvent {
   event: string;
   timestamp: string;
@@ -82,21 +117,34 @@ export class RetrievalTelemetry {
   }
 
   /**
-   * Record errors
-   */
-  recordError(error: Error, context: string, tenantId?: string, metadata?: any): void {
-    this.record({
-      event: 'error_occurred',
-      tenantId,
-      success: false,
-      metadata: {
-        error: error.message,
-        stack: error.stack,
-        context,
-        ...metadata
-      }
-    });
-  }
+    * Record errors
+    */
+   recordError(error: Error, context: string, tenantId?: string, metadata?: any): void {
+     this.record({
+       event: 'error_occurred',
+       tenantId,
+       success: false,
+       metadata: {
+         error: error.message,
+         stack: error.stack,
+         context,
+         ...metadata
+       }
+     });
+   }
+
+   /**
+    * Record retrieval trace with keyword points
+    */
+   recordRetrievalTrace(trace: RetrievalTrace): void {
+     this.record({
+       event: 'retrieval_trace',
+       queryId: trace.queryId,
+       tenantId: trace.tenantId,
+       success: true,
+       metadata: trace
+     });
+   }
 
   /**
    * Get aggregated metrics

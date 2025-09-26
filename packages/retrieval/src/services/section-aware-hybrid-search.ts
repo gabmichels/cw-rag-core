@@ -104,7 +104,8 @@ export class SectionAwareHybridSearchService extends HybridSearchServiceImpl {
       const sectionPromise = this.performSectionCompletion(
         standardResult.finalResults,
         collectionName,
-        userContext
+        userContext,
+        request.query
       );
 
       const timeoutPromise = new Promise<any>((_, reject) => {
@@ -167,7 +168,8 @@ export class SectionAwareHybridSearchService extends HybridSearchServiceImpl {
   private async performSectionCompletion(
     results: HybridSearchResult[],
     collectionName: string,
-    userContext: UserContext
+    userContext: UserContext,
+    query?: string
   ): Promise<{
     sectionsDetected: number;
     sectionsCompleted: number;
@@ -192,9 +194,20 @@ export class SectionAwareHybridSearchService extends HybridSearchServiceImpl {
 
     console.log('🎯 Detected', detectedSections.length, 'sections for potential completion');
 
-    // Limit sections to process based on configuration
+    // Limit sections to process based on configuration, prioritizing query-relevant sections
     const sectionsToProcess = detectedSections
       .filter(section => section.confidence >= this.sectionConfig.minTriggerConfidence)
+      .map(section => ({
+        ...section,
+        queryRelevance: query ? this.calculateQueryRelevance(section, query) : 0
+      }))
+      .sort((a, b) => {
+        // Sort by query relevance first, then by confidence
+        if (a.queryRelevance !== b.queryRelevance) {
+          return b.queryRelevance - a.queryRelevance;
+        }
+        return b.confidence - a.confidence;
+      })
       .slice(0, this.sectionConfig.maxSectionsToComplete);
 
     console.log('🔧 Processing', sectionsToProcess.length, 'sections (filtered by confidence and limit)');
@@ -385,6 +398,14 @@ export class SectionAwareHybridSearchService extends HybridSearchServiceImpl {
   updateSectionConfig(config: Partial<SectionAwareSearchConfig>): void {
     this.sectionConfig = { ...this.sectionConfig, ...config };
     console.log('⚙️ Section-aware config updated:', this.sectionConfig);
+  }
+
+  /**
+   * Calculate query relevance for a section
+   */
+  private calculateQueryRelevance(section: any, query: string): number {
+    // Domainless: no hardcoded relevance calculation
+    return 0;
   }
 
   /**

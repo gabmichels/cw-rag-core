@@ -26,13 +26,15 @@ export declare class AnswerSynthesisServiceImpl implements AnswerSynthesisServic
     private lastQualityMetrics;
     private guardrailService;
     private streamingEventHandler;
-    constructor(llmClientFactory: LLMClientFactory, citationService: CitationService, maxContextLength?: number);
+    private contextPacker;
+    constructor(llmClientFactory: LLMClientFactory, citationService: CitationService, maxContextLength?: number, embeddingService?: {
+        embed(text: string): Promise<number[]>;
+    });
     synthesizeAnswer(request: SynthesisRequest): Promise<SynthesisResponse>;
     synthesizeAnswerStreaming(request: SynthesisRequest): AsyncGenerator<StreamingSynthesisResponse, void, unknown>;
     getQualityMetrics(): AnswerQualityMetrics | null;
     validateConfiguration(tenantId: string): Promise<boolean>;
     private validateRequest;
-    private prepareContext;
     private formatAnswerWithCitations;
     private calculateConfidence;
     private calculateFreshnessStats;
@@ -42,7 +44,9 @@ export declare class AnswerSynthesisServiceImpl implements AnswerSynthesisServic
  */
 export declare class EnhancedAnswerSynthesisService extends AnswerSynthesisServiceImpl {
     private qualityThresholds;
-    constructor(llmClientFactory: LLMClientFactory, citationService: CitationService, maxContextLength?: number, qualityThresholds?: {
+    constructor(llmClientFactory: LLMClientFactory, citationService: CitationService, maxContextLength?: number, embeddingService?: {
+        embed(text: string): Promise<number[]>;
+    }, qualityThresholds?: {
         minConfidence: number;
         minCitations: number;
         maxLatency: number;
@@ -54,4 +58,6 @@ export declare class EnhancedAnswerSynthesisService extends AnswerSynthesisServi
 /**
  * Factory function for creating answer synthesis service
  */
-export declare function createAnswerSynthesisService(enhanced?: boolean, maxContextLength?: number): AnswerSynthesisService;
+export declare function createAnswerSynthesisService(enhanced?: boolean, maxContextLength?: number, embeddingService?: {
+    embed(text: string): Promise<number[]>;
+}): AnswerSynthesisService;
