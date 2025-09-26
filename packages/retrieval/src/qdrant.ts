@@ -1,8 +1,26 @@
 import { Vector } from './types/vector.js';
 
+export interface QdrantScrollOptions {
+  filter?: Record<string, any>;
+  limit?: number;
+  with_payload?: boolean;
+  with_vector?: boolean;
+  offset?: string;
+}
+
+export interface QdrantScrollResult {
+  points: Array<{
+    id: string | number;
+    payload?: Record<string, any>;
+    vector?: number[];
+  }>;
+  next_page_offset?: string;
+}
+
 export interface QdrantClient {
   upsertVectors(collectionName: string, vectors: Vector[]): Promise<void>;
   searchVectors(collectionName: string, queryVector: number[], limit: number, filter?: Record<string, any>): Promise<Vector[]>;
+  scroll(collectionName: string, options?: QdrantScrollOptions): Promise<QdrantScrollResult>;
   // Placeholder for other Qdrant operations
 }
 
@@ -24,5 +42,25 @@ export class QdrantClientStub implements QdrantClient {
       payload: { docId: `mock-doc-${i}`, tenantId: 'mock-tenant' },
       score: Math.random(),
     }));
+  }
+
+  async scroll(collectionName: string, options?: QdrantScrollOptions): Promise<QdrantScrollResult> {
+    console.log(`Stub: Scrolling collection ${collectionName} with options:`, options);
+    // Simulate async operation
+    await new Promise(resolve => setTimeout(resolve, 100));
+
+    const limit = options?.limit || 10;
+    return {
+      points: Array.from({ length: limit }).map((_, i) => ({
+        id: `mock-point-${i}`,
+        payload: {
+          content: `Mock content ${i}`,
+          docId: `mock-doc-${i}`,
+          tenantId: 'mock-tenant'
+        },
+        vector: options?.with_vector ? Array.from({ length: 768 }).map(() => Math.random()) : undefined,
+      })),
+      next_page_offset: undefined,
+    };
   }
 }

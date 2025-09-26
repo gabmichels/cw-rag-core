@@ -223,7 +223,7 @@ describe('Enhanced RBAC Security Tests', () => {
       });
       expect(filter.must[1]).toEqual({
         key: 'acl',
-        match: { any: ['user1', 'group1', 'group2'] }
+        match: { any: ['user1', 'group1', 'group2', 'public'] }
       });
     });
 

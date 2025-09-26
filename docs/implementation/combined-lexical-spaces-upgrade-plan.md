@@ -50,8 +50,8 @@ Focus on data structure and ingestion. Build registries, resolvers, and UI for s
 ### Phase 2: Lexical Retrieval Upgrade (Query Layer)
 Build pack-based system for nuanced lexical search, integrating with Spaces.
 
-- [ ] **Design Pack Interfaces and Registries**: Define LanguagePack/DomainPack/TenantPack schemas (JSON/YAML + tiny TS functions). Registries for per-tenant resolution.
-- [ ] **Implement Language Router and Packs**: Detect language, load packs (e.g., EN/DE tokenization, stopwords, synonyms, decompounding). Add normalization helpers.
+- [x] **Design Pack Interfaces and Registries**: Define LanguagePack/DomainPack/TenantPack schemas (JSON/YAML + tiny TS functions). Registries for per-tenant resolution.
+- [x] **Implement Language Router and Packs**: Detect language, load packs (e.g., EN/DE tokenization, stopwords, synonyms, decompounding). Add normalization helpers.
 
 #### Test Phase 2.1: Pack Interfaces and Language Processing Testing
 - [ ] **Unit Tests**: Test pack schemas, language detection (e.g., EN vs DE on chunked doc samples), tokenization/normalization (verify German umlaut handling).
@@ -59,8 +59,8 @@ Build pack-based system for nuanced lexical search, integrating with Spaces.
 - [ ] **Integration Eval**: Ingest chunked doc with EN/DE mixed; query "skill progression framework"—check if lexical features improve hit ranking (e.g., top chunks for "crafting" include relevant abilities).
 - [ ] **Performance Check**: Feature extraction on 100 chunks <100ms; verify no regressions in tokenization.
 
-- [ ] **Build Feature Extractor**: Generic CORE/SUPPORT/phrases/numbers extraction, using packs for stopwords/collocations. Pre-compute PMI for phrases.
-- [ ] **Create Query Builder**: Engine-agnostic DSL for fielded dis_max, phrases/proximity, coverage policies. Adapter for Qdrant (use payloads for lexical filters).
+- [x] **Build Feature Extractor**: Generic CORE/SUPPORT/phrases/numbers extraction, using packs for stopwords/collocations. Pre-compute PMI for phrases.
+- [x] **Create Query Builder**: Engine-agnostic DSL for fielded dis_max, phrases/proximity, coverage policies. Adapter for Qdrant (use payloads for lexical filters).
 
 #### Test Phase 2.2: Query Building and Façade Testing
 - [ ] **Unit Tests**: Test DSL generation for queries (e.g., dis_max with CORE boosts); verify Qdrant adapter uses payloads for filters.
@@ -68,12 +68,12 @@ Build pack-based system for nuanced lexical search, integrating with Spaces.
 - [ ] **Eval with Chunked Doc**: Ingest chunked doc, query "grandmaster level unlocks"—verify lexical nuances (e.g., phrases like "Sherlock Deduction") rank top-3; compare nDCG@10 vs legacy.
 - [ ] **A/B Toggle Test**: Switch to legacy builder; ensure no API breakage, measurable improvement with packs.
 
-- [ ] **Implement Lexical Search Façade**: `lexicalSearch.search()` with routing via tenant/lang/domain packs, diagnostics, and A/B toggle for legacy.
-- [ ] **Add Diagnostics and Logging**: Per-result diagnostics (coreMatched, coverageRatio), structured logs per stage. Debug mode for traces.
-- [ ] **Integrate SystemPrompt Resolution**: Per-tenant prompt fallback (tenant → language → global), config-driven.
-- [ ] **Update Retrieval Pipeline**: Tie into Spaces—route queries to 1-2 spaces, apply lexical filters via Qdrant payloads.
-- [ ] **Tests and Evals**: Unit tests for feature extraction per language (e.g., EN/DE on chunked doc samples); integration for pack wiring (verify tenant/lang/domain resolution); elaborate eval on chunked "Skill Progression Framework" doc—query for "knowledge domain", "crafting abilities", measure nDCG@10 (+5-12% gain), space-precision@k (>0.9); mixed DE/EN toy set for multi-language.
-- [ ] **Documentation**: UPGRADE.md for adding languages/tenants, migration guide.
+- [x] **Implement Lexical Search Façade**: `lexicalSearch.search()` with routing via tenant/lang/domain packs, diagnostics, and A/B toggle for legacy.
+- [x] **Add Diagnostics and Logging**: Per-result diagnostics (coreMatched, coverageRatio), structured logs per stage. Debug mode for traces.
+- [x] **Integrate SystemPrompt Resolution**: Per-tenant prompt fallback (tenant → language → global), config-driven.
+- [x] **Update Retrieval Pipeline**: Tie into Spaces—route queries to 1-2 spaces, apply lexical filters via Qdrant payloads.
+- [x] **Tests and Evals**: Unit tests for feature extraction per language (e.g., EN/DE on chunked doc samples); integration for pack wiring (verify tenant/lang/domain resolution); elaborate eval on chunked "Skill Progression Framework" doc—query for "knowledge domain", "crafting abilities", measure nDCG@10 (+5-12% gain), space-precision@k (>0.9); mixed DE/EN toy set for multi-language.
+- [x] **Documentation**: UPGRADE.md for adding languages/tenants, migration guide.
 
 ### Phase 3: Integration, Testing, and Optimization
 Combine layers, test end-to-end, and optimize for scale.

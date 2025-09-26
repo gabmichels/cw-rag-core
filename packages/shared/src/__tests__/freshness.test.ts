@@ -150,7 +150,7 @@ describe('Freshness Utilities', () => {
       expect(stats.freshPercentage).toBe(40);
       expect(stats.recentPercentage).toBe(20);
       expect(stats.stalePercentage).toBe(40);
-      expect(stats.averageAge).toBeGreaterThan(0);
+      expect(stats.avgAgeInDays).toBeGreaterThan(0);
     });
 
     it('should handle empty document list', () => {
@@ -163,7 +163,7 @@ describe('Freshness Utilities', () => {
       expect(stats.freshPercentage).toBe(0);
       expect(stats.recentPercentage).toBe(0);
       expect(stats.stalePercentage).toBe(0);
-      expect(stats.averageAge).toBe(0);
+      expect(stats.avgAgeInDays).toBe(0);
     });
 
     it('should skip documents with invalid timestamps', () => {

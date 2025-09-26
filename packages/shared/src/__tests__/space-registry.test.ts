@@ -35,7 +35,7 @@ describe('SpaceRegistryService', () => {
       await service.addSpace(testTenantId, space);
 
       const registry = await service.loadRegistry(testTenantId);
-      expect(registry.spaces.some(s => s.id === 'unique-test-space')).toBe(true);
+      expect(registry.spaces.some(s => s.id === space.id)).toBe(true);
     });
   });
 });

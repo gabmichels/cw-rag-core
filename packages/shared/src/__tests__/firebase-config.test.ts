@@ -140,7 +140,9 @@ describe('Environment Detection', () => {
 
     it('should default to basic for production', () => {
       process.env.NODE_ENV = 'production';
+      process.env.FIREBASE_PROJECT_ID = 'test-project'; // Required for isProduction() to return true
       expect(EnvironmentDetector.getTenantTier()).toBe('basic');
+      delete process.env.FIREBASE_PROJECT_ID; // Clean up
     });
 
     it('should use environment variable', () => {
