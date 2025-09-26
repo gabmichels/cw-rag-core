@@ -111,7 +111,7 @@ export class AnswerSynthesisServiceImpl implements AnswerSynthesisService {
           confidence: guardrailDecision.score.confidence, // Use confidence from guardrailDecision
           modelUsed: 'guardrail',
           contextTruncated: false,
-          freshnessStats: this.calculateFreshnessStats(request.documents, tenantId)
+          freshnessStats: this.calculateFreshnessStats(request.documents || [], tenantId)
         };
       }
 
@@ -267,7 +267,7 @@ export class AnswerSynthesisServiceImpl implements AnswerSynthesisService {
             confidence: guardrailDecision.score.confidence, // Use confidence from guardrailDecision
             modelUsed: 'guardrail',
             contextTruncated: false,
-            freshnessStats: this.calculateFreshnessStats(request.documents, tenantId)
+            freshnessStats: this.calculateFreshnessStats(request.documents || [], tenantId)
           }
         };
 
@@ -369,7 +369,7 @@ export class AnswerSynthesisServiceImpl implements AnswerSynthesisService {
       );
 
       // Calculate freshness statistics
-      const freshnessStats = this.calculateFreshnessStats(request.documents, tenantId);
+      const freshnessStats = this.calculateFreshnessStats(request.documents || [], tenantId);
 
       // Calculate confidence (this confidence is for the LLM's raw answer, distinct from guardrail's overall decision)
       const confidence = this.calculateConfidence(

@@ -19,7 +19,6 @@
     "firebase": "^10.7.1",
     "lucide-react": "^0.544.0",
     "next": "14.2.5",
-    "node-emoji": "^2.2.0",
     "react": "^18",
     "react-dom": "^18",
     "react-highlight-words": "^0.21.0",
@@ -33,7 +32,6 @@
   "devDependencies": {
     "@types/emoji-js": "^3.5.2",
     "@types/node": "^20",
-    "@types/node-emoji": "^2.1.0",
     "@types/react": "^18",
     "@types/react-dom": "^18",
     "@types/react-highlight-words": "^0.20.0",

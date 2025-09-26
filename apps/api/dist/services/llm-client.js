@@ -372,11 +372,10 @@ INSTRUCTIONS FOR HIGH-CONFIDENCE QUERIES:
 9. Since the system has high confidence, provide the best possible answer from the available context
 
 SPECIAL INSTRUCTIONS FOR TABLES AND STRUCTURED CONTENT:
-- When showing skill tables, tier lists, or any structured data, include ALL tiers/rows/entries from the context
-- Do NOT omit any skill tiers (Novice, Apprentice, Journeyman, Master, Grandmaster, Legendary, Mythic)
+- When showing tables, lists, or any structured data, include ALL rows/entries/information from the context
 - If the context contains multiple parts of the same table, combine them into one complete table
 - Preserve the original structure and formatting of tables as much as possible
-- When reconstructing tables, maintain the logical order (e.g., skill progression from lowest to highest tier)
+- When reconstructing tables, maintain the logical order (e.g., 1. First Section to N. Last Section)
 
 Context:
 {context}`;

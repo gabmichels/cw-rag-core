@@ -1,6 +1,7 @@
 #!/bin/bash
-# Deploy Zenithfall to Firebase/GCP
-# This script handles the complete deployment process
+# Deploy Zenithfall RAG Stack to Google Cloud Run
+# This script deploys the complete docker-compose.zenithfall.yml stack as Cloud Run services
+# Updated to use GCP Secret Manager for sensitive data
 
 set -e
 
@@ -11,21 +12,37 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Function to print colored output
-print_status() {
-    echo -e "${BLUE}[INFO]${NC} $1"
+# Configuration
+PROJECT_ID="rag-zenithfall-827ad2"
+REGION="europe-west3"
+REGISTRY="europe-west3-docker.pkg.dev"
+TENANT="zenithfall"
+
+# Service Names (following docker-compose naming)
+QDRANT_SERVICE="qdrant"
+EMBEDDINGS_SERVICE="embeddings"
+API_SERVICE="rag-api"
+WEB_SERVICE="rag-web"
+
+echo -e "${BLUE}🚀 Deploying Zenithfall RAG Stack to Google Cloud Run${NC}"
+echo -e "${BLUE}Project: ${PROJECT_ID}${NC}"
+echo -e "${BLUE}Region: ${REGION}${NC}"
+echo -e "${BLUE}Tenant: ${TENANT}${NC}"
+echo ""
+
+# Function to print step headers
+print_step() {
+    echo -e "${YELLOW}📋 Step $1: $2${NC}"
 }
 
-print_success() {
-    echo -e "${GREEN}[SUCCESS]${NC} $1"
-}
-
-print_warning() {
-    echo -e "${YELLOW}[WARNING]${NC} $1"
-}
-
-print_error() {
-    echo -e "${RED}[ERROR]${NC} $1"
+# Function to check command success
+check_success() {
+    if [ $? -eq 0 ]; then
+        echo -e "${GREEN}✅ $1 completed successfully${NC}"
+    else
+        echo -e "${RED}❌ $1 failed${NC}"
+        exit 1
+    fi
 }
 
 # Function to check if command exists
@@ -39,16 +56,8 @@ check_prerequisites() {
 
     local missing_tools=()
 
-    if ! command_exists terraform; then
-        missing_tools+=("terraform")
-    fi
-
     if ! command_exists gcloud; then
         missing_tools+=("gcloud")
-    fi
-
-    if ! command_exists firebase; then
-        missing_tools+=("firebase-tools")
     fi
 
     if ! command_exists docker; then
@@ -68,273 +77,164 @@ check_prerequisites() {
     print_success "All prerequisites met"
 }
 
-# Function to validate billing account
-validate_billing_account() {
-    local billing_account="$1"
+# Function to print colored output
+print_status() {
+    echo -e "${BLUE}[INFO]${NC} $1"
+}
 
-    if [ -z "$billing_account" ]; then
-        print_error "Billing account not provided"
-        echo "Usage: $0 [billing-account-id]"
-        echo "Example: $0 0X0X0X-0X0X0X-0X0X0X"
-        exit 1
-    fi
+print_success() {
+    echo -e "${GREEN}[SUCCESS]${NC} $1"
+}
 
-    # Check if billing account exists and is accessible
-    if ! gcloud billing accounts describe "$billing_account" >/dev/null 2>&1; then
-        print_error "Cannot access billing account: $billing_account"
+print_warning() {
+    echo -e "${YELLOW}[WARNING]${NC} $1"
+}
+
+print_error() {
+    echo -e "${RED}[ERROR]${NC} $1"
+}
+
+# Function to validate project access
+validate_project_access() {
+    print_status "Validating GCP project access..."
+
+    # Check if we can access the project
+    if ! gcloud projects describe "$PROJECT_ID" >/dev/null 2>&1; then
+        print_error "Cannot access GCP project: $PROJECT_ID"
         print_error "Please check:"
-        print_error "1. The billing account ID is correct"
-        print_error "2. You have access to the billing account"
+        print_error "1. The project ID is correct"
+        print_error "2. You have access to the project"
         print_error "3. You are authenticated with gcloud (run: gcloud auth login)"
         exit 1
     fi
 
-    print_success "Billing account validated: $billing_account"
+    print_success "Project access validated: $PROJECT_ID"
 }
 
-# Function to deploy infrastructure with Terraform
+# Function to deploy infrastructure with Terraform (minimal)
 deploy_infrastructure() {
-    local billing_account="$1"
+    print_status "Setting up GCP infrastructure..."
 
-    print_status "Deploying Firebase infrastructure..."
+    # Set region for use in other functions
+    export REGION="europe-west3"
 
-    cd infrastructure/terraform/zenithfall
+    print_success "Infrastructure setup completed"
+}
 
-    # Initialize Terraform
-    terraform init
+# Function to build and deploy all services
+deploy_services() {
+    print_status "Building and deploying all services..."
 
-    # Create terraform.tfvars if it doesn't exist
-    if [ ! -f terraform.tfvars ]; then
-        print_status "Creating terraform.tfvars..."
-        cat > terraform.tfvars << EOF
-billing_account = "$billing_account"
-region = "europe-west3"
-firebase_location = "eur3"
-tier = "development"
-EOF
-        print_success "Created terraform.tfvars"
-    else
-        print_warning "terraform.tfvars already exists, using existing configuration"
-    fi
+    # Step 1: Set GCP Project
+    print_step "1" "Setting GCP Project"
+    gcloud config set project $PROJECT_ID
+    check_success "Project configuration"
 
-    # Plan and apply
-    terraform plan -out=zenithfall.tfplan
-    terraform apply zenithfall.tfplan
+    # Step 2: Configure Docker Authentication
+    print_step "2" "Configuring Docker Authentication"
+    gcloud auth configure-docker $REGISTRY
+    check_success "Docker authentication"
 
-    # Get outputs
-    PROJECT_ID=$(terraform output -raw zenithfall_project_id)
-    API_URL=$(terraform output -raw zenithfall_api_url)
-    WEB_URL=$(terraform output -raw zenithfall_web_url)
+    # Step 3: Build and Push API Container
+    print_step "3" "Building and Pushing API Container"
+    echo "Building API container..."
+    docker build -t $REGISTRY/$PROJECT_ID/rag-containers/rag-api:latest -f apps/api/Dockerfile .
+    check_success "API container build"
 
-    print_success "Infrastructure deployed successfully"
-    print_success "Project ID: $PROJECT_ID"
-    print_success "API URL: $API_URL"
-    print_success "Web URL: $WEB_URL"
+    echo "Pushing API container..."
+    docker push $REGISTRY/$PROJECT_ID/rag-containers/rag-api:latest
+    check_success "API container push"
 
-    cd - > /dev/null
+    # Step 4: Build and Push Web Container
+    print_step "4" "Building and Pushing Web Container"
+    echo "Building web container..."
+    docker build -t $REGISTRY/$PROJECT_ID/rag-containers/rag-web:latest -f apps/web/Dockerfile .
+    check_success "Web container build"
+
+    echo "Pushing web container..."
+    docker push $REGISTRY/$PROJECT_ID/rag-containers/rag-web:latest
+    check_success "Web container push"
+
+    # Step 5: Deploy Qdrant Service
+    print_step "5" "Deploying Qdrant Vector Database"
+    gcloud run deploy $QDRANT_SERVICE \
+      --image=qdrant/qdrant:latest \
+      --region=$REGION \
+      --platform=managed \
+      --allow-unauthenticated \
+      --port=6333 \
+      --memory=2Gi \
+      --cpu=1 \
+      --max-instances=5 \
+      --set-env-vars="QDRANT__STORAGE__STORAGE_PATH=/qdrant/data"
+    check_success "Qdrant deployment"
+
+    QDRANT_URL=$(gcloud run services describe $QDRANT_SERVICE --region=$REGION --format="value(status.url)")
+    echo -e "${GREEN}Qdrant URL: $QDRANT_URL${NC}"
+
+    # Step 6: Deploy Embeddings Service
+    print_step "6" "Deploying Embeddings Service"
+    echo "Pulling and retagging embeddings image..."
+    docker pull ghcr.io/huggingface/text-embeddings-inference:cpu-1.8
+    docker tag ghcr.io/huggingface/text-embeddings-inference:cpu-1.8 $REGISTRY/$PROJECT_ID/rag-containers/embeddings:latest
+    docker push $REGISTRY/$PROJECT_ID/rag-containers/embeddings:latest
+    check_success "Embeddings image preparation"
+
+    gcloud run deploy $EMBEDDINGS_SERVICE \
+      --image=$REGISTRY/$PROJECT_ID/rag-containers/embeddings:latest \
+      --region=$REGION \
+      --platform=managed \
+      --allow-unauthenticated \
+      --port=80 \
+      --memory=8Gi \
+      --cpu=4 \
+      --max-instances=3 \
+      --timeout=900 \
+      --no-cpu-throttling \
+      --set-env-vars="MODEL_ID=BAAI/bge-small-en-v1.5,REVISION=main,MAX_CONCURRENT_REQUESTS=512,MAX_BATCH_TOKENS=65536,MAX_BATCH_REQUESTS=1024,MAX_CLIENT_BATCH_SIZE=32"
+    check_success "Embeddings deployment"
+
+    EMBEDDINGS_URL=$(gcloud run services describe $EMBEDDINGS_SERVICE --region=$REGION --format="value(status.url)")
+    echo -e "${GREEN}Embeddings URL: $EMBEDDINGS_URL${NC}"
+
+    # Step 7: Deploy API Service with secrets
+    print_step "7" "Deploying API Service"
+    gcloud run deploy $API_SERVICE \
+      --image=$REGISTRY/$PROJECT_ID/rag-containers/rag-api:latest \
+      --region=$REGION \
+      --platform=managed \
+      --allow-unauthenticated \
+      --port=3000 \
+      --memory=4Gi \
+      --cpu=2 \
+      --max-instances=10 \
+      --timeout=900 \
+      --set-env-vars="NODE_ENV=production,HOST=0.0.0.0,QDRANT_URL=$QDRANT_URL,QDRANT_COLLECTION=docs_v1,CORS_ORIGIN=https://rag-$TENANT-827ad2.web.app,TENANT=$TENANT,VECTOR_DIM=384,PII_POLICY=strict,EMBEDDINGS_PROVIDER=huggingface,EMBEDDINGS_MODEL=BAAI/bge-small-en-v1.5,EMBEDDINGS_URL=$EMBEDDINGS_URL,LLM_ENABLED=true,LLM_PROVIDER=openai,LLM_MODEL=gpt-4-1106-preview,LLM_STREAMING=true,LLM_TIMEOUT_MS=25000,ANSWERABILITY_THRESHOLD=0.01,VECTOR_SEARCH_TIMEOUT_MS=8000,KEYWORD_SEARCH_TIMEOUT_MS=5000,RERANKER_TIMEOUT_MS=15000,OVERALL_TIMEOUT_MS=60000,EMBEDDING_TIMEOUT_MS=8000,RATE_LIMIT_PER_IP=100,RATE_LIMIT_PER_USER=1000,RATE_LIMIT_PER_TENANT=10000,RATE_LIMIT_WINDOW_MINUTES=1" \
+      --set-secrets="OPENAI_API_KEY=zenithfall-openai-api-key:latest,INGEST_TOKEN=zenithfall-ingest-token:latest"
+    check_success "API deployment"
+
+    API_URL=$(gcloud run services describe $API_SERVICE --region=$REGION --format="value(status.url)")
+    echo -e "${GREEN}API URL: $API_URL${NC}"
+
+    # Step 8: Deploy Web Service
+    print_step "8" "Deploying Web Service"
+    gcloud run deploy $WEB_SERVICE \
+      --image=$REGISTRY/$PROJECT_ID/rag-containers/rag-web:latest \
+      --region=$REGION \
+      --platform=managed \
+      --allow-unauthenticated \
+      --port=3000 \
+      --memory=2Gi \
+      --cpu=1 \
+      --max-instances=10 \
+      --set-env-vars="API_URL=$API_URL,NEXT_PUBLIC_API_URL=$API_URL,API_BASE_URL=$API_URL,TENANT=$TENANT,HOSTNAME=0.0.0.0,NEXT_TELEMETRY_DISABLED=1,NEXT_PUBLIC_TENANT_BRAND_NAME=Zenithfall RAG,NEXT_PUBLIC_TENANT_LOGO_URL=/logos/zenithfall-logo.png,NEXT_PUBLIC_TENANT_PRIMARY_COLOR=#059669,NEXT_PUBLIC_TENANT_SECONDARY_COLOR=#10b981,NEXT_PUBLIC_TENANT_THEME=production"
+    check_success "Web deployment"
+
+    WEB_URL=$(gcloud run services describe $WEB_SERVICE --region=$REGION --format="value(status.url)")
+    echo -e "${GREEN}Web URL: $WEB_URL${NC}"
 
     # Export for use in other functions
-    export PROJECT_ID API_URL WEB_URL
-}
-
-# Function to build and push container images
-build_and_push_images() {
-    print_status "Building and pushing container images..."
-
-    local registry="${REGION}-docker.pkg.dev/${PROJECT_ID}/rag-containers"
-
-    # Configure Docker authentication
-    gcloud auth configure-docker "${REGION}-docker.pkg.dev"
-
-    # Build API image
-    print_status "Building API image..."
-    docker build -t "${registry}/rag-api:latest" -f apps/api/Dockerfile .
-    docker push "${registry}/rag-api:latest"
-
-    # Update Cloud Run service with new image
-    print_status "Updating Cloud Run service..."
-    gcloud run deploy rag-api \
-        --image="${registry}/rag-api:latest" \
-        --region="$REGION" \
-        --project="$PROJECT_ID" \
-        --platform=managed \
-        --allow-unauthenticated \
-        --port=3000 \
-        --memory=2Gi \
-        --cpu=1 \
-        --timeout=3600 \
-        --max-instances=10 \
-        --set-env-vars="FIREBASE_PROJECT_ID=${PROJECT_ID},TENANT_ID=zenithfall,NODE_ENV=production"
-
-    print_success "Container images built and deployed"
-}
-
-# Function to set up Firebase
-setup_firebase() {
-    print_status "Setting up Firebase..."
-
-    # Login to Firebase (if not already logged in)
-    if ! firebase projects:list >/dev/null 2>&1; then
-        print_warning "Not logged in to Firebase. Please login..."
-        firebase login
-    fi
-
-    # Use the project
-    firebase use "$PROJECT_ID"
-
-    # Initialize Firebase (if not already done)
-    if [ ! -f firebase.json ]; then
-        print_status "Initializing Firebase configuration..."
-
-        # Create firebase.json
-        cat > firebase.json << EOF
-{
-  "hosting": {
-    "public": "apps/web/dist",
-    "ignore": [
-      "firebase.json",
-      "**/.*",
-      "**/node_modules/**"
-    ],
-    "rewrites": [
-      {
-        "source": "/api/**",
-        "run": {
-          "serviceId": "rag-api",
-          "region": "$REGION"
-        }
-      },
-      {
-        "source": "**",
-        "destination": "/index.html"
-      }
-    ],
-    "headers": [
-      {
-        "source": "/api/**",
-        "headers": [
-          {
-            "key": "Access-Control-Allow-Origin",
-            "value": "*"
-          }
-        ]
-      }
-    ]
-  },
-  "firestore": {
-    "rules": "firestore.rules",
-    "indexes": "firestore.indexes.json"
-  }
-}
-EOF
-
-        # Create firestore.rules
-        cat > firestore.rules << 'EOF'
-rules_version = '2';
-
-service cloud.firestore {
-  match /databases/{database}/documents {
-    // Users can read/write their own documents
-    match /users/{userId} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
-    }
-
-    // Documents are tenant-scoped
-    match /documents/{documentId} {
-      allow read, write: if request.auth != null
-        && resource.data.tenantId == request.auth.token.tenantId;
-    }
-
-    // Allow anonymous read access for development
-    match /{document=**} {
-      allow read: if request.auth != null;
-    }
-  }
-}
-EOF
-
-        # Create firestore.indexes.json
-        cat > firestore.indexes.json << 'EOF'
-{
-  "indexes": [
-    {
-      "collectionGroup": "documents",
-      "queryScope": "COLLECTION",
-      "fields": [
-        {
-          "fieldPath": "tenantId",
-          "order": "ASCENDING"
-        },
-        {
-          "fieldPath": "createdAt",
-          "order": "DESCENDING"
-        }
-      ]
-    },
-    {
-      "collectionGroup": "documents",
-      "queryScope": "COLLECTION",
-      "fields": [
-        {
-          "fieldPath": "tenantId",
-          "order": "ASCENDING"
-        },
-        {
-          "fieldPath": "metadata.url",
-          "order": "ASCENDING"
-        }
-      ]
-    }
-  ]
-}
-EOF
-
-        print_success "Firebase configuration created"
-    fi
-
-    # Deploy Firestore rules and indexes
-    firebase deploy --only firestore:rules,firestore:indexes --project="$PROJECT_ID"
-
-    print_success "Firebase setup completed"
-}
-
-# Function to build and deploy web app
-deploy_web_app() {
-    print_status "Building and deploying web application..."
-
-    # Load Firebase environment configuration
-    if [ -f .env.zenithfall.firebase ]; then
-        set -a
-        source .env.zenithfall.firebase
-        set +a
-        print_success "Loaded Firebase environment configuration"
-    else
-        print_warning "Firebase environment file not found, using defaults"
-    fi
-
-    # Build the web application
-    cd apps/web
-
-    # Install dependencies
-    pnpm install
-
-    # Build for production
-    NEXT_PUBLIC_FIREBASE_PROJECT_ID="$PROJECT_ID" \
-    NEXT_PUBLIC_API_URL="$API_URL" \
-    NEXT_PUBLIC_TENANT_ID="zenithfall" \
-    pnpm build
-
-    # Create dist directory for Firebase hosting
-    mkdir -p dist
-    cp -r .next/static dist/_next
-    cp .next/standalone/apps/web/* dist/ 2>/dev/null || true
-
-    cd - > /dev/null
-
-    # Deploy to Firebase Hosting
-    firebase deploy --only hosting --project="$PROJECT_ID"
-
-    print_success "Web application deployed"
+    export PROJECT_ID API_URL WEB_URL QDRANT_URL EMBEDDINGS_URL
 }
 
 # Function to update secrets
@@ -344,34 +244,37 @@ update_secrets() {
     # Check if OpenAI API key is available
     if [ -n "$OPENAI_API_KEY" ]; then
         print_status "Updating OpenAI API key..."
-        echo "$OPENAI_API_KEY" | gcloud secrets versions add openai-api-key \
+        echo "$OPENAI_API_KEY" | gcloud secrets versions add zenithfall-openai-api-key \
             --data-file=- \
             --project="$PROJECT_ID"
         print_success "OpenAI API key updated"
     else
         print_warning "OPENAI_API_KEY environment variable not set"
         print_warning "You can update it later with:"
-        print_warning "echo 'your-api-key' | gcloud secrets versions add openai-api-key --data-file=- --project='$PROJECT_ID'"
+        print_warning "echo 'your-api-key' | gcloud secrets versions add zenithfall-openai-api-key --data-file=- --project='$PROJECT_ID'"
     fi
 }
 
 # Function to run post-deployment validation
 validate_deployment() {
-    print_status "Validating deployment..."
+    print_step "9" "Running Health Checks"
+    echo "Testing Qdrant..."
+    curl -s "$QDRANT_URL/collections" > /dev/null && echo -e "${GREEN}✅ Qdrant: Healthy${NC}" || echo -e "${RED}❌ Qdrant: Failed${NC}"
 
-    # Test API health
-    local health_url="${API_URL}/healthz"
-    if curl -f "$health_url" >/dev/null 2>&1; then
-        print_success "API health check passed"
+    echo "Testing API..."
+    API_HEALTH=$(curl -s "$API_URL/healthz" | grep -o '"status":"ok"' || echo "failed")
+    if [ "$API_HEALTH" = '"status":"ok"' ]; then
+        echo -e "${GREEN}✅ API: Healthy${NC}"
     else
-        print_warning "API health check failed - this is normal for new deployments"
+        echo -e "${RED}❌ API: Failed${NC}"
     fi
 
-    # Test web app
-    if curl -f "$WEB_URL" >/dev/null 2>&1; then
-        print_success "Web app accessible"
+    echo "Testing Web..."
+    WEB_HEALTH=$(curl -s -o /dev/null -w "%{http_code}" "$WEB_URL")
+    if [ "$WEB_HEALTH" = "200" ]; then
+        echo -e "${GREEN}✅ Web: Healthy${NC}"
     else
-        print_warning "Web app not accessible yet - this is normal for new deployments"
+        echo -e "${RED}❌ Web: Failed (HTTP $WEB_HEALTH)${NC}"
     fi
 
     print_success "Deployment validation completed"
@@ -379,42 +282,57 @@ validate_deployment() {
 
 # Main deployment function
 main() {
-    local billing_account="$1"
-
-    echo "🚀 Deploying Zenithfall to Firebase/GCP"
-    echo "========================================="
+    echo "🚀 Deploying Zenithfall to Cloud Run (No Firebase Hosting)"
+    echo "======================================================="
 
     check_prerequisites
-    validate_billing_account "$billing_account"
-
-    # Set region for use in other functions
-    export REGION="europe-west3"
-
-    deploy_infrastructure "$billing_account"
-    build_and_push_images
-    setup_firebase
-    deploy_web_app
+    validate_project_access
+    deploy_infrastructure
+    deploy_services
     update_secrets
     validate_deployment
 
     echo ""
-    print_success "🎉 Zenithfall deployment completed successfully!"
+    echo -e "${GREEN}🎉 DEPLOYMENT COMPLETE!${NC}"
+    echo -e "${GREEN}Your Zenithfall RAG Stack is now running on Google Cloud Run:${NC}"
     echo ""
-    echo "📋 Deployment Summary:"
-    echo "   Project ID: $PROJECT_ID"
-    echo "   Web URL: $WEB_URL"
-    echo "   API URL: $API_URL"
-    echo "   Console: https://console.firebase.google.com/project/$PROJECT_ID"
+    echo -e "${BLUE}📊 Service URLs:${NC}"
+    echo -e "  🔍 Qdrant:     $QDRANT_URL"
+    echo -e "  🧠 Embeddings: $EMBEDDINGS_URL"
+    echo -e "  🔌 API:        $API_URL"
+    echo -e "  🌐 Web App:    $WEB_URL"
     echo ""
-    echo "🔑 Next Steps:"
-    echo "   1. Set your OpenAI API key:"
-    echo "      echo 'your-api-key' | gcloud secrets versions add openai-api-key --data-file=- --project='$PROJECT_ID'"
-    echo "   2. Test the deployment:"
-    echo "      curl $API_URL/healthz"
-    echo "   3. Visit your app:"
-    echo "      open $WEB_URL"
+    echo -e "${YELLOW}🌟 Visit your application: $WEB_URL${NC}"
+    echo -e "${YELLOW}📚 API Documentation: $API_URL/healthz${NC}"
+    echo -e "${YELLOW}🔍 Qdrant Console: $QDRANT_URL/dashboard${NC}"
     echo ""
+    echo -e "${YELLOW}🔑 Secrets are managed via GCP Secret Manager${NC}"
+    echo ""
+
+    # Save URLs to file for reference
+    cat > deployment-urls.txt << EOF
+# Zenithfall RAG Stack - Cloud Run Deployment
+# Generated: $(date)
+
+PROJECT_ID=$PROJECT_ID
+REGION=$REGION
+TENANT=$TENANT
+
+# Service URLs
+QDRANT_URL=$QDRANT_URL
+EMBEDDINGS_URL=$EMBEDDINGS_URL
+API_URL=$API_URL
+WEB_URL=$WEB_URL
+
+# Quick Commands
+# View logs: gcloud logging read "resource.type=cloud_run_revision" --project=$PROJECT_ID
+# List services: gcloud run services list --region=$REGION
+# Update service: gcloud run services update SERVICE_NAME --region=$REGION
+# Update secrets: gcloud secrets versions add zenithfall-secret-name --data-file=- --project=$PROJECT_ID
+EOF
+
+    echo -e "${GREEN}📝 Service URLs saved to deployment-urls.txt${NC}"
 }
 
-# Run main function with all arguments
+# Run main function
 main "$@"

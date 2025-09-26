@@ -122,7 +122,9 @@ export default function LibraryTable() {
 
   // Filter and sort documents
   const filteredAndSortedDocuments = useMemo(() => {
-    let filtered = documents.filter(doc =>
+    // Ensure documents is an array before calling filter
+    const currentDocuments = documents ?? [];
+    let filtered = currentDocuments.filter(doc =>
       doc.docId.toLowerCase().includes(searchQuery.toLowerCase())
     );
 

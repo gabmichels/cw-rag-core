@@ -1,15 +1,85 @@
-import * as emoji from 'node-emoji';
+// Browser-compatible emoji mapping
+// Using a simple approach that works reliably in all environments
+
+// Common emoji mappings that are most likely to be used
+const commonEmojis: Record<string, string> = {
+  // Faces & People
+  'smile': '😊',
+  'grin': '😁',
+  'joy': '😂',
+  'wink': '😉',
+  'blush': '😊',
+  'heart_eyes': '😍',
+  'thinking': '🤔',
+  'thumbsup': '👍',
+  'thumbsdown': '👎',
+  'wave': '👋',
+  'clap': '👏',
+  'ok_hand': '👌',
+
+  // Nature & Weather
+  'milky_way': '🌌',
+  'star': '⭐',
+  'sun': '☀️',
+  'moon': '🌙',
+  'fire': '🔥',
+  'water_wave': '🌊',
+  'rainbow': '🌈',
+  'cloud': '☁️',
+  'zap': '⚡',
+
+  // Objects & Technology
+  'rocket': '🚀',
+  'robot': '🤖',
+  'computer': '💻',
+  'phone': '📱',
+  'book': '📚',
+  'bulb': '💡',
+  'gear': '⚙️',
+  'wrench': '🔧',
+  'hammer': '🔨',
+
+  // Symbols & Status
+  'check': '✅',
+  'x': '❌',
+  'warning': '⚠️',
+  'info': 'ℹ️',
+  'question': '❓',
+  'exclamation': '❗',
+  'green_circle': '🟢',
+  'yellow_circle': '🟡',
+  'red_circle': '🔴',
+
+  // Hearts & Love
+  'heart': '❤️',
+  'blue_heart': '💙',
+  'green_heart': '💚',
+  'yellow_heart': '💛',
+  'purple_heart': '💜',
+
+  // Animals
+  'cat': '🐱',
+  'dog': '🐶',
+  'unicorn': '🦄',
+  'dragon': '🐉',
+
+  // Food
+  'pizza': '🍕',
+  'coffee': '☕',
+  'beer': '🍺',
+  'cake': '🎂'
+};
 
 /**
  * Process text to replace emoji shortcodes with actual emojis
- * Uses the comprehensive node-emoji library for full emoji support
+ * Uses a curated set of common emojis for reliable browser compatibility
  * @param text The text to process
  * @returns Text with emoji shortcodes replaced
  */
 export function processEmojis(text: string): string {
-  // Use node-emoji to handle all emoji shortcodes
-  // This supports thousands of emojis including special ones like :milky_way: → 🌌
-  return emoji.emojify(text);
+  return text.replace(/:([a-zA-Z0-9_+-]+):/g, (match, shortcode) => {
+    return commonEmojis[shortcode] || match;
+  });
 }
 
 /**
@@ -31,7 +101,7 @@ export function getEmoji(shortcode: string): string {
     ? shortcode.slice(1, -1)
     : shortcode;
 
-  return emoji.get(normalizedShortcode) || `:${normalizedShortcode}:`;
+  return commonEmojis[normalizedShortcode] || `:${normalizedShortcode}:`;
 }
 
 /**

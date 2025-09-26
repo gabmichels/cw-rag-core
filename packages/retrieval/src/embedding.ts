@@ -111,7 +111,7 @@ export class BgeSmallEnV15EmbeddingService implements EmbeddingService {
       const response = await axios.post<number[][]>(
         EMBEDDING_SERVICE_URL,
         { inputs: texts },
-        { timeout: 5000 }, // 5 second timeout
+        { timeout: 30000 }, // 30 second timeout for cold starts
       );
       if (
         !response.data ||

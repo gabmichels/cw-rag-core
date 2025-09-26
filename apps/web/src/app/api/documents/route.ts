@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 
+// Force dynamic rendering to prevent build-time caching
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
 const API_BASE_URL = process.env.API_BASE_URL || 'http://localhost:3000';
 
 export async function GET(request: NextRequest) {
@@ -25,7 +29,9 @@ export async function GET(request: NextRequest) {
     }
 
     const data = await response.json();
-    return NextResponse.json(data);
+    // Ensure data is an array, default to empty array if not
+    const documents = Array.isArray(data) ? data : [];
+    return NextResponse.json(documents);
 
   } catch (error) {
     console.error('Error fetching documents:', error);

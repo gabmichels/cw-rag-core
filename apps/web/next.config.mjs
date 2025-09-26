@@ -1,6 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  output: process.env.FIREBASE_DEPLOYMENT === 'true' ? 'export' : 'standalone',
+  output: process.env.FIREBASE_DEPLOYMENT === 'true' ? 'export' : undefined,
   trailingSlash: true,
   images: {
     unoptimized: process.env.FIREBASE_DEPLOYMENT === 'true'

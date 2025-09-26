@@ -35,10 +35,14 @@ ENV NEXT_PUBLIC_TENANT_SECONDARY_COLOR=$NEXT_PUBLIC_TENANT_SECONDARY_COLOR
 ENV NEXT_PUBLIC_TENANT_THEME=$NEXT_PUBLIC_TENANT_THEME
 
 COPY --from=deps /app ./
+# Build shared packages
 RUN pnpm --filter @cw-rag-core/shared run build
-# (uncomment if web imports retrieval too)
-# RUN pnpm --filter @cw-rag-core/retrieval run build
-RUN pnpm --filter @cw-rag-core/web build
+
+# Navigate to the web app directory for its build
+WORKDIR /app/apps/web
+# Ensure production build for Next.js
+ENV NODE_ENV=production
+RUN pnpm build
 
 # ---------- runner ----------
 FROM node:20-bookworm-slim AS runner
@@ -49,14 +53,28 @@ ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
 ENV NEXT_TELEMETRY_DISABLED=1
 
-# Copy Next standalone output preserving its internal paths
-COPY --from=builder /app/apps/web/.next/standalone ./
-# Static assets + public for the web app
-COPY --from=builder /app/apps/web/.next/static ./apps/web/.next/static
+# Install pnpm for running the app
+ENV PNPM_HOME=/usr/local/share/pnpm
+ENV PATH="$PNPM_HOME:$PATH"
+RUN corepack enable
+
+# Copy workspace configuration files
+COPY --from=builder /app/package.json ./package.json
+COPY --from=builder /app/pnpm-lock.yaml ./pnpm-lock.yaml
+COPY --from=builder /app/pnpm-workspace.yaml ./pnpm-workspace.yaml
+COPY --from=builder /app/.npmrc ./.npmrc
+
+# Copy app-specific files
+COPY --from=builder /app/apps/web/package.json ./apps/web/package.json
+COPY --from=builder /app/apps/web/.next ./apps/web/.next
 COPY --from=builder /app/apps/web/public ./apps/web/public
 
-# (optional sanity)
-# RUN test -f apps/web/server.js && echo "Found apps/web/server.js"
+# Copy built shared packages
+COPY --from=builder /app/packages ./packages
+
+# Install production dependencies only
+RUN pnpm install --frozen-lockfile --prod
 
 EXPOSE 3000
-CMD ["node", "apps/web/server.js"]
+WORKDIR /app/apps/web
+CMD ["npx", "next", "start"]
