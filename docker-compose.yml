@@ -85,6 +85,13 @@ services:
       - RATE_LIMIT_PER_TENANT=${RATE_LIMIT_PER_TENANT}
       - RATE_LIMIT_WINDOW_MINUTES=${RATE_LIMIT_WINDOW_MINUTES}
       - XDG_CACHE_HOME=/opt/cache
+      - FUSION_STRATEGY=weighted_average
+      - FUSION_NORMALIZATION=none
+      - FUSION_K_PARAM=1
+      - FUSION_DEBUG_TRACE=on
+      - HYBRID_VECTOR_WEIGHT=0.7
+      - HYBRID_KEYWORD_WEIGHT=0.3
+      - QUERY_ADAPTIVE_WEIGHTS=on
     volumes:
       - xenova-cache:/opt/cache
     depends_on:

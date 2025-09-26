@@ -1,0 +1,9 @@
+{
+  "query": "How long is a day in Isharoth",
+  "userContext": {
+    "id": "anonymous",
+    "groupIds": ["public"],
+    "tenantId": "zenithfall"
+  },
+  "includeMetrics": true
+}

@@ -1,0 +1,14 @@
+{
+  "filter": {
+    "must": [
+      {
+        "key": "docId",
+        "match": {
+          "value": "Isharoth"
+        }
+      }
+    ]
+  },
+  "limit": 100,
+  "with_payload": true
+}

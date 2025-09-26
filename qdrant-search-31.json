@@ -1,0 +1,20 @@
+{
+  "filter": {
+    "must": [
+      {
+        "key": "content",
+        "match": {
+          "text": "31 hours"
+        }
+      },
+      {
+        "key": "tenant",
+        "match": {
+          "value": "zenithfall"
+        }
+      }
+    ]
+  },
+  "limit": 10,
+  "with_payload": true
+}

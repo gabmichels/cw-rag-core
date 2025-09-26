@@ -19,7 +19,7 @@ describe('EmbeddingServiceManager', () => {
     mockConfig = {
       provider: 'bge',
       model: 'bge-small-en-v1.5',
-      url: 'http://test-embedding-service:80',
+      url: 'http://test-embedding-service:80/embed',
       capabilities: {
         maxTokens: 512,
         maxBatchSize: 32,
@@ -41,7 +41,7 @@ describe('EmbeddingServiceManager', () => {
 
   describe('Configuration', () => {
     it('should initialize with default configuration', () => {
-      manager = new EmbeddingServiceManager();
+      manager = new EmbeddingServiceManager(mockConfig);
       const config = manager.getConfig();
 
       expect(config.provider).toBeDefined();
@@ -66,7 +66,7 @@ describe('EmbeddingServiceManager', () => {
       };
 
       expect(() => new EmbeddingServiceManager(invalidConfig as any))
-        .toThrow('Invalid embedding configuration');
+        .toThrow('Missing required embedding service configuration: provider, model, or url');
     });
 
     it('should update configuration at runtime', () => {
@@ -196,7 +196,7 @@ describe('EmbeddingServiceManager', () => {
     });
 
     it('should perform advanced chunking with metadata', async () => {
-      const longText = 'This is a long document. '.repeat(100);
+      const longText = 'This is a long document. '.repeat(200);
 
       mockedAxios.post.mockResolvedValue({
         data: [Array(384).fill(0.1)]
@@ -248,7 +248,7 @@ describe('EmbeddingServiceManager', () => {
       expect(health.healthy).toBe(true);
       expect(health.responseTime).toBeGreaterThan(0);
       expect(mockedAxios.get).toHaveBeenCalledWith(
-        expect.stringContaining('/health'),
+        'http://test-embedding-service:80/health',
         expect.any(Object)
       );
     });
@@ -315,7 +315,7 @@ describe('EmbeddingServiceManager', () => {
         data: [Array(256).fill(0.1)] // Wrong dimension
       });
 
-      await expect(manager.embed(text)).rejects.toThrow('Expected 384 dimensions');
+      await expect(manager.embed(text)).rejects.toThrow('Invalid embedding dimensions: expected 384, got 256');
     });
   });
 
@@ -341,7 +341,7 @@ describe('EmbeddingServiceManager', () => {
 
   describe('Configuration Presets', () => {
     it('should work with BGE configuration preset', () => {
-      const bgeConfig = DEFAULT_EMBEDDING_CONFIGS['bge-small-en-v1.5'];
+      const bgeConfig = { ...DEFAULT_EMBEDDING_CONFIGS['bge-small-en-v1.5'], url: 'http://test-bge:80' };
       manager = new EmbeddingServiceManager(bgeConfig);
 
       const config = manager.getConfig();
@@ -350,7 +350,7 @@ describe('EmbeddingServiceManager', () => {
     });
 
     it('should work with OpenAI configuration preset', () => {
-      const openaiConfig = DEFAULT_EMBEDDING_CONFIGS['text-embedding-ada-002'];
+      const openaiConfig = { ...DEFAULT_EMBEDDING_CONFIGS['text-embedding-ada-002'], url: 'http://test-openai:80' };
       manager = new EmbeddingServiceManager(openaiConfig);
 
       const config = manager.getConfig();

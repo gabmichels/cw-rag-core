@@ -28,6 +28,18 @@ export * from './services/section-aware-hybrid-search.js';
 export * from './token-counter.js';
 export * from './embedding-config.js';
 export * from './adaptive-chunker.js';
+export * from './chunk-validation.js';
+export * from './qdrant-optimization.js';
 export * from './embedding-manager.js';
 export * from './config-manager.js';
+export * from './telemetry.js';
 export * from './monitoring.js';
+
+// Context packing system
+export * from './context/pack.js';
+export * from './context/budgeter.js';
+export * from './context/novelty.js';
+export * from './context/answerability.js';
+
+// Query intent detection
+export * from './retrieval/intent.js';

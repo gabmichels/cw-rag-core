@@ -1,5 +1,6 @@
 import { HybridSearchResult, SearchPerformanceMetrics } from '../types/hybrid.js';
 import { VectorSearchResult } from '../types/vector.js';
+import { fuse, FusionConfig } from './fusion.js';
 
 /**
  * Configuration for Reciprocal Rank Fusion (RRF).
@@ -34,88 +35,50 @@ export class ReciprocalRankFusionService implements RrfFusionService {
     keywordResults: HybridSearchResult[],
     config: RrfConfig
   ): HybridSearchResult[] {
+    // Convert to new fusion format
+    const vectorInputs = vectorResults.map((result, index) => ({
+      id: String(result.id),
+      score: result.score || 0,
+      rank: index + 1
+    }));
 
-    // Create maps for efficient lookups
-    const vectorMap = new Map<string, { result: VectorSearchResult; rank: number }>();
-    const keywordMap = new Map<string, { result: HybridSearchResult; rank: number }>();
+    const keywordInputs = keywordResults.map((result, index) => ({
+      id: String(result.id),
+      score: result.score || 0,
+      rank: index + 1
+    }));
 
-    // Index vector results by ID with their ranks
-    vectorResults.forEach((result, index) => {
-      // Ensure result.id is a string
-      if (result.id) {
-        vectorMap.set(String(result.id), { result, rank: index + 1 });
-      }
-    });
+    const fusionConfig: FusionConfig = {
+      strategy: "borda_rank", // Use rank-only fusion (equivalent to old RRF)
+      kParam: config.k,
+      vectorWeight: config.vectorWeight,
+      keywordWeight: config.keywordWeight,
+      normalization: "none" // No normalization for backward compatibility
+    };
 
-    // Index keyword results by ID with their ranks
-    keywordResults.forEach((result, index) => {
-      // Ensure result.id is a string
-      if (result.id) {
-        keywordMap.set(String(result.id), { result, rank: index + 1 });
-      }
-    });
+    const fusionResults = fuse(vectorInputs, keywordInputs, fusionConfig);
 
-    // Get all unique document IDs
-    const allIds = new Set([...vectorMap.keys(), ...keywordMap.keys()]);
+    // Convert back to HybridSearchResult format
+    return fusionResults.map(fusionResult => {
+      // Find original result data
+      const vectorResult = vectorResults.find(r => String(r.id) === fusionResult.id);
+      const keywordResult = keywordResults.find(r => String(r.id) === fusionResult.id);
+      const sourceResult = keywordResult || vectorResult;
 
-    // Calculate RRF scores for each document
-    const fusedResults: HybridSearchResult[] = [];
-    const internalK = config.k > 0 ? config.k : 1; // Ensure k is at least 1 to avoid division by zero
+      if (!sourceResult) return null;
 
-    for (const id of allIds) {
-      const vectorEntry = vectorMap.get(id);
-      const keywordEntry = keywordMap.get(id);
-
-      let rrfScore = 0;
-      let vectorScore: number | undefined;
-      let keywordScore: number | undefined;
-      let searchType: 'hybrid' | 'vector_only' | 'keyword_only' = 'hybrid';
-
-      // Calculate RRF contribution from vector search
-      if (vectorEntry) {
-        const rank = vectorEntry.rank;
-        const score = vectorEntry.result.score || 0;
-        rrfScore += config.vectorWeight * (1 / (rank + internalK));
-        vectorScore = score;
-      }
-
-      // Calculate RRF contribution from keyword search
-      if (keywordEntry) {
-        const rank = keywordEntry.rank;
-        const score = keywordEntry.result.score || 0;
-        rrfScore += config.keywordWeight * (1 / (rank + internalK));
-        keywordScore = score;
-      }
-
-      // Determine search type
-      if (vectorEntry && keywordEntry) {
-        searchType = 'hybrid';
-      } else if (vectorEntry) {
-        searchType = 'vector_only';
-      } else {
-        searchType = 'keyword_only';
-      }
-
-      // Get document content and payload (prefer keyword result over vector result if hybrid)
-      const sourceResult = keywordEntry?.result || vectorEntry?.result;
-      if (!sourceResult) continue;
-
-      fusedResults.push({
-        id,
-        score: rrfScore, // This is the combined RRF score
-        vectorScore,
-        keywordScore,
-        fusionScore: rrfScore, // Fusion score is the RRF score here
-        searchType,
+      return {
+        id: fusionResult.id,
+        score: fusionResult.fusedScore,
+        vectorScore: fusionResult.components.vector || (vectorResult ? vectorResult.score : undefined),
+        keywordScore: fusionResult.components.keyword || (keywordResult ? keywordResult.score : undefined),
+        fusionScore: fusionResult.fusedScore,
+        searchType: vectorResult && keywordResult ? 'hybrid' :
+                   vectorResult ? 'vector_only' : 'keyword_only',
         payload: sourceResult.payload,
-        content: this.extractContent(sourceResult) // Use the extractContent helper
-      });
-    }
-
-    // Sort by RRF score (descending)
-    fusedResults.sort((a, b) => (b.fusionScore || 0) - (a.fusionScore || 0)); // Add nullish coalescing for safety
-
-    return fusedResults;
+        content: this.extractContent(sourceResult)
+      };
+    }).filter(Boolean) as HybridSearchResult[];
   }
 
   private extractContent(result: VectorSearchResult | HybridSearchResult): string | undefined {

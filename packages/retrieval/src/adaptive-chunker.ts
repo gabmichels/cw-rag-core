@@ -4,6 +4,7 @@
 
 import { TokenCounter, TokenCountResult } from './token-counter.js';
 import { ChunkingConfig } from './embedding-config.js';
+import { createIngestionGuard, IngestionGuard } from './chunk-validation.js';
 
 export interface ChunkResult {
   id: string;
@@ -22,6 +23,13 @@ export interface ChunkingResult {
   totalCharacters: number;
   strategy: string;
   warnings: string[];
+  rejectedChunks?: ChunkResult[];
+  qualityReport?: {
+    approved: number;
+    rejected: number;
+    avgQuality: number;
+    issues: string[];
+  };
 }
 
 /**
@@ -421,8 +429,13 @@ export class AdaptiveChunker {
   private tokenCounter: TokenCounter;
   private config: ChunkingConfig;
   private strategies: Map<string, ChunkingStrategy>;
+  private ingestionGuard?: IngestionGuard;
 
-  constructor(tokenCounter: TokenCounter, config: ChunkingConfig) {
+  constructor(
+    tokenCounter: TokenCounter,
+    config: ChunkingConfig,
+    enableIngestionGuard: boolean = true
+  ) {
     this.tokenCounter = tokenCounter;
     this.config = config;
     this.strategies = new Map([
@@ -430,6 +443,10 @@ export class AdaptiveChunker {
       ['paragraph', new ParagraphAwareChunkingStrategy(tokenCounter, config)],
       ['character', new CharacterChunkingStrategy(tokenCounter, config)]
     ]);
+
+    if (enableIngestionGuard) {
+      this.ingestionGuard = createIngestionGuard();
+    }
   }
 
   async chunk(text: string, baseId: string, sectionPath?: string): Promise<ChunkingResult> {
@@ -440,7 +457,25 @@ export class AdaptiveChunker {
     const strategy = this.strategies.get(selectedStrategy) || this.strategies.get('token-aware')!;
 
     try {
-      return await strategy.chunk(text, baseId, sectionPath);
+      const result = await strategy.chunk(text, baseId, sectionPath);
+
+      // Apply ingestion guard if enabled
+      if (this.ingestionGuard) {
+        const guardResult = await this.ingestionGuard.guardChunks(result.chunks);
+
+        return {
+          ...result,
+          chunks: guardResult.approved,
+          rejectedChunks: guardResult.rejected.map(r => r.chunk),
+          qualityReport: guardResult.report,
+          warnings: [
+            ...result.warnings,
+            ...guardResult.report.issues.map(issue => `Ingestion guard: ${issue}`)
+          ]
+        };
+      }
+
+      return result;
     } catch (error) {
       // Fallback to character-based chunking on any error
       console.warn(`Chunking strategy ${selectedStrategy} failed, falling back to character-based:`, error);

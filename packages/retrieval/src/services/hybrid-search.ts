@@ -1,7 +1,10 @@
 import { KeywordSearchService } from './keyword-search.js';
 import { RrfFusionService } from './rrf-fusion.js';
+import { fuse, FusionConfig, FusionStrategyName, FusionInput } from './fusion.js';
 import { RerankerService } from './reranker.js';
 import { VectorSearchResult, VectorSearchParams } from '../types/vector.js';
+import { createQueryIntentDetector, QueryIntentDetector } from '../retrieval/intent.js';
+import { createNoveltyScorer } from '../context/novelty.js';
 import {
   HybridSearchRequest,
   HybridSearchResult,
@@ -69,6 +72,7 @@ export interface HybridSearchService {
 export class HybridSearchServiceImpl implements HybridSearchService {
   private tenantConfigs = new Map<string, TenantSearchConfig>();
   private timeoutConfigs = new Map<string, TimeoutConfig>();
+  private intentDetector: QueryIntentDetector;
 
   constructor(
     private vectorSearchService: VectorSearchService,
@@ -77,6 +81,7 @@ export class HybridSearchServiceImpl implements HybridSearchService {
     private embeddingService: { embed(text: string): Promise<number[]> },
     private rerankerService?: RerankerService
   ) {
+    this.intentDetector = createQueryIntentDetector();
     this.initializeDefaultConfigs();
   }
 
@@ -138,7 +143,13 @@ export class HybridSearchServiceImpl implements HybridSearchService {
       await this.getTenantConfig(request.tenantId) :
       this.getDefaultConfig();
 
-    const keywordSearchEnabled = request.enableKeywordSearch ?? tenantConfig.keywordSearchEnabled;
+    // Apply query-adaptive weighting if enabled
+    let adaptiveConfig = tenantConfig;
+    let intentConfig: any = null;
+    let fusionStrategy: FusionStrategyName = (process.env.FUSION_STRATEGY as FusionStrategyName) || "weighted_average";
+    const queryAdaptiveEnabled = process.env.QUERY_ADAPTIVE_WEIGHTS === 'on';
+
+    const keywordSearchEnabled = request.enableKeywordSearch ?? adaptiveConfig.keywordSearchEnabled;
     console.log(`🔄 Hybrid search mode: vector + ${keywordSearchEnabled ? 'keyword' : 'vector-only'}`);
 
     const rbacFilter = buildQdrantRBACFilter(userContext);
@@ -185,10 +196,15 @@ export class HybridSearchServiceImpl implements HybridSearchService {
       console.log('Limit:', request.limit);
       console.log('Filter:', JSON.stringify(rbacFilter, null, 2));
 
+      // Increase pre-fusion k for better diversity when adaptive weighting enabled
+      const baseRetrievalK = queryAdaptiveEnabled ?
+        Math.max(request.limit, intentConfig?.retrievalK || parseInt(process.env.RETRIEVAL_K_BASE || '12')) :
+        request.limit;
+
       const vectorSearchResult = await this.executeWithTimeout(
         () => this.vectorSearchService.search(collectionName, {
           queryVector,
-          limit: request.limit,
+          limit: baseRetrievalK,
           filter: rbacFilter
         }),
         timeouts.vectorSearch,
@@ -221,6 +237,20 @@ export class HybridSearchServiceImpl implements HybridSearchService {
         });
       }
 
+      // Apply query-adaptive weighting after vector search (for high-confidence shortcut)
+      if (queryAdaptiveEnabled && !request.vectorWeight && !request.keywordWeight) {
+        // Get top vector score for high-confidence shortcut
+        const topVectorScore = vectorSearchResults.length > 0 ? vectorSearchResults[0].score : undefined;
+        intentConfig = this.intentDetector.getConfigForQuery(request.query, topVectorScore);
+        adaptiveConfig = {
+          ...tenantConfig,
+          defaultVectorWeight: intentConfig.vectorWeight,
+          defaultKeywordWeight: intentConfig.keywordWeight
+        };
+        fusionStrategy = intentConfig.strategy;
+        console.log(`🎯 Query intent detected, adaptive weights: vector=${intentConfig.vectorWeight}, keyword=${intentConfig.keywordWeight}, strategy=${fusionStrategy}, k=${intentConfig.retrievalK}`);
+      }
+
       if (keywordSearchEnabled) {
         const keywordStartTime = performance.now();
         const keywordSearchResult = await this.executeWithTimeout(
@@ -249,24 +279,78 @@ export class HybridSearchServiceImpl implements HybridSearchService {
       }
 
       const fusionStartTime = performance.now();
-      const rrfConfig = {
-        k: request.rrfK ?? tenantConfig.defaultRrfK,
-        vectorWeight: request.vectorWeight ?? tenantConfig.defaultVectorWeight,
-        keywordWeight: request.keywordWeight ?? tenantConfig.defaultKeywordWeight
+
+      // Deduplicate results before fusion
+      const dedupedVectorResults = this.deduplicateResults(vectorSearchResults, request.query);
+      const dedupedKeywordResults = this.deduplicateResults(keywordSearchResults, request.query);
+
+      // Prepare fusion inputs
+      const vectorInputs: FusionInput[] = dedupedVectorResults.map((result, index) => ({
+        id: result.id,
+        score: result.score || 0,
+        rank: index + 1,
+        docId: result.payload?.docId
+      }));
+
+      const keywordInputs: FusionInput[] = dedupedKeywordResults.map((result, index) => ({
+        id: result.id,
+        score: result.score || 0,
+        rank: index + 1,
+        docId: result.payload?.docId
+      }));
+
+      const fusionConfig: FusionConfig = {
+        strategy: fusionStrategy,
+        kParam: parseInt(process.env.FUSION_K_PARAM || '5'),
+        vectorWeight: request.vectorWeight ?? adaptiveConfig.defaultVectorWeight,
+        keywordWeight: request.keywordWeight ?? adaptiveConfig.defaultKeywordWeight,
+        normalization: (process.env.FUSION_NORMALIZATION as "zscore" | "minmax" | "none") || "minmax"
       };
 
-      fusedResults = this.rrfFusionService.fuseResults(
-        vectorSearchResults,
-        keywordSearchResults,
-        rrfConfig
-      );
+      const fusionResults = fuse(vectorInputs, keywordInputs, fusionConfig);
+
+      // Convert fusion results back to HybridSearchResult format
+      fusedResults = fusionResults.map(fusionResult => {
+        // Find original result data
+        const vectorResult = dedupedVectorResults.find(r => r.id === fusionResult.id);
+        const keywordResult = dedupedKeywordResults.find(r => r.id === fusionResult.id);
+        const sourceResult = vectorResult || keywordResult;
+
+        if (!sourceResult) return null;
+
+        return {
+          id: fusionResult.id,
+          score: fusionResult.fusedScore,
+          vectorScore: fusionResult.components.vector,
+          keywordScore: fusionResult.components.keyword,
+          fusionScore: fusionResult.fusedScore,
+          searchType: vectorResult && keywordResult ? 'hybrid' :
+                     vectorResult ? 'vector_only' : 'keyword_only',
+          payload: sourceResult.payload,
+          content: this.extractContent(sourceResult)
+        };
+      }).filter(Boolean) as HybridSearchResult[];
 
       metrics.fusionDuration = performance.now() - fusionStartTime;
       metrics.finalResultCount = fusedResults.length;
 
       let finalResults = fusedResults; // This will hold the results after reranking if applied
 
-      if (tenantConfig.rerankerEnabled && this.rerankerService) {
+      // Apply MMR or reranking
+      const mmrEnabled = process.env.MMR_ENABLED === 'on';
+      if (mmrEnabled && this.embeddingService) {
+        const mmrStartTime = performance.now();
+        const noveltyScorer = createNoveltyScorer(undefined, this.embeddingService);
+        finalResults = await noveltyScorer.applyMMR(fusedResults, request.limit * 2); // Expand for MMR
+        metrics.rerankerDuration = performance.now() - mmrStartTime;
+        metrics.rerankingEnabled = true;
+        metrics.documentsReranked = finalResults.length;
+        console.log('StructuredLog:MMRApplied', {
+          inputCount: fusedResults.length,
+          outputCount: finalResults.length,
+          mmrDuration: metrics.rerankerDuration
+        });
+      } else if (adaptiveConfig.rerankerEnabled && this.rerankerService) {
         const rerankerStartTime = performance.now();
 
         const rerankerOpResult = await this.executeWithTimeout(
@@ -336,13 +420,43 @@ export class HybridSearchServiceImpl implements HybridSearchService {
       metrics.totalDuration = performance.now() - startTime;
       metrics.finalResultCount = filteredResults.length;
 
+      // Add fusion trace if debug tracing is enabled
+      const fusionTraceEnabled = process.env.FUSION_DEBUG_TRACE === 'on';
+      let fusionTrace: any = undefined;
+
+      if (fusionTraceEnabled) {
+        fusionTrace = {
+          strategy: fusionStrategy,
+          normalization: fusionConfig.normalization,
+          vectorWeight: fusionConfig.vectorWeight,
+          keywordWeight: fusionConfig.keywordWeight,
+          kParam: fusionConfig.kParam,
+          vectorTop: vectorInputs.slice(0, 10).map(input => ({
+            id: input.id,
+            score: input.score,
+            rank: input.rank
+          })),
+          keywordTop: keywordInputs.slice(0, 10).map(input => ({
+            id: input.id,
+            score: input.score,
+            rank: input.rank
+          })),
+          fused: fusionResults.slice(0, 10).map(result => ({
+            id: result.id,
+            fusedScore: result.fusedScore,
+            components: result.components
+          }))
+        };
+      }
+
       return {
         finalResults: filteredResults,
         vectorSearchResults: vectorSearchResults,
         keywordSearchResults: keywordSearchResults,
         fusionResults: fusedResults,
         rerankerResults: rerankerActualResults, // Pass actual raw reranker results
-        metrics
+        metrics,
+        fusionTrace
       };
 
     } catch (error) {
@@ -483,6 +597,66 @@ export class HybridSearchServiceImpl implements HybridSearchService {
     }
     return result;
   }
+
+  private extractContent(result: VectorSearchResult | HybridSearchResult): string | undefined {
+    // For HybridSearchResult (which keyword results now are), content is directly available
+    if (this.isHybridSearchResult(result) && result.content) {
+      return result.content;
+    }
+
+    // For VectorSearchResult, content is in payload
+    if (this.isVectorSearchResult(result) && result.payload?.content) {
+      return result.payload.content;
+    }
+
+    return undefined;
+  }
+
+  private isHybridSearchResult(result: any): result is HybridSearchResult {
+    return 'content' in result && typeof result.content === 'string';
+  }
+
+  private isVectorSearchResult(result: any): result is VectorSearchResult {
+    return 'vector' in result && Array.isArray(result.vector);
+  }
+
+  /**
+     * Deduplicate results by docId, keeping the top 3 highest scoring chunks per document
+     */
+    private deduplicateResults<T extends { id: string; score?: number; payload?: any }>(results: T[], query?: string): T[] {
+      const seen = new Map<string, T[]>();
+
+      // Check if this is a temporal query that needs special handling
+      const isTemporalQuery = query && /\b(how long|how many|how much|how tall|how wide|how deep|day|hour|minute|second|time|duration|length)\b/i.test(query);
+
+      for (const result of results) {
+        const docId = result.payload?.docId || result.id;
+        const existing = seen.get(docId) || [];
+
+        existing.push(result);
+
+        // For temporal queries, boost chunks containing temporal keywords
+        if (isTemporalQuery && result.payload?.content) {
+          const content = result.payload.content.toLowerCase();
+          if (/\b(day|hour|minute|second|time|duration|length|calendar|era|cycle)\b/.test(content)) {
+            // Boost score for temporal content
+            (result as any).temporalBoost = true;
+            (result as any).score = (result.score || 0) + 0.2; // Add 0.2 boost
+          }
+        }
+
+        // Sort by score descending and keep top 3 (or more for temporal queries)
+        existing.sort((a, b) => (b.score || 0) - (a.score || 0));
+        const maxChunks = isTemporalQuery ? 5 : 3; // Keep more chunks for temporal queries
+        if (existing.length > maxChunks) {
+          existing.splice(maxChunks);
+        }
+
+        seen.set(docId, existing);
+      }
+
+      return Array.from(seen.values()).flat();
+    }
 }
 
 export function createHybridSearchService(

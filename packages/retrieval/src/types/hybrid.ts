@@ -53,6 +53,17 @@ export interface SearchPerformanceMetrics {
   documentsReranked: number;
 }
 
+export interface FusionTrace {
+  strategy: string;
+  normalization: string;
+  vectorWeight: number;
+  keywordWeight: number;
+  kParam?: number;
+  vectorTop: Array<{ id: string; score: number; rank: number; norm?: number }>;
+  keywordTop: Array<{ id: string; score: number; rank: number; norm?: number }>;
+  fused: Array<{ id: string; fusedScore: number; components: { vector?: number; keyword?: number; rankBlend?: number } }>;
+}
+
 export interface StructuredHybridSearchResult {
   finalResults: HybridSearchResult[];
   vectorSearchResults: VectorSearchResult[];
@@ -60,4 +71,5 @@ export interface StructuredHybridSearchResult {
   fusionResults: HybridSearchResult[];
   rerankerResults?: RerankerResult[];
   metrics: SearchPerformanceMetrics;
+  fusionTrace?: FusionTrace; // Optional fusion telemetry
 }

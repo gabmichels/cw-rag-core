@@ -1,4 +1,4 @@
-import { HybridSearchResult, AnswerabilityGuardrailService, createAnswerabilityGuardrailService } from '@cw-rag-core/retrieval';
+import { HybridSearchResult, AnswerabilityGuardrailService, createAnswerabilityGuardrailService, createContextPacker } from '@cw-rag-core/retrieval';
 import { calculateFreshnessStats, FreshnessStats } from '@cw-rag-core/shared';
 import {
   SynthesisRequest,
@@ -41,14 +41,17 @@ export class AnswerSynthesisServiceImpl implements AnswerSynthesisService {
   private lastQualityMetrics: AnswerQualityMetrics | null = null;
   private guardrailService: AnswerabilityGuardrailService;
   private streamingEventHandler: StreamingEventHandler;
+  private contextPacker: any; // ContextPacker type
 
   constructor(
     private llmClientFactory: LLMClientFactory,
     protected citationService: CitationService,
-    private maxContextLength: number = 8000
+    private maxContextLength: number = 8000,
+    embeddingService?: { embed(text: string): Promise<number[]> }
   ) {
     this.guardrailService = createAnswerabilityGuardrailService();
     this.streamingEventHandler = createStreamingEventHandler();
+    this.contextPacker = createContextPacker(embeddingService);
   }
 
   async synthesizeAnswer(request: SynthesisRequest): Promise<SynthesisResponse> {
@@ -118,12 +121,26 @@ export class AnswerSynthesisServiceImpl implements AnswerSynthesisService {
       // Extract citations from documents with freshness information
       const citations = this.citationService.extractCitations(request.documents, tenantId);
 
-      // Prepare context from documents
-      const contextResult = this.prepareContext(
-        request.documents,
-        citations,
-        request.maxContextLength || this.maxContextLength
-      );
+      // Pack context using new token-aware packer
+      const packingResult = await this.contextPacker.pack(request.documents, request.query);
+
+      // Build context string from packed chunks
+      let context = '';
+      for (let i = 0; i < packingResult.chunks.length; i++) {
+        const chunk = packingResult.chunks[i];
+        const citation = Object.values(citations).find(c => c.id === chunk.id);
+
+        if (citation) {
+          const chunkContent = chunk.content || '';
+          context += `\n\n[Document ${i + 1}] (Source: ${citation.source})\n${chunkContent}`;
+        }
+      }
+
+      const contextResult = {
+        context: context.trim(),
+        contextTruncated: packingResult.truncated,
+        utilizationRatio: packingResult.totalTokens / this.contextPacker.getBudgeter().getBudget()
+      };
 
       // Get LLM client for tenant
       const llmClient = await this.llmClientFactory.createClientForTenant(
@@ -283,12 +300,38 @@ export class AnswerSynthesisServiceImpl implements AnswerSynthesisService {
       // Extract citations from documents with freshness information
       const citations = this.citationService.extractCitations(request.documents, tenantId);
 
-      // Prepare context from documents
-      const contextResult = this.prepareContext(
-        request.documents,
-        citations,
-        request.maxContextLength || this.maxContextLength
-      );
+      // Pack context using new token-aware packer
+      const packingResult = await this.contextPacker.pack(request.documents, request.query);
+
+      // Build context string from packed chunks
+      let context = '';
+      for (let i = 0; i < packingResult.chunks.length; i++) {
+        const chunk = packingResult.chunks[i];
+        const citation = Object.values(citations).find(c => c.id === chunk.id);
+
+        if (citation) {
+          const chunkContent = chunk.content || '';
+          context += `\n\n[Document ${i + 1}] (Source: ${citation.source})\n${chunkContent}`;
+        }
+      }
+
+      const contextResult = {
+        context: context.trim(),
+        contextTruncated: packingResult.truncated,
+        utilizationRatio: packingResult.totalTokens / this.contextPacker.getBudgeter().getBudget()
+      };
+
+      // Log packing trace if enabled
+      if (process.env.RETRIEVAL_TRACE === '1') {
+        console.log('StructuredLog:PackingTrace', {
+          queryId: `q_${Date.now()}`,
+          tenantId,
+          selectedChunks: packingResult.trace.selectedIds.length,
+          totalTokens: packingResult.totalTokens,
+          droppedReasons: Object.keys(packingResult.trace.droppedReasons).length,
+          capsApplied: packingResult.trace.capsApplied
+        });
+      }
 
       // Get LLM client for tenant
       const llmClient = await this.llmClientFactory.createClientForTenant(
@@ -518,59 +561,6 @@ export class AnswerSynthesisServiceImpl implements AnswerSynthesisService {
     }
   }
 
-  private prepareContext(
-    documents: HybridSearchResult[],
-    citations: CitationMap,
-    maxLength: number
-  ): {
-    context: string;
-    contextTruncated: boolean;
-    utilizationRatio: number;
-  } {
-    let context = '';
-    let totalCharacters = 0;
-    let truncated = false;
-
-    // Sort documents by score (descending) to prioritize higher-quality content
-    const sortedDocuments = [...documents]
-      .sort((a, b) => (b.fusionScore || b.score || 0) - (a.fusionScore || a.score || 0));
-
-    for (let i = 0; i < sortedDocuments.length; i++) {
-      const doc = sortedDocuments[i];
-      const citationNumber = i + 1;
-
-      // Find the citation for this document
-      const citation = Object.values(citations).find(c => c.id === doc.id);
-      if (!citation) continue;
-
-      const content = doc.content || '';
-      const docSection = `\n\n[Document ${citationNumber}] (Source: ${citation.source})\n${content}`;
-
-      // Check if adding this document would exceed the limit
-      if (totalCharacters + docSection.length > maxLength) {
-        if (context.length === 0) {
-          // If even the first document is too long, truncate it
-          const availableSpace = maxLength - `\n\n[Document ${citationNumber}] (Source: ${citation.source})\n`.length;
-          const truncatedContent = content.substring(0, availableSpace - 20) + '...';
-          context += `\n\n[Document ${citationNumber}] (Source: ${citation.source})\n${truncatedContent}`;
-          totalCharacters = maxLength;
-        }
-        truncated = true;
-        break;
-      }
-
-      context += docSection;
-      totalCharacters += docSection.length;
-    }
-
-    const utilizationRatio = Math.min(totalCharacters / maxLength, 1.0);
-
-    return {
-      context: context.trim(),
-      contextTruncated: truncated,
-      utilizationRatio
-    };
-  }
 
   private formatAnswerWithCitations(
     answer: string,
@@ -663,6 +653,7 @@ export class EnhancedAnswerSynthesisService extends AnswerSynthesisServiceImpl {
     llmClientFactory: LLMClientFactory,
     citationService: CitationService,
     maxContextLength: number = 8000,
+    embeddingService?: { embed(text: string): Promise<number[]> },
     private qualityThresholds: {
       minConfidence: number;
       minCitations: number;
@@ -673,7 +664,7 @@ export class EnhancedAnswerSynthesisService extends AnswerSynthesisServiceImpl {
       maxLatency: 5000
     }
   ) {
-    super(llmClientFactory, citationService, maxContextLength);
+    super(llmClientFactory, citationService, maxContextLength, embeddingService);
   }
 
   async synthesizeAnswer(request: SynthesisRequest): Promise<SynthesisResponse> {
@@ -761,12 +752,13 @@ export class EnhancedAnswerSynthesisService extends AnswerSynthesisServiceImpl {
  */
 export function createAnswerSynthesisService(
   enhanced: boolean = true,
-  maxContextLength: number = 8000
+  maxContextLength: number = 8000,
+  embeddingService?: { embed(text: string): Promise<number[]> }
 ): AnswerSynthesisService {
   const llmClientFactory = createLLMClientFactory(true);
   const citationService = createCitationService(true);
 
   return enhanced
-    ? new EnhancedAnswerSynthesisService(llmClientFactory, citationService, maxContextLength)
-    : new AnswerSynthesisServiceImpl(llmClientFactory, citationService, maxContextLength);
+    ? new EnhancedAnswerSynthesisService(llmClientFactory, citationService, maxContextLength, embeddingService)
+    : new AnswerSynthesisServiceImpl(llmClientFactory, citationService, maxContextLength, embeddingService);
 }

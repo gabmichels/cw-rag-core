@@ -277,7 +277,7 @@ export async function askStreamRoute(fastify: FastifyInstance, options: AskStrea
 
         const hybridSearchRequest: HybridSearchRequest = {
           query,
-          limit: k || 10,
+          limit: k || 10, // Use same limit as non-streaming endpoint
           vectorWeight: hybridSearch?.vectorWeight ?? 0.7,
           keywordWeight: hybridSearch?.keywordWeight ?? 0.3,
           rrfK: hybridSearch?.rrfK ?? 60,

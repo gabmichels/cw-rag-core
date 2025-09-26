@@ -2,7 +2,11 @@ import { QdrantClient } from '@qdrant/js-client-rest';
 import * as crypto from 'crypto';
 import {
   EmbeddingService,
-  BgeSmallEnV15EmbeddingService
+  BgeSmallEnV15EmbeddingService,
+  generateOptimizedCollectionConfig,
+  calculateAdaptiveEf,
+  QueryResultCache,
+  QdrantPerformanceMonitor
 } from '@cw-rag-core/retrieval';
 import type { FastifyBaseLogger } from 'fastify';
 import {
@@ -40,10 +44,9 @@ export async function bootstrapQdrant(
       );
 
       if (!collectionExists) {
-        logger.info(`Collection '${QDRANT_COLLECTION_NAME}' not found in existing collections, creating new collection...`);
-        await qdrantClient.createCollection(QDRANT_COLLECTION_NAME, {
-          vectors: { size: DOCUMENT_VECTOR_DIMENSION, distance: 'Cosine' },
-        });
+        logger.info(`Collection '${QDRANT_COLLECTION_NAME}' not found in existing collections, creating new collection with optimized config...`);
+        const optimizedConfig = generateOptimizedCollectionConfig(DOCUMENT_VECTOR_DIMENSION, 'Cosine');
+        await qdrantClient.createCollection(QDRANT_COLLECTION_NAME, optimizedConfig);
         logger.info(`Collection '${QDRANT_COLLECTION_NAME}' created.`);
 
         logger.info(`Creating payload indexes for '${QDRANT_COLLECTION_NAME}'...`);
@@ -216,6 +219,9 @@ export async function ingestDocument(
   return docId;
 }
 
+// Global cache instance
+const queryCache = new QueryResultCache();
+
 export async function searchDocuments(
   qdrantClient: QdrantClient,
   collectionName: string,
@@ -223,6 +229,8 @@ export async function searchDocuments(
   userContext: UserContext,
   vector?: number[]
 ): Promise<any[]> {
+  const startTime = performance.now();
+
   // Validate user authorization first
   if (!validateUserAuthorization(userContext)) {
     throw new Error('User authorization validation failed');
@@ -234,18 +242,39 @@ export async function searchDocuments(
   // Build enhanced RBAC filter using the new utility
   const rbacFilter = buildQdrantRBACFilter(userContext);
 
+  // Check cache first (simple key based on vector hash and filters)
+  const cacheKey = `${searchVector.slice(0, 5).join(',')}_${JSON.stringify(rbacFilter)}_${request.limit}`;
+  const cachedResult = queryCache.get(cacheKey, rbacFilter, request.limit || 5);
+  if (cachedResult) {
+    QdrantPerformanceMonitor.recordSearch('searchDocuments', performance.now() - startTime, true);
+    return cachedResult;
+  }
+
+  // Calculate adaptive EF based on query complexity (using a simple heuristic)
+  const adaptiveEf = calculateAdaptiveEf(JSON.stringify(request.query || ''), 128);
+
   const searchResult = await qdrantClient.search(collectionName, {
     vector: searchVector,
-    limit: request.limit || 5, // Default limit
+    limit: request.limit || 5,
     filter: rbacFilter,
     with_payload: true,
+    params: {
+      hnsw_ef: adaptiveEf
+    }
   });
 
-  return searchResult.map((hit) => ({
+  const results = searchResult.map((hit) => ({
     id: hit.id,
     vector: hit.vector || [],
     payload: hit.payload || {}
   }));
+
+  // Cache the results
+  queryCache.set(cacheKey, rbacFilter, request.limit || 5, results);
+
+  QdrantPerformanceMonitor.recordSearch('searchDocuments', performance.now() - startTime, false);
+
+  return results;
 }
 
 /**
