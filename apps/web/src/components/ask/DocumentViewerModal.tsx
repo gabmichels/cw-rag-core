@@ -207,6 +207,53 @@ export default function DocumentViewerModal({
     }
   };
 
+  // Function to format malformed tables
+  const formatTable = (content: string) => {
+    // Normalize line endings
+    let out = content.replace(/\r\n?/g, '\n');
+
+    // Regex for a GFM separator chunk like: | --- | --- | --- |
+    const SEP = /\|\s*(?:-+\s*\|)+/g;
+
+    // 1) Ensure a newline BEFORE a separator row if the previous char isn't a newline
+    out = out.replace(/([^\n])(\|\s*(?:-+\s*\|)+)/g, '$1\n$2');
+
+    // 2) Ensure a newline AFTER a separator row if the next char isn't a newline
+    out = out.replace(/(\|\s*(?:-+\s*\|)+)([^\n])/g, '$1\n$2');
+
+    // 3) Insert a newline between accidental "||" joins (e.g., "| ... || NextRow ...")
+    //    Only do this when the second pipe is followed by non-pipe, non-newline (to avoid "| | |" cells).
+    out = out.replace(/\|\s*\|\s*(?=[^\n|])/g, '|\n|');
+
+    // 4) Collapse excessive blank lines (avoid triple+ newlines)
+    out = out.replace(/\n{3,}/g, '\n\n');
+
+    return out;
+  };
+
+  // Stitch tables from chunks and process content
+  const processedContent = documentData ? (() => {
+    const chunks = documentData.chunks;
+    const stitched: string[] = [];
+    let current = '';
+    for (const chunk of chunks) {
+      if (current && current.includes('|') && chunk.content.includes('|')) {
+        current += '\n' + chunk.content;
+      } else {
+        if (current) stitched.push(current);
+        current = chunk.content;
+      }
+    }
+    if (current) stitched.push(current);
+    const stitchedContent = stitched.join('\n\n');
+    return stitchedContent
+      .replace(/\.\s+---/g, '.\n\n---\n\n')
+      .replace(/((?:^|\n)#{1,6}.*?)(\|)/g, '$1\n\n$2');
+  })() : '';
+
+  // Apply table formatting to the processed content
+  const finalContent = formatTable(processedContent);
+
   // Custom renderer - highlighting is handled via CSS
   const customMarkdownComponents = {
     ...MarkdownComponents,
@@ -279,7 +326,7 @@ export default function DocumentViewerModal({
                 rehypePlugins={[rehypeRaw]}
                 components={customMarkdownComponents as any}
               >
-                {documentData.content.replace(/\.\s+---/g, '.\n\n---\n\n')}
+                {finalContent}
               </ReactMarkdown>
             </div>
           )}
