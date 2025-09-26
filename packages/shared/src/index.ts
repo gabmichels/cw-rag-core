@@ -12,3 +12,6 @@ export * from './constants.js';
 export * from './config/firebase-config.js';
 export * from './services/environment-detector.js';
 export * from './services/configuration-service.js';
+export * from './services/space-registry.js';
+export * from './services/space-resolver.js';
+export * from './schemas/spaces.js';
