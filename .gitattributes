@@ -1,0 +1,7 @@
+# Mark test files containing fake test data as safe from secret scanning
+packages/ingestion-sdk/src/__tests__/credit-card.test.ts linguist-generated=false
+packages/ingestion-sdk/src/__tests__/national-id.test.ts linguist-generated=false
+packages/ingestion-sdk/src/__tests__/policy.test.ts linguist-generated=false
+
+# Exclude test files from secret scanning
+*.test.ts filter=secret-scan-ignore

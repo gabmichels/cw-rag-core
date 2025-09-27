@@ -89,8 +89,10 @@ export class CreditCardDetector {
         // Check if all digits
         if (!/^\d+$/.test(cleanCard))
             return 0;
-        // For test purposes, be very lenient with validation
-        // Just check basic patterns without strict Luhn validation
+        // Validate Luhn algorithm
+        if (!this.validateLuhn(cleanCard)) {
+            confidence -= 0.4; // Reduce confidence for invalid Luhn
+        }
         // Decrease confidence for suspicious patterns
         if (/^(\d)\1+$/.test(cleanCard))
             confidence -= 0.5; // All same digits

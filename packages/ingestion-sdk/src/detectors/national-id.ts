@@ -77,34 +77,31 @@ export class NationalIdDetector implements PIIDetector {
    * Validate national ID format and return confidence score
    */
   private validateNationalId(id: string): number {
-    let confidence = 0.5; // Base confidence
+    let confidence = 0.7; // Higher base confidence
 
     // Remove spaces and hyphens for analysis
     const cleanId = id.replace(/[-\s]/g, '');
 
     // Check for US SSN patterns
     if (this.validateSSN(id)) {
-      confidence += 0.4;
+      confidence = 0.9;
     }
-
     // Check for UK National Insurance pattern
-    if (this.validateUKNI(id)) {
-      confidence += 0.4;
+    else if (this.validateUKNI(id)) {
+      confidence = 0.95;
     }
-
     // Check for Canadian SIN pattern
-    if (this.validateCanadianSIN(id)) {
-      confidence += 0.4;
+    else if (this.validateCanadianSIN(id)) {
+      confidence = 0.9;
     }
-
-    // General validation checks
-    if (cleanId.length >= 8 && cleanId.length <= 15) {
-      confidence += 0.1;
+    // Generic ID validation
+    else if (cleanId.length >= 8 && cleanId.length <= 15 && /^\d+$/.test(cleanId)) {
+      confidence = 0.75;
     }
 
     // Decrease confidence for suspicious patterns
-    if (/^(\d)\1+$/.test(cleanId)) confidence -= 0.3; // All same digits
-    if (cleanId === '123456789' || cleanId === '000000000') confidence -= 0.4; // Common test numbers
+    if (/^(\d)\1+$/.test(cleanId)) confidence *= 0.5; // All same digits
+    if (cleanId === '000000000' || cleanId === '111111111') confidence *= 0.3; // Obviously fake numbers
 
     return Math.max(0, Math.min(confidence, 1.0));
   }
@@ -143,6 +140,10 @@ export class NationalIdDetector implements PIIDetector {
     const invalidPrefixes = ['BG', 'GB', 'NK', 'KN', 'TN', 'NT', 'ZZ'];
     if (invalidPrefixes.includes(firstTwoLetters)) return false;
 
+    // Check for invalid middle sections (should not be all zeros)
+    const middlePart = cleanNI.slice(2, 8);
+    if (middlePart === '000000') return false;
+
     return true;
   }
 
@@ -157,15 +158,17 @@ export class NationalIdDetector implements PIIDetector {
 
     // Basic Luhn algorithm check for Canadian SIN
     let sum = 0;
-    for (let i = 0; i < 9; i++) {
+    let isEven = false;
+    for (let i = cleanSIN.length - 1; i >= 0; i--) {
       let digit = parseInt(cleanSIN[i], 10);
-      if (i % 2 === 1) {
+      if (isEven) {
         digit *= 2;
         if (digit > 9) {
           digit = Math.floor(digit / 10) + (digit % 10);
         }
       }
       sum += digit;
+      isEven = !isEven;
     }
 
     return sum % 10 === 0;

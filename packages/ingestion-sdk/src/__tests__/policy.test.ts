@@ -1,3 +1,5 @@
+// This file contains fake PII data for testing purposes only
+// These are not real data and should not trigger secret scanning
 import { PIIPolicyEngine, applyRedaction, summarizeFindings, createDefaultPolicy, createAllowlistPolicy, createBlockPolicy } from '../policy.js';
 import { PIIPolicy, PIIDetection } from '../types.js';
 
@@ -115,7 +117,7 @@ describe('PIIPolicyEngine', () => {
         Personal Info:
         Email: john.doe@example.com
         Phone: (555) 123-4567
-        Card: 4532-1234-5678-9012
+        Card: 4532-1234-5678-9006
         API Key: AKIAIOSFODNN7EXAMPLE
       `;
       const policy: PIIPolicy = { mode: 'mask' };
