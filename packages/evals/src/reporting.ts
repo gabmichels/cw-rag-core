@@ -395,7 +395,18 @@ export class ReportGenerator {
     outputPath?: string
   ): Promise<string> {
     const validationResults = this.validateThresholds(report.metrics, performanceStats);
-    const status = this.getOverallStatus(validationResults);
+    const criticalFailures = validationResults.filter(r => !r.passed && r.severity === 'critical');
+    const warnings = validationResults.filter(r => !r.passed && r.severity === 'warning');
+
+    // Determine display status consistent with markdown report
+    let displayStatus: string;
+    if (criticalFailures.length === 0 && warnings.length === 0) {
+      displayStatus = 'PASSED';
+    } else if (criticalFailures.length === 0) {
+      displayStatus = 'PASSED WITH WARNINGS';
+    } else {
+      displayStatus = 'FAILED';
+    }
 
     const html = `
 <!DOCTYPE html>
@@ -434,8 +445,8 @@ export class ReportGenerator {
             <p><strong>Duration:</strong> ${(report.summary.duration / 1000).toFixed(2)}s | <strong>Total Queries:</strong> ${report.summary.totalQueries}</p>
         </div>
 
-        <div class="status ${status.toLowerCase()}">
-            ${status === 'PASSED' ? '✅' : status === 'WARNING' ? '⚠️' : '❌'} Status: ${status}
+        <div class="status ${displayStatus === 'PASSED' ? 'passed' : displayStatus === 'PASSED WITH WARNINGS' ? 'warning' : 'failed'}">
+            ${displayStatus === 'PASSED' ? '✅' : displayStatus === 'PASSED WITH WARNINGS' ? '⚠️' : '❌'} Status: ${displayStatus}
         </div>
 
         <div class="grid">
