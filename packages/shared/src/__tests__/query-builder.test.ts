@@ -226,5 +226,45 @@ describe('QueryBuilder', () => {
       expect(result.minCore).toBe(2); // medium policy '2'
       expect(result.policy).toBe('2');
     });
+
+    it('should handle short policy with percentage', () => {
+      const domainPackWithShortPercent = {
+        ...mockDomainPack,
+        coveragePolicy: { short: '100%', medium: '2', long: '50%' },
+      };
+
+      const features: ExtractedFeatures = {
+        core: ['a', 'b', 'c'],
+        support: [],
+        phrases: [],
+        numbers: [],
+        stats: { idfSumCore: 12.0, idfSumSupport: 0, len: 3 },
+      };
+
+      const result = (builder as any).getCoveragePolicy(features, domainPackWithShortPercent);
+
+      expect(result.minCore).toBe(3); // 3 * 1.0 = 3
+      expect(result.policy).toBe('100%');
+    });
+
+    it('should handle long policy with number', () => {
+      const domainPackWithLongNumber = {
+        ...mockDomainPack,
+        coveragePolicy: { short: 'all', medium: '2', long: '3' },
+      };
+
+      const features: ExtractedFeatures = {
+        core: Array(12).fill('term'),
+        support: [],
+        phrases: [],
+        numbers: [],
+        stats: { idfSumCore: 48.0, idfSumSupport: 0, len: 12 },
+      };
+
+      const result = (builder as any).getCoveragePolicy(features, domainPackWithLongNumber);
+
+      expect(result.minCore).toBe(3);
+      expect(result.policy).toBe('3');
+    });
   });
 });

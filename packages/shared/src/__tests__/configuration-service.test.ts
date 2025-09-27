@@ -168,6 +168,85 @@ describe('ConfigurationService', () => {
       expect(result).toBe(mockConfig);
 
     });
+
+    it('should load Firebase configuration when Firebase environment', async () => {
+      const mockEnv = {
+        isLocal: false,
+        isFirebase: true,
+        isProduction: false,
+        tenantId: testTenantId,
+        region: 'europe-west3' as FirebaseRegion,
+        tier: 'basic' as TenantTier,
+      };
+
+      // Update the environment context for the service
+      (service as any)._environmentContext = mockEnv;
+      (environmentDetector.getEnvironmentContext as jest.Mock).mockReturnValue(mockEnv);
+
+      const mockConfig: TenantConfiguration = {
+        tenantId: testTenantId,
+        name: 'Firebase Tenant',
+        tier: 'basic',
+        status: 'active',
+        environment: mockEnv,
+        firebase: {
+          tenantId: testTenantId,
+          projectId: 'test-project',
+          region: 'europe-west3',
+          tier: 'basic',
+          authDomain: 'test.firebaseapp.com',
+          storageBucket: 'test.appspot.com',
+          messagingSenderId: '',
+          appId: '',
+          features: { firestoreEnabled: true, authEnabled: true, storageEnabled: true, analyticsEnabled: false, hostingEnabled: true },
+          limits: { maxDocuments: 1000000, maxStorageGB: 50, maxMonthlyReads: 10000000, maxMonthlyWrites: 1000000 },
+          security: { allowAnonymous: true, requireEmailVerification: false, enableMfa: false, sessionTimeoutMinutes: 30 },
+        },
+        features: { hybridSearch: true, reranking: true, streaming: true, analytics: true, multiLanguage: false },
+        limits: { maxDocuments: 1000000, maxStorageGB: 50, rateLimitPerMinute: 100, maxConcurrentRequests: 50, requestTimeoutMs: 45000 },
+        security: { allowAnonymous: true, enableCors: true, allowedOrigins: [], enableRateLimit: false, enableAuditLogging: true },
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+
+      jest.spyOn(service as any, 'loadFirebaseConfiguration').mockResolvedValue(mockConfig);
+
+      const result = await service.getTenantConfiguration(testTenantId);
+      expect(result).toBe(mockConfig);
+      expect(service['_configCache'].has(testTenantId)).toBe(true);
+
+    });
+
+    it('should expire cached configuration after timeout', async () => {
+      const mockConfig: TenantConfiguration = {
+        tenantId: testTenantId,
+        name: 'Test Tenant',
+        tier: 'basic',
+        status: 'active',
+        environment: {
+          isLocal: true,
+          isFirebase: false,
+          isProduction: false,
+          tenantId: testTenantId,
+          region: 'europe-west3' as FirebaseRegion,
+          tier: 'basic' as TenantTier,
+        },
+        features: { hybridSearch: true, reranking: true, streaming: true, analytics: true, multiLanguage: false },
+        limits: { maxDocuments: 1000000, maxStorageGB: 50, rateLimitPerMinute: 100, maxConcurrentRequests: 50, requestTimeoutMs: 45000 },
+        security: { allowAnonymous: true, enableCors: true, allowedOrigins: [], enableRateLimit: false, enableAuditLogging: true },
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date(Date.now() - 15 * 60 * 1000).toISOString(), // 15 minutes ago
+      };
+
+      // Mock cache hit with expired config
+      service['_configCache'].set(testTenantId, mockConfig);
+
+      jest.spyOn(service as any, 'loadLocalConfiguration').mockResolvedValue(mockConfig);
+
+      const result = await service.getTenantConfiguration(testTenantId);
+      expect(result).toBe(mockConfig);
+      expect(service['_configCache'].has(testTenantId)).toBe(true); // Should be recached
+    });
   });
 
   describe('createTenantConfiguration', () => {
@@ -293,6 +372,33 @@ describe('ConfigurationService', () => {
 
       // Restore original Date.now
       Date.now = originalNow;
+    });
+
+    it('should throw error for invalid configuration update', async () => {
+      const existingConfig: TenantConfiguration = {
+        tenantId: testTenantId,
+        name: 'Old Name',
+        tier: 'basic',
+        status: 'active',
+        environment: {
+          isLocal: true,
+          isFirebase: false,
+          isProduction: false,
+          tenantId: testTenantId,
+          region: 'europe-west3' as FirebaseRegion,
+          tier: 'basic' as TenantTier,
+        },
+        features: { hybridSearch: true, reranking: true, streaming: true, analytics: true, multiLanguage: false },
+        limits: { maxDocuments: 1000000, maxStorageGB: 50, rateLimitPerMinute: 100, maxConcurrentRequests: 50, requestTimeoutMs: 45000 },
+        security: { allowAnonymous: true, enableCors: true, allowedOrigins: [], enableRateLimit: false, enableAuditLogging: true },
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+
+      jest.spyOn(service, 'getTenantConfiguration').mockResolvedValue(existingConfig);
+
+      const updates = { name: '' }; // Invalid update
+      await expect(service.updateTenantConfiguration(testTenantId, updates)).rejects.toThrow('Invalid configuration update');
     });
   });
 
@@ -509,6 +615,63 @@ describe('ConfigurationService', () => {
       const result = (service as any).validateConfiguration(config);
       expect(result.isValid).toBe(false);
       expect(result.errors).toContain('Invalid API port number');
+    });
+
+    it('should reject empty tenant name', () => {
+      const config: TenantConfiguration = {
+        tenantId: 'test-tenant',
+        name: '',
+        tier: 'basic',
+        status: 'active',
+        environment: {
+          isLocal: true,
+          isFirebase: false,
+          isProduction: false,
+          tenantId: 'test-tenant',
+          region: 'europe-west3',
+          tier: 'basic',
+        },
+        features: { hybridSearch: true, reranking: true, streaming: true, analytics: true, multiLanguage: false },
+        limits: { maxDocuments: 1000000, maxStorageGB: 50, rateLimitPerMinute: 100, maxConcurrentRequests: 50, requestTimeoutMs: 45000 },
+        security: { allowAnonymous: true, enableCors: true, allowedOrigins: [], enableRateLimit: false, enableAuditLogging: true },
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+
+      const result = (service as any).validateConfiguration(config);
+      expect(result.isValid).toBe(false);
+      expect(result.errors).toContain('Tenant name is required');
+    });
+
+    it('should reject invalid Firebase configuration', () => {
+      // Mock validateFirebaseConfig to return false for this test
+      const mockValidateFirebaseConfig = jest.requireMock('../config/firebase-config.js').validateFirebaseConfig;
+      mockValidateFirebaseConfig.mockReturnValueOnce(false);
+
+      const config: TenantConfiguration = {
+        tenantId: 'test-tenant',
+        name: 'Test',
+        tier: 'basic',
+        status: 'active',
+        environment: {
+          isLocal: false,
+          isFirebase: true,
+          isProduction: false,
+          tenantId: 'test-tenant',
+          region: 'europe-west3',
+          tier: 'basic',
+        },
+        firebase: {} as any, // Invalid Firebase config
+        features: { hybridSearch: true, reranking: true, streaming: true, analytics: true, multiLanguage: false },
+        limits: { maxDocuments: 1000000, maxStorageGB: 50, rateLimitPerMinute: 100, maxConcurrentRequests: 50, requestTimeoutMs: 45000 },
+        security: { allowAnonymous: true, enableCors: true, allowedOrigins: [], enableRateLimit: false, enableAuditLogging: true },
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+
+      const result = (service as any).validateConfiguration(config);
+      expect(result.isValid).toBe(false);
+      expect(result.errors).toContain('Invalid Firebase configuration');
     });
   });
 
