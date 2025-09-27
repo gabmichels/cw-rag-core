@@ -115,10 +115,11 @@ export abstract class BaseRerankerService implements RerankerService {
   /**
    * Apply top-K filtering
    */
-  protected applyTopK(results: RerankerResult[]): RerankerResult[] {
-    if (!this.config.topK) return results;
+  protected applyTopK(results: RerankerResult[], topK?: number): RerankerResult[] {
+    const effectiveTopK = topK || this.config.topK;
+    if (!effectiveTopK) return results;
 
-    return results.slice(0, this.config.topK);
+    return results.slice(0, effectiveTopK);
   }
 
   /**

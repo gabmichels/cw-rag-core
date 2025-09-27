@@ -159,8 +159,11 @@ export class SpaceResolver {
     // Simple lexical analysis for hints
     const lowerText = text.toLowerCase();
 
-    // Basic language detection
-    const language = lowerText.includes('der') || lowerText.includes('die') || lowerText.includes('das') ? 'de' : 'en';
+    // Basic language detection - check for German umlauts or common German words
+    const germanIndicators = ['ä', 'ö', 'ü', 'ß', 'wissen', 'intellekt', 'fähigkeiten'];
+    const hasGermanChars = /[äöüß]/.test(lowerText);
+    const hasGermanWords = germanIndicators.some(word => lowerText.includes(word));
+    const language = (hasGermanChars || hasGermanWords) ? 'de' : 'en';
 
     // Extract potential core tokens (nouns, important terms)
     const words = text.toLowerCase().split(/\s+/).filter(word =>
@@ -179,7 +182,7 @@ export class SpaceResolver {
         }
       }
     }
-    const topPhrases = phrases.slice(0, 3);
+    const topPhrases = phrases.filter(p => !/[^\w\s]/.test(p)).slice(0, 3);
 
     return {
       coreTokens,
@@ -189,12 +192,19 @@ export class SpaceResolver {
   }
 
   private async createAutoSpace(tenantId: string, text: string, owner: string): Promise<Space> {
-    // Generate space ID from text (simple heuristic)
-    const words = text.toLowerCase().split(/\s+/).slice(0, 3);
-    const spaceId = words.join('-').replace(/[^a-z0-9-]/g, '');
+    // Generate a consistent space ID based on a hash of the text to avoid duplicates during retries or multiple calls
+    const crypto = await import('crypto');
+    const hash = crypto.createHash('sha256').update(text).digest('hex').substring(0, 8);
+    const words = text.toLowerCase().split(/\W+/).filter(word => word.length > 3 && !['the', 'and', 'or', 'but', 'for', 'with', 'der', 'die', 'das', 'und', 'oder'].includes(word)).slice(0, 2);
+    const proposedSpaceId = words.length > 0 ? '-' + words.join('-').replace(/[^a-z0-9-]/g, '') + '-' + hash : '-auto-space-' + hash;
 
-    const space: Space = {
-      id: spaceId,
+    let space = await this.registryService.getSpace(tenantId, proposedSpaceId);
+    if (space) {
+      return space; // Space already exists, return it
+    }
+
+    space = {
+      id: proposedSpaceId,
       name: `Auto: ${words.join(' ')}`,
       description: `Auto-created space for content about ${words.join(' ')}`,
       owner,

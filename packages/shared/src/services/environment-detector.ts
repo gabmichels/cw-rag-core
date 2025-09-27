@@ -120,11 +120,13 @@ export class EnvironmentDetector {
       tier: EnvironmentDetector.getTenantTier(),
     };
 
-    // Cache for 5 minutes
+    // Cache for 5 minutes (skip timeout in test environment)
     this._environmentCache.set(resolvedTenantId, context);
-    setTimeout(() => {
-      this._environmentCache.delete(resolvedTenantId);
-    }, 5 * 60 * 1000);
+    if (process.env.NODE_ENV !== 'test' && typeof jest === 'undefined') {
+      setTimeout(() => {
+        this._environmentCache.delete(resolvedTenantId);
+      }, 5 * 60 * 1000);
+    }
 
     return context;
   }

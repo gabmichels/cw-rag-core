@@ -49,14 +49,16 @@ export class QdrantClientStub implements QdrantClient {
     // Simulate async operation
     await new Promise(resolve => setTimeout(resolve, 100));
 
+    // Extract tenant from collection name (format: {tenantId}_collection)
+    const tenantId = collectionName.replace('_collection', '');
     const limit = options?.limit || 10;
     return {
       points: Array.from({ length: limit }).map((_, i) => ({
         id: `mock-point-${i}`,
         payload: {
-          content: `Mock content ${i}`,
+          content: `Mock content ${i} for ${tenantId}`,
           docId: `mock-doc-${i}`,
-          tenantId: 'mock-tenant'
+          tenantId: tenantId
         },
         vector: options?.with_vector ? Array.from({ length: 768 }).map(() => Math.random()) : undefined,
       })),

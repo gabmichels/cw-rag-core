@@ -1,0 +1,186 @@
+tenantId: test-tenant
+spaces:
+  - id: hr
+    name: Human Resources
+    description: HR policies, employee management
+    owner: system
+    status: active
+    authorityScore: 1
+    autoCreated: false
+  - id: legal
+    name: Legal
+    description: Contracts, compliance, legal documents
+    owner: system
+    status: active
+    authorityScore: 1
+    autoCreated: false
+  - id: finance
+    name: Finance
+    description: Budgets, reports, financial data
+    owner: system
+    status: active
+    authorityScore: 1
+    autoCreated: false
+  - id: sales
+    name: Sales
+    description: Sales materials, leads, CRM data
+    owner: system
+    status: active
+    authorityScore: 1
+    autoCreated: false
+  - id: marketing
+    name: Marketing
+    description: Campaigns, branding, market research
+    owner: system
+    status: active
+    authorityScore: 1
+    autoCreated: false
+  - id: product
+    name: Product
+    description: Product specs, roadmaps, requirements
+    owner: system
+    status: active
+    authorityScore: 1
+    autoCreated: false
+  - id: eng-backend
+    name: Engineering Backend
+    description: Backend code, APIs, databases
+    owner: system
+    status: active
+    authorityScore: 1
+    autoCreated: false
+  - id: eng-frontend
+    name: Engineering Frontend
+    description: Frontend code, UI/UX, client apps
+    owner: system
+    status: active
+    authorityScore: 1
+    autoCreated: false
+  - id: devops
+    name: DevOps
+    description: Infrastructure, CI/CD, deployments
+    owner: system
+    status: active
+    authorityScore: 1
+    autoCreated: false
+  - id: security
+    name: Security
+    description: Security policies, audits, compliance
+    owner: system
+    status: active
+    authorityScore: 1
+    autoCreated: false
+  - id: support
+    name: Support/FAQs
+    description: Help docs, FAQs, customer support
+    owner: system
+    status: active
+    authorityScore: 1
+    autoCreated: false
+  - id: it-helpdesk
+    name: IT Helpdesk
+    description: IT support, troubleshooting, hardware
+    owner: system
+    status: active
+    authorityScore: 1
+    autoCreated: false
+  - id: data-analytics
+    name: Data/Analytics
+    description: Reports, analytics, BI dashboards
+    owner: system
+    status: active
+    authorityScore: 1
+    autoCreated: false
+  - id: personal-health
+    name: Health
+    description: Medical records, fitness, wellness
+    owner: system
+    status: active
+    authorityScore: 1
+    autoCreated: false
+  - id: personal-finance
+    name: Personal Finance
+    description: Banking, investments, expenses
+    owner: system
+    status: active
+    authorityScore: 1
+    autoCreated: false
+  - id: personal-travel
+    name: Travel
+    description: Itineraries, bookings, travel notes
+    owner: system
+    status: active
+    authorityScore: 1
+    autoCreated: false
+  - id: personal-learning
+    name: Learning
+    description: Courses, notes, educational materials
+    owner: system
+    status: active
+    authorityScore: 1
+    autoCreated: false
+  - id: personal-projects
+    name: Projects
+    description: Personal projects, ideas, planning
+    owner: system
+    status: active
+    authorityScore: 1
+    autoCreated: false
+  - id: personal-home
+    name: Home
+    description: Home management, maintenance, family
+    owner: system
+    status: active
+    authorityScore: 1
+    autoCreated: false
+  - id: personal-media
+    name: Media Notes
+    description: Books, movies, reviews, entertainment
+    owner: system
+    status: active
+    authorityScore: 1
+    autoCreated: false
+  - id: general
+    name: General
+    description: Default space for uncategorized documents
+    owner: system
+    status: active
+    authorityScore: 0.5
+    autoCreated: false
+  - id: knowledge-domain-abilities
+    name: 'Auto: knowledge domain abilities'
+    description: Auto-created space for content about knowledge domain abilities
+    owner: system
+    status: hidden
+    authorityScore: 0.5
+    autoCreated: true
+  - id: '-knowledge-intellect'
+    name: 'Auto: ## knowledge (intellect,'
+    description: 'Auto-created space for content about ## knowledge (intellect,'
+    owner: system
+    status: hidden
+    authorityScore: 0.5
+    autoCreated: true
+  - id: '-wissen-intellekt'
+    name: 'Auto: ## wissen (intellekt,'
+    description: 'Auto-created space for content about ## wissen (intellekt,'
+    owner: system
+    status: hidden
+    authorityScore: 0.5
+    autoCreated: true
+  - id: knowledge-perception-foresight
+    name: 'Auto: knowledge perception, foresight)'
+    description: Auto-created space for content about knowledge perception, foresight)
+    owner: system
+    status: hidden
+    authorityScore: 0.5
+    autoCreated: true
+  - id: '-knowledge-domain'
+    name: 'Auto: knowledge domain'
+    description: Auto-created space for content about knowledge domain
+    owner: system
+    status: hidden
+    authorityScore: 0.5
+    autoCreated: true
+version: '1.0'
+lastUpdated: '2025-09-27T00:54:44.881Z'

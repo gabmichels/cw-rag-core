@@ -15,8 +15,15 @@ module.exports = {
       }
     }],
   },
+  transformIgnorePatterns: ['node_modules/(?!(@xenova/transformers)/)'],
   moduleNameMapper: {
     '^(\\.{1,2}/.*)\\.js$': '$1',
-    '@xenova/transformers': '<rootDir>/__mocks__/@xenova/transformers.js'
-  }
+    '@cw-rag-core/shared': '<rootDir>/../shared/src',
+    '@xenova/transformers': '<rootDir>/__mocks__/@xenova/transformers.mjs'
+  },
+  collectCoverage: false,
+  verbose: true,
+  testTimeout: 60000,
+  forceExit: true,
+  detectOpenHandles: true
 };

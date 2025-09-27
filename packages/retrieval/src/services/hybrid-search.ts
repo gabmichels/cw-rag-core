@@ -118,11 +118,12 @@ export class HybridSearchServiceImpl implements HybridSearchService {
     } catch (error) {
       clearTimeout(timeoutId);
 
-      if ((error as Error).message.includes('timeout') && fallback) {
-        console.warn(`${operationName} timed out, using fallback`);
+      if (fallback) {
+        const isTimeout = (error as Error).message.includes('timeout');
+        console.warn(`${operationName} ${isTimeout ? 'timed out' : 'failed'}, using fallback`);
         try {
           const fallbackResult = await fallback();
-          return { result: fallbackResult, timedOut: true };
+          return { result: fallbackResult, timedOut: isTimeout };
         } catch (fallbackError) {
           throw new Error(`${operationName} failed and fallback failed: ${(fallbackError as Error).message}`);
         }
@@ -220,18 +221,37 @@ export class HybridSearchServiceImpl implements HybridSearchService {
         Math.max(request.limit, parseInt(process.env.RETRIEVAL_K_BASE || '12')) :
         request.limit;
 
-      const vectorSearchResult = await this.executeWithTimeout(
-        () => this.vectorSearchService.search(collectionName, {
-          queryVector,
-          limit: baseRetrievalK,
-          filter: rbacFilter
-        }),
-        timeouts.vectorSearch,
-        'Vector search',
-        () => Promise.resolve([])
-      );
+      let vectorSearchResult;
+      try {
+        vectorSearchResult = await this.executeWithTimeout(
+          () => this.vectorSearchService.search(collectionName, {
+            queryVector,
+            limit: baseRetrievalK,
+            filter: rbacFilter
+          }),
+          timeouts.vectorSearch,
+          'Vector search'
+        );
 
-      vectorSearchResults = vectorSearchResult.result;
+        vectorSearchResults = vectorSearchResult.result;
+      } catch (error) {
+        // If vector search fails completely, return empty results
+        console.error('Vector search failed completely:', error);
+        return {
+          finalResults: [],
+          vectorSearchResults: [],
+          keywordSearchResults: [],
+          fusionResults: [],
+          rerankerResults: undefined,
+          metrics: {
+            ...metrics,
+            vectorSearchDuration: performance.now() - vectorStartTime,
+            vectorResultCount: 0,
+            totalDuration: performance.now() - startTime,
+            finalResultCount: 0
+          }
+        };
+      }
       console.log('✅ Vector search completed:', vectorSearchResults?.length, 'results');
 
       // Debug: Check if target chunk is in vector results
@@ -281,36 +301,46 @@ export class HybridSearchServiceImpl implements HybridSearchService {
 
       if (keywordSearchEnabled) {
         const keywordStartTime = performance.now();
-        const keywordSearchResult = await this.executeWithTimeout(
-          () => this.keywordSearchService.search(
-            collectionName,
-            request.query,
-            request.limit,
-            rbacFilter
-          ),
-          timeouts.keywordSearch,
-          'Keyword search',
-          () => Promise.resolve([])
-        );
 
-        keywordSearchResults = keywordSearchResult.result;
-        metrics.keywordSearchDuration = performance.now() - keywordStartTime;
-        metrics.keywordResultCount = keywordSearchResults.length;
+        try {
+          const keywordSearchResult = await this.executeWithTimeout(
+            () => this.keywordSearchService.search(
+              collectionName,
+              request.query,
+              request.limit,
+              rbacFilter
+            ),
+            timeouts.keywordSearch,
+            'Keyword search'
+          );
 
-        // Debug: Check if target chunk is in keyword results
-        const foundInKeyword = keywordSearchResults?.find(r => r.id === targetId);
-        if (foundInKeyword) {
-          console.log('🎯 TARGET CHUNK FOUND IN KEYWORD RESULTS:', foundInKeyword.id, 'Score:', foundInKeyword.score);
-        } else {
-          console.log('❌ TARGET CHUNK NOT FOUND IN KEYWORD RESULTS');
-        }
+          keywordSearchResults = keywordSearchResult.result;
+          metrics.keywordSearchDuration = performance.now() - keywordStartTime;
+          metrics.keywordResultCount = keywordSearchResults.length;
 
-        if (keywordSearchResult.timedOut) {
-          console.warn('StructuredLog:KeywordSearchTimeout', {
-            timeoutMs: timeouts.keywordSearch,
-            fallbackUsed: true,
-            tenantId: request.tenantId
-          });
+          // Debug: Check if target chunk is in keyword results
+          const foundInKeyword = keywordSearchResults?.find(r => r.id === targetId);
+          if (foundInKeyword) {
+            console.log('🎯 TARGET CHUNK FOUND IN KEYWORD RESULTS:', foundInKeyword.id, 'Score:', foundInKeyword.score);
+          } else {
+            console.log('❌ TARGET CHUNK NOT FOUND IN KEYWORD RESULTS');
+          }
+
+          if (keywordSearchResult.timedOut) {
+            console.warn('StructuredLog:KeywordSearchTimeout', {
+              timeoutMs: timeouts.keywordSearch,
+              fallbackUsed: true,
+              tenantId: request.tenantId
+            });
+          }
+        } catch (error) {
+          // If keyword search is explicitly enabled but fails, log the error and proceed without keyword results.
+          // This allows the vector search results to still be processed and returned.
+          console.error('Keyword search failed when explicitly enabled:', error);
+          keywordSearchResults = []; // Ensure keyword results are empty for subsequent fusion
+          metrics.keywordSearchDuration = performance.now() - keywordStartTime;
+          metrics.keywordResultCount = 0;
+          // The function will continue execution to the fusion step, potentially with only vector results.
         }
       }
 
@@ -357,8 +387,8 @@ export class HybridSearchServiceImpl implements HybridSearchService {
         return {
           id: fusionResult.id,
           score: fusionResult.fusedScore,
-          vectorScore: fusionResult.components.vector,
-          keywordScore: fusionResult.components.keyword,
+          vectorScore: fusionResult.components.vector || 0,
+          keywordScore: keywordSearchEnabled ? (fusionResult.components.keyword || 0) : undefined,
           fusionScore: fusionResult.fusedScore,
           searchType: vectorResult && keywordResult ? 'hybrid' :
                       vectorResult ? 'vector_only' : 'keyword_only',
@@ -497,7 +527,7 @@ export class HybridSearchServiceImpl implements HybridSearchService {
             const rerankerRequest: RerankerRequest = {
               query: request.query,
               documents: rerankerDocs,
-              topK: RERANKER_CONFIG.TOPN_OUT
+              topK: adaptiveConfig.rerankerConfig?.topK || RERANKER_CONFIG.TOPN_OUT
             };
 
             rerankerActualResults = await this.rerankerService!.rerank(rerankerRequest); // Store raw reranker results
@@ -508,20 +538,24 @@ export class HybridSearchServiceImpl implements HybridSearchService {
                 ...originalResult!,
                 score: rerankedResult.rerankerScore,
                 fusionScore: rerankedResult.rerankerScore,
-                vectorScore: originalResult?.vectorScore,
-                keywordScore: originalResult?.keywordScore
+                vectorScore: originalResult?.vectorScore || 0, // Ensure it's a number
+                keywordScore: originalResult?.keywordScore || 0 // Ensure it's a number
               };
             });
           },
           timeouts.reranker,
           'Reranker',
-          () => Promise.resolve(fusedResults)
+          async () => {
+            // Fallback for any reranker error, not just timeout
+            console.warn('Reranker failed, using fusion results as fallback');
+            return fusedResults;
+          }
         );
 
         finalResults = rerankerOpResult.result;
         metrics.rerankerDuration = performance.now() - rerankerStartTime;
-        metrics.rerankingEnabled = !rerankerOpResult.timedOut;
-        metrics.documentsReranked = rerankerOpResult.timedOut ? 0 : Math.min(fusedResults.length, RERANKER_CONFIG.TOPN_IN);
+        metrics.rerankingEnabled = rerankerActualResults !== undefined;
+        metrics.documentsReranked = rerankerActualResults !== undefined ? Math.min(fusedResults.length, RERANKER_CONFIG.TOPN_IN) : 0;
 
         if (rerankerOpResult.timedOut) {
           console.warn('StructuredLog:RerankerTimeout', {
@@ -544,7 +578,10 @@ export class HybridSearchServiceImpl implements HybridSearchService {
       const filteredResults = finalResults
         .slice(0, request.limit)
         .filter(result => this.validateEnhancedRbacAccess(result, userContext))
-        .map(result => this.applyLanguageRelevance(result, userContext));
+        .map((result, index) => ({
+          ...this.applyLanguageRelevance(result, userContext),
+          rank: index + 1
+        }));
 
       metrics.totalDuration = performance.now() - startTime;
       metrics.finalResultCount = filteredResults.length;
@@ -645,7 +682,9 @@ export class HybridSearchServiceImpl implements HybridSearchService {
   }
 
   private getDefaultConfig(): TenantSearchConfig {
-    return {
+    // Ensure we always retrieve the actual 'default' config from the map
+    // which may have been updated or initialized.
+    return this.tenantConfigs.get('default') || {
       tenantId: 'default',
       keywordSearchEnabled: true,
       defaultVectorWeight: 0.7,

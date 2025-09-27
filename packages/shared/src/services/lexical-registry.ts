@@ -1,7 +1,7 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as yaml from 'js-yaml';
-import { LexicalRegistrySchema, LexicalRegistry, DEFAULT_LANGUAGE_PACKS, DEFAULT_DOMAIN_PACKS, LanguagePack, DomainPack, TenantPack } from '../schemas/lexical.js';
+import { PersistedLexicalRegistrySchema, LexicalRegistrySchema, LexicalRegistry, PersistedLexicalRegistry, DEFAULT_LANGUAGE_PACKS, DEFAULT_DOMAIN_PACKS, LanguagePack, DomainPack, TenantPack } from '../schemas/lexical.js';
 
 /**
  * Service for loading and persisting tenant-scoped lexical registries.
@@ -23,11 +23,17 @@ export class LexicalRegistryService {
     try {
       const content = await fs.readFile(filePath, 'utf-8');
       const data = yaml.load(content) as any;
-      const registry = LexicalRegistrySchema.parse(data);
+      const persistedRegistry = PersistedLexicalRegistrySchema.parse(data);
 
-      if (registry.tenantId !== tenantId) {
-        throw new Error(`Registry tenant mismatch: expected ${tenantId}, got ${registry.tenantId}`);
+      if (persistedRegistry.tenantId !== tenantId) {
+        throw new Error(`Registry tenant mismatch: expected ${tenantId}, got ${persistedRegistry.tenantId}`);
       }
+
+      // Add functions to language packs
+      const registry: LexicalRegistry = {
+        ...persistedRegistry,
+        languagePacks: this.addFunctionsToLanguagePacks(persistedRegistry.languagePacks),
+      };
 
       console.log(`Loaded lexical registry for tenant ${tenantId}`);
       return registry;
@@ -47,8 +53,15 @@ export class LexicalRegistryService {
    */
   async saveRegistry(registry: LexicalRegistry): Promise<void> {
     const filePath = this.getRegistryPath(registry.tenantId);
+    const persistedRegistry: PersistedLexicalRegistry = {
+      tenantId: registry.tenantId,
+      languagePacks: this.removeFunctionsFromLanguagePacks(registry.languagePacks),
+      domainPacks: registry.domainPacks,
+      tenantPack: registry.tenantPack,
+      version: registry.version,
+    };
     const data = {
-      ...registry,
+      ...persistedRegistry,
       lastUpdated: new Date().toISOString(),
     };
 
@@ -88,18 +101,6 @@ export class LexicalRegistryService {
   }
 
   private async createDefaultRegistry(tenantId: string): Promise<LexicalRegistry> {
-    // Create language packs with functions
-    const languagePacks: Record<string, LanguagePack> = {};
-
-    for (const [id, pack] of Object.entries(DEFAULT_LANGUAGE_PACKS)) {
-      languagePacks[id] = {
-        ...pack,
-        normalize: (text: string) => this.normalizeText(text, id),
-        tokenize: (text: string) => this.tokenizeText(text, id),
-        decompound: id === 'de' ? (token: string) => this.decompoundGerman(token) : undefined,
-      };
-    }
-
     const tenantPack: TenantPack = {
       id: tenantId,
       domainId: 'general',
@@ -107,12 +108,18 @@ export class LexicalRegistryService {
       systemPrompt: 'You are a helpful assistant.',
     };
 
-    return {
+    const persistedRegistry = {
       tenantId,
-      languagePacks,
+      languagePacks: DEFAULT_LANGUAGE_PACKS,
       domainPacks: DEFAULT_DOMAIN_PACKS,
       tenantPack,
       version: '1.0',
+    };
+
+    // Add functions for runtime use
+    return {
+      ...persistedRegistry,
+      languagePacks: this.addFunctionsToLanguagePacks(persistedRegistry.languagePacks),
     };
   }
 
@@ -143,5 +150,27 @@ export class LexicalRegistryService {
       return [token.slice(0, mid), token.slice(mid)];
     }
     return [token];
+  }
+
+  private addFunctionsToLanguagePacks(packs: Record<string, any>): Record<string, LanguagePack> {
+    const result: Record<string, LanguagePack> = {};
+    for (const [id, pack] of Object.entries(packs)) {
+      result[id] = {
+        ...pack,
+        normalize: (text: string) => this.normalizeText(text, id),
+        tokenize: (text: string) => this.tokenizeText(text, id),
+        decompound: id === 'de' ? (token: string) => this.decompoundGerman(token) : undefined,
+      };
+    }
+    return result;
+  }
+
+  private removeFunctionsFromLanguagePacks(packs: Record<string, LanguagePack>): Record<string, any> {
+    const result: Record<string, any> = {};
+    for (const [id, pack] of Object.entries(packs)) {
+      const { normalize, tokenize, decompound, ...rest } = pack;
+      result[id] = rest;
+    }
+    return result;
   }
 }

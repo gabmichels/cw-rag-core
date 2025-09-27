@@ -44,10 +44,17 @@ export class MockRerankerService extends BaseRerankerService {
       throw new Error('Mock reranker failure');
     }
 
-    const results: RerankerResult[] = [];
+    // Make the operation async to allow timeout to work
+    await new Promise(resolve => setTimeout(resolve, 1));
 
+    // Calculate scores and apply threshold filtering
+    const results: RerankerResult[] = [];
     for (const doc of request.documents) {
-      const score = this.calculateMockScore(request.query, doc.content, doc.id);
+      const score = this.mockScores.has(doc.id) ? this.mockScores.get(doc.id)! : this.calculateMockScore(request.query, doc.content || '', doc.id);
+
+      if (this.config.scoreThreshold && score < this.config.scoreThreshold) {
+        continue;
+      }
 
       results.push({
         id: doc.id,
@@ -56,16 +63,15 @@ export class MockRerankerService extends BaseRerankerService {
         payload: doc.payload,
         originalScore: doc.originalScore,
         rerankerScore: score,
-        rank: 0 // Will be set after sorting
+        rank: 0
       });
     }
 
     // Sort by reranker score descending
     results.sort((a, b) => b.rerankerScore - a.rerankerScore);
 
-    // Apply score threshold and top-K filtering
-    let filtered = this.applyScoreThreshold(results);
-    filtered = this.applyTopK(filtered);
+    // Apply top-K filtering
+    const filtered = this.applyTopK(results, request.topK);
 
     // Update ranks
     return filtered.map((result, index) => ({

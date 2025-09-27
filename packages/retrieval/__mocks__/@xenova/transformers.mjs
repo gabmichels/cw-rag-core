@@ -9,8 +9,5 @@ const mockPipelineFunction = jest.fn().mockImplementation(async (text, opts) => 
 
 const pipeline = jest.fn().mockResolvedValue(mockPipelineFunction);
 
-module.exports = {
-  pipeline,
-  __esModule: true,
-  default: { pipeline }
-};
+export { pipeline };
+export default { pipeline };

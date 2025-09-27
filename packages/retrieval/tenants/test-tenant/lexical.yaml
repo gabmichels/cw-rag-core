@@ -1,0 +1,112 @@
+tenantId: test-tenant
+languagePacks:
+  en:
+    id: en
+    stopwords:
+      - the
+      - a
+      - an
+      - and
+      - or
+      - but
+      - in
+      - 'on'
+      - at
+      - to
+      - for
+      - of
+      - with
+      - by
+    synonyms:
+      skill:
+        - ability
+        - competence
+      framework:
+        - structure
+        - system
+    phraseSlop: 2
+    fieldMap:
+      title: title
+      body: content
+      tags: tags
+  de:
+    id: de
+    stopwords:
+      - der
+      - die
+      - das
+      - und
+      - oder
+      - aber
+      - in
+      - auf
+      - an
+      - zu
+      - für
+      - von
+      - mit
+      - bei
+    synonyms:
+      fähigkeit:
+        - skill
+        - kompetenz
+      rahmenwerk:
+        - framework
+        - system
+    phraseSlop: 2
+    fieldMap:
+      title: titel
+      body: inhalt
+      tags: schlagworte
+domainPacks:
+  general:
+    id: general
+    fieldBoosts:
+      title: 2
+      body: 1
+      tags: 1.5
+    coveragePolicy:
+      short: all
+      medium: '2'
+      long: 50%
+  knowledge:
+    id: knowledge
+    dictionaries:
+      lore:
+        - knowledge
+        - information
+      recall:
+        - remember
+        - retrieve
+    fieldBoosts:
+      title: 3
+      body: 1
+      tags: 2
+    coveragePolicy:
+      short: all
+      medium: '2'
+      long: 50%
+  crafting:
+    id: crafting
+    dictionaries:
+      skill:
+        - craft
+        - technique
+      ability:
+        - power
+        - competence
+    fieldBoosts:
+      title: 2.5
+      body: 1
+      tags: 1.5
+    coveragePolicy:
+      short: all
+      medium: '2'
+      long: 50%
+tenantPack:
+  id: test-tenant
+  domainId: general
+  languageDefault: en
+  systemPrompt: You are a helpful assistant.
+version: '1.0'
+lastUpdated: '2025-09-27T00:34:23.332Z'

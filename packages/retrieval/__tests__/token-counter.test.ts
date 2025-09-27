@@ -28,7 +28,7 @@ describe('TokenCounter', () => {
     it('should count tokens for simple text', async () => {
       const result = await counter.countTokens('Hello world test');
 
-      expect(result.characterCount).toBe(17);
+      expect(result.characterCount).toBe(16);
       expect(result.tokenCount).toBeGreaterThan(0);
       expect(result.estimatedTokens).toBe(result.tokenCount);
       expect(result.safeTokenLimit).toBe(460); // 512 * 0.9

@@ -139,7 +139,7 @@ describe('Reranker Integration Tests', () => {
         tenantId: 'test-tenant'
       };
 
-      const { results, metrics } = await hybridSearchService.searchLegacy(
+      const { finalResults: results, metrics } = await hybridSearchService.searchLegacy(
         'test-collection',
         request,
         ['test'],
@@ -191,7 +191,7 @@ describe('Reranker Integration Tests', () => {
         tenantId: 'test-tenant'
       };
 
-      const { results, metrics } = await hybridSearchService.searchLegacy(
+      const { finalResults: results, metrics } = await hybridSearchService.searchLegacy(
         'test-collection',
         request,
         ['test'],
@@ -221,7 +221,7 @@ describe('Reranker Integration Tests', () => {
         limit: 10
       };
 
-      const { results, metrics } = await hybridSearchService.searchLegacy(
+      const { finalResults: results, metrics } = await hybridSearchService.searchLegacy(
         'test-collection',
         request,
         ['test'],
@@ -333,7 +333,7 @@ describe('Reranker Integration Tests', () => {
       };
 
       const startTime = performance.now();
-      const { results, metrics } = await hybridSearchService.searchLegacy(
+      const { finalResults: results, metrics } = await hybridSearchService.searchLegacy(
         'test-collection',
         request,
         ['test'],
@@ -384,7 +384,7 @@ describe('Reranker Integration Tests', () => {
         tenantId: 'batch-test'
       };
 
-      const { results, metrics } = await hybridSearchService.searchLegacy(
+      const { finalResults: results, metrics } = await hybridSearchService.searchLegacy(
         'test-collection',
         request,
         ['test'],
@@ -423,7 +423,7 @@ describe('Reranker Integration Tests', () => {
         limit: 10
       };
 
-      const { results, metrics } = await hybridSearchService.searchLegacy(
+      const { finalResults: results, metrics } = await hybridSearchService.searchLegacy(
         'test-collection',
         request,
         ['test'],
@@ -472,7 +472,7 @@ describe('Reranker Integration Tests', () => {
       };
 
       // Search with limited ACL permissions
-      const { results } = await hybridSearchService.searchLegacy(
+      const { finalResults: results } = await hybridSearchService.searchLegacy(
         'test-collection',
         request,
         ['test'],

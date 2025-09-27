@@ -1,18 +1,26 @@
 import { z } from 'zod';
 
 /**
- * Schema for a LanguagePack.
- * Handles language-specific processing like tokenization, normalization, synonyms.
+ * Schema for a persisted LanguagePack (without functions).
  */
-export const LanguagePackSchema = z.object({
+export const PersistedLanguagePackSchema = z.object({
   id: z.string().min(1).max(10), // e.g., 'en', 'de'
-  normalize: z.function().args(z.string()).returns(z.string()), // Normalize text (e.g., umlaut handling)
-  tokenize: z.function().args(z.string()).returns(z.array(z.string())), // Tokenize text
-  decompound: z.function().args(z.string()).returns(z.array(z.string())).optional(), // Decompound tokens (e.g., German)
   stopwords: z.array(z.string()), // Stopwords set
   synonyms: z.record(z.string(), z.array(z.string())), // Synonym map
   phraseSlop: z.number().min(0).max(10), // Proximity slop for phrases
   fieldMap: z.record(z.string(), z.string()), // Generic → engine field names
+});
+
+export type PersistedLanguagePack = z.infer<typeof PersistedLanguagePackSchema>;
+
+/**
+ * Schema for a runtime LanguagePack (with functions).
+ * Handles language-specific processing like tokenization, normalization, synonyms.
+ */
+export const LanguagePackSchema = PersistedLanguagePackSchema.extend({
+  normalize: z.function().args(z.string()).returns(z.string()), // Normalize text (e.g., umlaut handling)
+  tokenize: z.function().args(z.string()).returns(z.array(z.string())), // Tokenize text
+  decompound: z.function().args(z.string()).returns(z.array(z.string())).optional(), // Decompound tokens (e.g., German)
 });
 
 export type LanguagePack = z.infer<typeof LanguagePackSchema>;
@@ -53,7 +61,20 @@ export const TenantPackSchema = z.object({
 export type TenantPack = z.infer<typeof TenantPackSchema>;
 
 /**
- * Registry for packs per tenant.
+ * Persisted registry for packs per tenant (without functions).
+ */
+export const PersistedLexicalRegistrySchema = z.object({
+  tenantId: z.string(),
+  languagePacks: z.record(z.string(), PersistedLanguagePackSchema), // id -> pack
+  domainPacks: z.record(z.string(), DomainPackSchema),
+  tenantPack: TenantPackSchema,
+  version: z.string().default('1.0'),
+});
+
+export type PersistedLexicalRegistry = z.infer<typeof PersistedLexicalRegistrySchema>;
+
+/**
+ * Runtime registry for packs per tenant (with functions).
  */
 export const LexicalRegistrySchema = z.object({
   tenantId: z.string(),

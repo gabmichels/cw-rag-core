@@ -1,0 +1,28 @@
+spaces:
+- id: knowledge
+  name: Knowledge Domain
+  keywords:
+  - knowledge
+  - domain
+  - abilities
+  - intellect
+  - perception
+  - foresight
+  - concrete abilities
+  language: en
+- id: hr
+  name: Human Resources
+  keywords:
+  - hr
+  - human resources
+  - policy
+  - employee
+  language: en
+- id: legal
+  name: Legal
+  keywords:
+  - legal
+  - law
+  - contract
+  - policy
+  language: en

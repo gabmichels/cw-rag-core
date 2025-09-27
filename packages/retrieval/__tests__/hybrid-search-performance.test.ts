@@ -26,11 +26,9 @@ class PerformanceVectorSearchService {
   async search(collectionName: string, params: VectorSearchParams): Promise<VectorSearchResult[]> {
     const startTime = performance.now();
 
-    // Simulate processing time
+    // Simulate processing time with actual delay for accurate metrics
     await new Promise(resolve => setTimeout(resolve, this.searchDuration));
-
-    const endTime = performance.now();
-    const actualDuration = endTime - startTime;
+    const actualDuration = this.searchDuration;
 
     // Generate realistic results
     const results: VectorSearchResult[] = Array.from({ length: params.limit }, (_, i) => ({
@@ -68,11 +66,9 @@ class PerformanceKeywordSearchService implements KeywordSearchService {
   ) {
     const startTime = performance.now();
 
-    // Simulate processing time
+    // Simulate processing time with actual delay for accurate metrics
     await new Promise(resolve => setTimeout(resolve, this.searchDuration));
-
-    const endTime = performance.now();
-    const actualDuration = endTime - startTime;
+    const actualDuration = this.searchDuration;
 
     // Generate realistic results
     const results = Array.from({ length: limit }, (_, i) => ({
@@ -137,7 +133,7 @@ describe('Hybrid Search Performance Tests', () => {
         enableKeywordSearch: false // Vector only
       };
 
-      const { results, metrics } = await hybridSearchService.searchLegacy(
+      const { finalResults: results, metrics } = await hybridSearchService.searchLegacy(
         'perf_collection',
         request,
         userTenants,
@@ -160,7 +156,7 @@ describe('Hybrid Search Performance Tests', () => {
         keywordWeight: 1
       };
 
-      const { results, metrics } = await hybridSearchService.searchLegacy(
+      const { finalResults: results, metrics } = await hybridSearchService.searchLegacy(
         'perf_collection',
         request,
         userTenants,
@@ -182,7 +178,7 @@ describe('Hybrid Search Performance Tests', () => {
         rrfK: 60
       };
 
-      const { results, metrics } = await hybridSearchService.searchLegacy(
+      const { finalResults: results, metrics } = await hybridSearchService.searchLegacy(
         'perf_collection',
         request,
         userTenants,
@@ -207,7 +203,7 @@ describe('Hybrid Search Performance Tests', () => {
         rrfK: 60
       };
 
-      const { results, metrics } = await hybridSearchService.searchLegacy(
+      const { finalResults: results, metrics } = await hybridSearchService.searchLegacy(
         'perf_collection',
         request,
         userTenants,
@@ -245,7 +241,7 @@ describe('Hybrid Search Performance Tests', () => {
       const averageTime = totalTime / concurrentSearches;
 
       expect(results).toHaveLength(concurrentSearches);
-      results.forEach(({ results: searchResults, metrics }) => {
+      results.forEach(({ finalResults: searchResults, metrics }) => {
         expect(searchResults).toBeDefined();
         expect(metrics.totalDuration).toBeLessThan(1000); // Allow more time under load
       });
@@ -263,7 +259,7 @@ describe('Hybrid Search Performance Tests', () => {
         keywordWeight: 0.5
       };
 
-      const { results, metrics } = await hybridSearchService.searchLegacy(
+      const { finalResults: results, metrics } = await hybridSearchService.searchLegacy(
         'perf_collection',
         request,
         userTenants,
@@ -316,7 +312,7 @@ describe('Hybrid Search Performance Tests', () => {
       const secondSearchEnd = performance.now();
       const secondSearchTime = secondSearchEnd - secondSearchStart;
 
-      expect(firstResult.results).toEqual(secondResult.results);
+      expect(firstResult.finalResults).toEqual(secondResult.finalResults);
       expect(secondSearchTime).toBeLessThan(firstSearchTime * 0.1); // Cache should be 10x faster
 
       console.log(`First search (cold cache): ${firstSearchTime}ms`);
@@ -419,7 +415,7 @@ describe('Hybrid Search Performance Tests', () => {
         enableKeywordSearch: true
       };
 
-      const { results, metrics } = await service.searchLegacy(
+      const { finalResults: results, metrics } = await service.searchLegacy(
         'perf_collection',
         request,
         userTenants,

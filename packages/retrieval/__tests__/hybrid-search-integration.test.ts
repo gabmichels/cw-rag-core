@@ -19,12 +19,23 @@ class MockVectorSearchService {
     // Simulate vector search results based on query similarity
     const mockResults: VectorSearchResult[] = [
       {
+        id: '67001fb9-f2f7-adb3-712b-5df9dc00c772', // Target chunk for testing
+        vector: params.queryVector,
+        score: 0.98,
+        payload: {
+          tenant: 'tenant1',
+          acl: ['user1', 'group1', 'public'],
+          content: 'Artificial intelligence and machine learning applications in modern computing',
+          docId: '67001fb9-f2f7-adb3-712b-5df9dc00c772' // Consistent docId
+        }
+      },
+      {
         id: 'doc1',
         vector: params.queryVector,
         score: 0.95,
         payload: {
           tenant: 'tenant1',
-          acl: ['user1', 'group1'],
+          acl: ['user1', 'group1', 'public'], // Ensure public access for some docs
           content: 'Machine learning algorithms for data analysis',
           docId: 'doc1'
         }
@@ -35,7 +46,7 @@ class MockVectorSearchService {
         score: 0.87,
         payload: {
           tenant: 'tenant1',
-          acl: ['user1'],
+          acl: ['user1', 'public'], // Ensure public access for some docs
           content: 'Deep learning neural networks implementation',
           docId: 'doc2'
         }
@@ -46,7 +57,7 @@ class MockVectorSearchService {
         score: 0.82,
         payload: {
           tenant: 'tenant2',
-          acl: ['user2'],
+          acl: ['user2', 'public'], // Ensure public access for some docs
           content: 'Statistical analysis methods for research',
           docId: 'doc3'
         }
@@ -59,13 +70,15 @@ class MockVectorSearchService {
         const tenantFilter = params.filter.must.find((f: any) => f.key === 'tenant');
         const aclFilter = params.filter.must.find((f: any) => f.key === 'acl');
 
-        if (tenantFilter && !tenantFilter.match.any.includes(result.payload?.tenant)) {
+        if (tenantFilter && result.payload?.tenant !== tenantFilter.match.value) {
           return false;
         }
 
         if (aclFilter) {
           const documentAcl = Array.isArray(result.payload?.acl) ? result.payload.acl : [result.payload?.acl];
-          const hasAccess = aclFilter.match.any.some((userAcl: string) =>
+          const userAcls = aclFilter.match.any;
+          // Document has access if any of its ACLs overlap with user's ACLs
+          const hasAccess = userAcls.some((userAcl: string) =>
             documentAcl.includes(userAcl)
           );
           if (!hasAccess) return false;
@@ -89,6 +102,16 @@ class MockKeywordSearchService implements KeywordSearchService {
     // Simulate keyword search results
     const mockResults = [
       {
+        id: '67001fb9-f2f7-adb3-712b-5df9dc00c772', // Target chunk for testing
+        score: 0.95,
+        payload: {
+          tenant: 'tenant1',
+          acl: ['user1', 'group1', 'public'],
+          content: 'Artificial intelligence and machine learning applications in modern computing'
+        },
+        content: 'Artificial intelligence and machine learning applications in modern computing'
+      },
+      {
         id: 'doc2',
         score: 0.92,
         payload: {
@@ -103,7 +126,7 @@ class MockKeywordSearchService implements KeywordSearchService {
         score: 0.88,
         payload: {
           tenant: 'tenant1',
-          acl: ['user1', 'group1'],
+          acl: ['user1', 'group1', 'public'],
           content: 'Machine learning model training techniques'
         },
         content: 'Machine learning model training techniques'
@@ -113,7 +136,7 @@ class MockKeywordSearchService implements KeywordSearchService {
         score: 0.75,
         payload: {
           tenant: 'tenant1',
-          acl: ['user1', 'group1'],
+          acl: ['user1', 'group1', 'public'],
           content: 'Machine learning algorithms for data analysis'
         },
         content: 'Machine learning algorithms for data analysis'
@@ -126,13 +149,14 @@ class MockKeywordSearchService implements KeywordSearchService {
         const tenantFilter = filter.must.find((f: any) => f.key === 'tenant');
         const aclFilter = filter.must.find((f: any) => f.key === 'acl');
 
-        if (tenantFilter && !tenantFilter.match.any.includes(result.payload?.tenant)) {
+        if (tenantFilter && result.payload?.tenant !== tenantFilter.match.value) {
           return false;
         }
 
         if (aclFilter) {
           const documentAcl = Array.isArray(result.payload?.acl) ? result.payload.acl : [result.payload?.acl];
-          const hasAccess = aclFilter.match.any.some((userAcl: string) =>
+          const userAcls = aclFilter.match.any;
+          const hasAccess = userAcls.some((userAcl: string) =>
             documentAcl.includes(userAcl)
           );
           if (!hasAccess) return false;
@@ -189,7 +213,7 @@ describe('Hybrid Search Integration Tests', () => {
         rrfK: 60
       };
 
-      const { results, metrics } = await hybridSearchService.searchLegacy(
+      const { finalResults: results, metrics } = await hybridSearchService.searchLegacy(
         'test_collection',
         request,
         userTenants,
@@ -223,7 +247,7 @@ describe('Hybrid Search Integration Tests', () => {
       const restrictedUserTenants = ['tenant1'];
       const restrictedUserAcl = ['user1']; // Only user1, not group1
 
-      const { results } = await hybridSearchService.searchLegacy(
+      const { finalResults: results } = await hybridSearchService.searchLegacy(
         'test_collection',
         request,
         restrictedUserTenants,
@@ -246,7 +270,7 @@ describe('Hybrid Search Integration Tests', () => {
         enableKeywordSearch: false
       };
 
-      const { results, metrics } = await hybridSearchService.searchLegacy(
+      const { finalResults: results, metrics } = await hybridSearchService.searchLegacy(
         'test_collection',
         request,
         userTenants,
@@ -301,12 +325,12 @@ describe('Hybrid Search Integration Tests', () => {
         userAcl
       );
 
-      expect(vectorHeavyResults.results).toBeDefined();
-      expect(keywordHeavyResults.results).toBeDefined();
+      expect(vectorHeavyResults.finalResults).toBeDefined();
+      expect(keywordHeavyResults.finalResults).toBeDefined();
 
       // Results might be ordered differently due to different weights
-      expect(vectorHeavyResults.results.length).toBeGreaterThan(0);
-      expect(keywordHeavyResults.results.length).toBeGreaterThan(0);
+      expect(vectorHeavyResults.finalResults.length).toBeGreaterThan(0);
+      expect(keywordHeavyResults.finalResults.length).toBeGreaterThan(0);
     });
 
     it('should respect different RRF k values', async () => {
@@ -338,13 +362,13 @@ describe('Hybrid Search Integration Tests', () => {
         userAcl
       );
 
-      expect(lowKResults.results).toBeDefined();
-      expect(highKResults.results).toBeDefined();
+      expect(lowKResults.finalResults).toBeDefined();
+      expect(highKResults.finalResults).toBeDefined();
 
       // Lower k should generally result in higher fusion scores for top-ranked items
-      if (lowKResults.results.length > 0 && highKResults.results.length > 0) {
-        const lowKTopScore = Math.max(...lowKResults.results.map(r => r.fusionScore));
-        const highKTopScore = Math.max(...highKResults.results.map(r => r.fusionScore));
+      if (lowKResults.finalResults.length > 0 && highKResults.finalResults.length > 0) {
+        const lowKTopScore = Math.max(...lowKResults.finalResults.map(r => r.fusionScore || 0));
+        const highKTopScore = Math.max(...highKResults.finalResults.map(r => r.fusionScore || 0));
         expect(lowKTopScore).toBeGreaterThanOrEqual(highKTopScore);
       }
     });
@@ -358,7 +382,7 @@ describe('Hybrid Search Integration Tests', () => {
         tenantId: 'nonexistent_tenant'
       };
 
-      const { results } = await hybridSearchService.searchLegacy(
+      const { finalResults: results } = await hybridSearchService.searchLegacy(
         'test_collection',
         request,
         userTenants,
@@ -404,7 +428,7 @@ describe('Hybrid Search Integration Tests', () => {
         // enableKeywordSearch not specified, should use tenant config
       };
 
-      const { results, metrics } = await hybridSearchService.searchLegacy(
+      const { finalResults: results, metrics } = await hybridSearchService.searchLegacy(
         'test_collection',
         request,
         userTenants,
@@ -428,14 +452,14 @@ describe('Hybrid Search Integration Tests', () => {
         enableKeywordSearch: true
       };
 
-      const startTime = performance.now();
-      const { results, metrics } = await hybridSearchService.searchLegacy(
+      const startTime = require('perf_hooks').performance.now();
+      const { finalResults: results, metrics } = await hybridSearchService.searchLegacy(
         'test_collection',
         request,
         userTenants,
         userAcl
       );
-      const endTime = performance.now();
+      const endTime = require('perf_hooks').performance.now();
 
       expect(results).toBeDefined();
 
@@ -477,7 +501,7 @@ describe('Hybrid Search Integration Tests', () => {
         userAcl
       );
 
-      expect(firstResult.results).toEqual(secondResult.results);
+      expect(firstResult.finalResults).toEqual(secondResult.finalResults);
       // Second search should be much faster (cache hit)
       expect(secondResult.metrics.totalDuration).toBeLessThan(firstResult.metrics.totalDuration);
     });
@@ -504,12 +528,17 @@ describe('Hybrid Search Integration Tests', () => {
         enableKeywordSearch: true
       };
 
-      await expect(faultyService.searchLegacy(
+      // Expect graceful fallback: empty results
+      const { finalResults, metrics } = await faultyService.searchLegacy(
         'test_collection',
         request,
         userTenants,
         userAcl
-      )).rejects.toThrow('Hybrid search failed');
+      );
+
+      expect(finalResults).toEqual([]);
+      expect(metrics.vectorResultCount).toBe(0);
+      expect(metrics.totalDuration).toBeGreaterThanOrEqual(0); // Still records duration
     });
 
     it('should handle keyword search failures gracefully', async () => {
@@ -532,12 +561,20 @@ describe('Hybrid Search Integration Tests', () => {
         enableKeywordSearch: true
       };
 
-      await expect(faultyService.searchLegacy(
+      // Expect graceful fallback: vector-only results
+      const { finalResults, metrics } = await faultyService.searchLegacy(
         'test_collection',
         request,
         userTenants,
         userAcl
-      )).rejects.toThrow('Hybrid search failed');
+      );
+
+      expect(finalResults).toBeDefined();
+      expect(finalResults.length).toBeGreaterThan(0);
+      expect(finalResults.every(r => r.searchType === 'vector_only')).toBe(true);
+      expect(metrics.vectorResultCount).toBeGreaterThan(0);
+      expect(metrics.keywordResultCount).toBe(0);
+      expect(metrics.totalDuration).toBeGreaterThanOrEqual(0); // Still records duration
     });
 
     it('should handle empty search results', async () => {
@@ -566,7 +603,7 @@ describe('Hybrid Search Integration Tests', () => {
         enableKeywordSearch: true
       };
 
-      const { results, metrics } = await emptyResultService.searchLegacy(
+      const { finalResults: results, metrics } = await emptyResultService.searchLegacy(
         'test_collection',
         request,
         userTenants,
