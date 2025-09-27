@@ -15,8 +15,8 @@ export interface CorpusStats {
 
 const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
 
-let cachedStats: Map<string, CorpusStats> = new Map();
-let cacheTimestamps: Map<string, number> = new Map();
+export let cachedStats: Map<string, CorpusStats> = new Map();
+export let cacheTimestamps: Map<string, number> = new Map();
 
 /**
  * Load corpus statistics from disk cache or compute if needed
@@ -180,7 +180,7 @@ export function updateCorpusStats(documents: Array<{content: string, id: string}
 /**
  * Tokenize and normalize text
  */
-function tokenizeAndNormalize(text: string): string[] {
+export function tokenizeAndNormalize(text: string): string[] {
   return text.toLowerCase()
     .split(/\s+/)
     .map(token => token.replace(/[^\w]/g, ''))
@@ -190,7 +190,7 @@ function tokenizeAndNormalize(text: string): string[] {
 /**
  * Simple stopword check
  */
-function isStopword(word: string): boolean {
+export function isStopword(word: string): boolean {
   const stopwords = new Set([
     'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by',
     'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'do', 'does',
@@ -204,7 +204,7 @@ function isStopword(word: string): boolean {
 /**
  * Serialize corpus stats for JSON storage
  */
-function serializeCorpusStats(stats: CorpusStats): any {
+export function serializeCorpusStats(stats: CorpusStats): any {
   return {
     idf: Object.fromEntries(stats.idf),
     cooc: Object.fromEntries(
@@ -221,7 +221,7 @@ function serializeCorpusStats(stats: CorpusStats): any {
 /**
  * Deserialize corpus stats from JSON
  */
-function deserializeCorpusStats(data: any): CorpusStats {
+export function deserializeCorpusStats(data: any): CorpusStats {
   return {
     idf: new Map(Object.entries(data.idf || {})),
     cooc: new Map(

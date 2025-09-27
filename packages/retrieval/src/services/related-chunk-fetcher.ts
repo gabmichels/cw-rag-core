@@ -68,7 +68,6 @@ export class RelatedChunkFetcherService {
       return new Map();
     }
 
-    console.log('🔄 Fetching related chunks for', detectedSections.length, 'sections');
 
     const results = new Map<string, RelatedChunkResult>();
     const fetchPromises = detectedSections.map(section =>
@@ -76,7 +75,6 @@ export class RelatedChunkFetcherService {
         .then(result => {
           if (result.chunks.length > 0) {
             results.set(section.sectionPath, result);
-            console.log('✅ Fetched', result.chunks.length, 'chunks for section:', section.sectionPath);
           }
           return result;
         })
@@ -112,31 +110,23 @@ export class RelatedChunkFetcherService {
     };
 
     try {
-      // Create timeout promise
+      // Create timeout promise with cleanup
+      let timeoutId: NodeJS.Timeout | undefined;
       const timeoutPromise = new Promise<never>((_, reject) => {
-        setTimeout(() => reject(new Error('Query timeout')), this.config.queryTimeoutMs);
+        timeoutId = setTimeout(() => reject(new Error('Query timeout')), this.config.queryTimeoutMs);
       });
 
       // Execute query with timeout
       const queryPromise = this.executeRelatedChunkQuery(collectionName, query);
-      const chunks = await Promise.race([queryPromise, timeoutPromise]);
 
-      const fetchDuration = performance.now() - startTime;
-
-      // Analyze completeness
-      const sectionMetadata = this.analyzeSectionCompleteness(chunks, section.sectionPath);
-      const completionConfidence = this.calculateCompletionConfidence(chunks, section, sectionMetadata);
-
-      return {
-        chunks,
-        completionConfidence,
-        sectionMetadata,
-        performance: {
-          fetchDuration,
-          chunksRequested: query.maxChunks,
-          chunksReturned: chunks.length
-        }
-      };
+      try {
+        const chunks = await Promise.race([queryPromise, timeoutPromise]);
+        if (timeoutId) clearTimeout(timeoutId); // Clear timeout if query completes first
+        return this.buildSuccessfulResult(chunks, section, startTime, query);
+      } catch (error) {
+        if (timeoutId) clearTimeout(timeoutId); // Clear timeout if query fails
+        throw error;
+      }
 
     } catch (error) {
       console.warn('Related chunk fetch failed for section:', section.sectionPath, error);
@@ -160,29 +150,45 @@ export class RelatedChunkFetcherService {
   }
 
   /**
+   * Build successful result for section chunk fetch
+   */
+  private buildSuccessfulResult(
+    chunks: HybridSearchResult[],
+    section: DetectedSection,
+    startTime: number,
+    query: RelatedChunkQuery
+  ): RelatedChunkResult {
+    const fetchDuration = performance.now() - startTime;
+
+    // Analyze completeness
+    const sectionMetadata = this.analyzeSectionCompleteness(chunks, section.sectionPath);
+    const completionConfidence = this.calculateCompletionConfidence(chunks, section, sectionMetadata);
+
+    return {
+      chunks,
+      completionConfidence,
+      sectionMetadata,
+      performance: {
+        fetchDuration,
+        chunksRequested: query.maxChunks,
+        chunksReturned: chunks.length
+      }
+    };
+  }
+
+  /**
    * Execute the actual query for related chunks
    */
   private async executeRelatedChunkQuery(
     collectionName: string,
     query: RelatedChunkQuery
   ): Promise<HybridSearchResult[]> {
-    console.log('🔍 Querying for related chunks:', {
-      sectionPath: query.sectionPath,
-      maxChunks: query.maxChunks
-    });
 
     try {
       // Perform sectionPath-based retrieval
       // When calling this.executeSectionPathQuery, ensure the section's documentId is passed through userContext.
       // The query object already contains section.documentId within userContext due to the modification above.
       let chunks = await this.executeSectionPathQuery(collectionName, query);
-
-      console.log('📊 Related chunk query results:', {
-        sectionPath: query.sectionPath,
-        totalFound: chunks.length,
-        afterExclusion: chunks.length,
-        excluded: query.excludeChunkIds.length
-      });
 
       return chunks;
 
@@ -202,19 +208,11 @@ export class RelatedChunkFetcherService {
     // Pass the documentId from the query object directly
     const sectionFilter = this.buildSectionPathFilter(query.sectionPath, query.userContext, query.documentId);
 
-    console.log('🔍 DEBUG: Related chunk query filter:', JSON.stringify(sectionFilter, null, 2));
-    console.log('🔍 DEBUG: Query excludeChunkIds:', query.excludeChunkIds);
-
     const scrollResult = await this.qdrantClient.scroll(collectionName, {
       filter: sectionFilter,
       limit: query.maxChunks,
       with_payload: true,
       with_vector: false
-    });
-
-    console.log('🔍 DEBUG: Qdrant scroll result:', {
-      totalPoints: scrollResult.points?.length || 0,
-      pointIds: scrollResult.points?.map((p: { id: any; }) => p.id) || []
     });
 
     return scrollResult.points
