@@ -62,7 +62,7 @@ export class FeatureExtractor {
     for (let i = 0; i < tokens.length - 1; i++) {
       const bigram = `${tokens[i]} ${tokens[i + 1]}`;
       // Check if bigram is in synonyms or dictionaries (placeholder)
-      if (Object.values(pack.synonyms).some(syns => syns.includes(bigram))) {
+      if (pack.synonyms[bigram]) {
         phrases.push(bigram);
       }
     }
@@ -72,7 +72,7 @@ export class FeatureExtractor {
   private extractNumbers(text: string, domainPack: DomainPack): string[] {
     const numbers: string[] = [];
     // Simple regex for numbers
-    const numberMatches = text.match(/\b\d+\b/g);
+    const numberMatches = text.match(/\b\d+(?:\.\d+)?\b/g);
     if (numberMatches) {
       numbers.push(...numberMatches);
     }

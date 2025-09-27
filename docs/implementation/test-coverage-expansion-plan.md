@@ -64,7 +64,7 @@ Fix hanging tests, failing tests, and import issues to establish stable baseline
 
 Increase coverage in existing packages to 80%+ through targeted test additions.
 
-- [ ] **Expand packages/evals Coverage**: Add tests for api-client.ts, reporting.ts, runner.ts
+- [x] **Expand packages/evals Coverage**: Add tests for api-client.ts, reporting.ts, runner.ts
 - [ ] **Expand packages/shared Coverage**: Add tests for configuration-service.ts, feature-extractor.ts, language-router.ts, query-builder.ts
 - [ ] **Expand packages/retrieval Coverage**: Add tests for embedding.ts, services/http-reranker.ts, services/sentence-transformers-reranker.ts
 - [ ] **Improve packages/ingestion-sdk Coverage**: Add tests for detectors/iban.ts, detectors/national-id.ts

@@ -76,13 +76,19 @@ export class QueryBuilder {
 
     if (coreCount <= 3) {
       policy = domainPack.coveragePolicy.short;
-      minCore = policy === 'all' ? coreCount : parseInt(policy) || 0;
     } else if (coreCount <= 10) {
       policy = domainPack.coveragePolicy.medium;
-      minCore = parseInt(policy) || 1;
     } else {
       policy = domainPack.coveragePolicy.long;
-      minCore = policy.includes('%') ? Math.floor(coreCount * 0.5) : parseInt(policy) || 2;
+    }
+
+    if (policy === 'all') {
+      minCore = coreCount;
+    } else if (policy.includes('%')) {
+      const percent = parseFloat(policy) / 100;
+      minCore = Math.floor(coreCount * percent);
+    } else {
+      minCore = parseInt(policy) || 0;
     }
 
     return { minCore, policy };
